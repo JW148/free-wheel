@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "spike-server": "node tools/report-server.mjs",
     "spike-server-https": "node tools/report-server.mjs --https",
-    "build-catalogue": "node tools/build-tile-catalogue.mjs"
+    "build-catalogue": "node tools/build-tile-catalogue.mjs",
+    "fetch-map-assets": "node tools/fetch-map-assets.mjs"
   },
   "dependencies": {
     "comlink": "^4.4.2",

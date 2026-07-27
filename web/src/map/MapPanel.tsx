@@ -20,7 +20,8 @@ const formatBytes = (n: number) =>
 /**
  * The offline basemap: a PMTiles archive read out of OPFS, with no network involved.
  *
- * Labels are absent by design at this stage — see `style.ts`.
+ * Glyphs and sprites are self-hosted and precached rather than fetched from a CDN — see
+ * `style.ts` for why that is the difference between an offline map and a blank one.
  */
 export default function MapPanel() {
   const container = useRef<HTMLDivElement | null>(null)
@@ -69,7 +70,11 @@ export default function MapPanel() {
         style: basemapStyle(name),
         center: header.center,
         zoom: 12,
-        maxZoom: header.maxZoom,
+        // Past the archive's own max zoom, not at it. MapLibre overzooms vector tiles by
+        // scaling the deepest tile it has, so capping the map at `header.maxZoom` throws away
+        // usable detail — and would put the street-level layers permanently out of reach.
+        // Five levels of overzoom on z14 data is about where it stops being legible.
+        maxZoom: Math.min(header.maxZoom + 5, 19),
         // Nothing to fetch from a network, so failures should be loud rather than retried.
         attributionControl: { compact: true },
       })
@@ -137,8 +142,9 @@ export default function MapPanel() {
       <h2>Offline basemap</h2>
       <p className="sub">
         A PMTiles archive read straight out of OPFS by byte range — no tile server, no network.
-        Build one with <code>pmtiles extract</code> and import it here. Labels are not rendered
-        yet: glyphs are a separate piece of work.
+        Build one with <code>pmtiles extract</code> and import it here. Labels and icons come
+        from glyphs and sprites served from this origin and precached, since the archive
+        contains neither.
       </p>
 
       {error && <p className="error">{error}</p>}

@@ -28,7 +28,11 @@ export default defineConfig({
       workbox: {
         // The engine artifacts live in public/ and must be available offline.
         // The 4 MB per-file default is fine here; .rd5 tiles go to OPFS, never Workbox.
-        globPatterns: ['**/*.{js,css,html,svg,json,wasm}'],
+        //
+        // `pbf` and `png` are the glyph ranges and sprite sheet. PMTiles archives contain
+        // neither, and MapLibre fetches them over the network on its own — miss them here and
+        // the map goes offline with no labels and no icons, which looks like a styling bug.
+        globPatterns: ['**/*.{js,css,html,svg,json,wasm,pbf,png}'],
         // Without these, a new build sits in "waiting" until every tab of the app is
         // closed — and an iOS home-screen app is almost never truly closed, so a pull to
         // refresh keeps serving the previous bundle. This cost real debugging time three

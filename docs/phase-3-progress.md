@@ -1,9 +1,9 @@
 # Phase 3 — React/MapLibre PWA
 
-**Status: the offline basemap renders.** London's vector tiles decode out of OPFS and draw —
-2,608 features across roads, water, landuse, boundaries and earth, with `load` reached and six
-OPFS range reads totalling 621 kB. The cause of the long non-render is recorded under
-*The map never rendered — why* below; it was not the OPFS pipeline.
+**Status: the offline basemap renders, with labels and icons, offline.** London's vector tiles
+decode out of OPFS and draw, glyphs and sprites come from the service worker precache, and the
+whole thing was verified with the dev server killed. The cause of the long non-render is
+recorded under *The map never rendered — why* below; it was not the OPFS pipeline.
 
 Not yet verified on a physical iPhone.
 
@@ -122,14 +122,51 @@ OPFS reads 6, 621 kB
 Central London, the Thames, parks and street geometry, read by byte range out of OPFS with no
 network involved.
 
+## Glyphs and sprites — self-hosted and precached
+
+A PMTiles archive holds geometry and nothing else. Glyphs (SDF font atlases, one file per
+256-codepoint range) and sprites (the icon sheet) are separate HTTP requests MapLibre makes on
+its own, so a style with text or icon layers is online-only unless they are shipped with the
+app. The failure mode is a map that looks perfect on the desk and loses every label in airplane
+mode — which reads as a styling bug rather than a missing download.
+
+`npm run fetch-map-assets` pulls them from `protomaps/basemaps-assets` into `public/`:
+
+- **Noto Sans Regular and Noto Sans Medium**, six Unicode ranges each — Latin, Latin
+  Extended-A/B, Greek, Cyrillic, and General Punctuation (en/em dashes and curly apostrophes
+  turn up in ordinary place names and are easy to forget). 1.15 MB.
+- The **`light` sprite sheet at 1× and 2×**. A phone will always ask for @2x, so shipping only
+  1× guarantees missing icons on exactly the target device.
+
+The output is committed rather than generated at build time: an offline-first app should not
+need a network round trip to produce a map with labels in it. `globPatterns` in
+`vite.config.ts` gained `pbf` and `png` so Workbox precaches them — precache is now 34 entries,
+4.9 MB.
+
+The style gained water, road and place labels plus a POI icon layer restricted to what a
+cyclist stops for (drinking water, cafés, benches, toilets, stations, ferries). The icon layer
+earns its place beyond decoration: without it nothing exercises the sprite, so a sprite failure
+would stay invisible.
+
+Two things surfaced doing it:
+
+- **`zoom` must be the input to a *top-level* `interpolate`.** Nesting it inside a `match` (to
+  scale place labels by settlement kind *and* zoom) is a style validation error — and MapLibre
+  reports that as an `error` event on the map, not a thrown exception, so the map simply never
+  loads. Restructured as one top-level zoom interpolation with a `match` at each stop.
+- **The map was capped at the archive's own max zoom.** MapLibre overzooms vector tiles by
+  scaling the deepest tile it has, so `maxZoom: header.maxZoom` threw away usable detail and
+  put the street-level layers permanently out of reach. Now `header.maxZoom + 5`, capped at 19.
+
+Verified offline on desktop by killing the dev server and reloading: the app came back from the
+service worker precache and rendered `place-labels 1, road-labels 13, poi-icons 15` at z15 with
+no origin to fetch from.
+
 ## Outstanding
 
 - **Confirm on a physical iPhone.** Verified so far only in a Chromium-based desktop browser.
   The panel's diagnostics — load stages, worker check, OPFS read count and bytes, protocol
   request log, rendered features by layer — are deliberately still in place for that run.
-- **Glyphs and sprites.** The style deliberately has no text layers yet — labels need glyph
-  PBFs, which the archive does not contain and MapLibre fetches separately. Rendering geometry
-  first keeps a glyph failure distinguishable from a tile-plumbing failure.
 - **Map UI** — waypoints, profile picker, route rendering, GPX export.
 - `window.__map` is exposed for console debugging; remove it, and thin the diagnostics, once
   the device run is done.

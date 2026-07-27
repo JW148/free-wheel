@@ -52,6 +52,9 @@ const MIME = {
   '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  // MapLibre glyph ranges. Served with the wrong type they decode anyway, but being explicit
+  // keeps a mismatch visible.
+  '.pbf': 'application/x-protobuf',
   '.ico': 'image/x-icon',
   '.map': 'application/json; charset=utf-8',
 }
@@ -204,7 +207,8 @@ async function serveStatic(req, res) {
   // asset path as HTML with a 200 is how a missing MapLibre worker chunk masqueraded as a
   // map that simply would not render — see src/map/maplibreWorker.ts. The SPA fallback is
   // for routes, and /assets/ never contains one.
-  const isBuildArtefact = /^assets\//.test(relative) || /\.(js|mjs|css|wasm|map)$/.test(relative)
+  const isBuildArtefact =
+    /^assets\//.test(relative) || /\.(js|mjs|css|wasm|map|pbf|png)$/.test(relative)
   const targets = isBuildArtefact ? [candidate] : [candidate, join(DIST, 'index.html')]
 
   for (const target of targets) {

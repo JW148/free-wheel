@@ -13,7 +13,7 @@ this for where the work actually stands.
 | **Spike 1** — TeaVM toolchain | ✅ Passed, verified on a physical iPhone |
 | **Phase 1** — Wasm engine + OPFS VFS | ✅ Passed, verified on a physical iPhone |
 | **Phase 2** — worker harness, tiles | ✅ Complete, import verified on device |
-| **Phase 3** — React/MapLibre PWA | 🟡 **Basemap renders** on desktop; not yet on device. Glyphs and map UI outstanding |
+| **Phase 3** — React/MapLibre PWA | 🟡 **Basemap renders with labels, offline** on desktop; not yet on device. Map UI outstanding |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
@@ -163,15 +163,12 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
 1. **See the basemap render on the phone** (above). Then remove the `window.__map` debug hook
    and thin the diagnostics in `MapPanel.tsx` — but keep the `worker ok:` check, which is
    cheap and guards a failure mode that is invisible without it.
-2. **Glyphs and sprites** — self-hosted and precached. The style has no text layers yet
-   precisely so a glyph failure stays distinguishable from a tile failure. The plan flags this
-   as the classic offline-MapLibre trap.
-3. **Map UI** — waypoints, drag to reshape, profile picker, route rendering, GPX export.
+2. **Map UI** — waypoints, drag to reshape, profile picker, route rendering, GPX export.
    `Router.route()` already returns GPX; `FormatJson` in brouter-core would give GeoJSON more
    directly for rendering.
-4. Foreground following (`watchPosition` + Screen Wake Lock), and re-derive elapsed time on
+3. Foreground following (`watchPosition` + Screen Wake Lock), and re-derive elapsed time on
    resume — iOS suspends timers when backgrounded.
-5. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
+4. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
    which reduces but does not eliminate the risk: WebKit also evicts under overall system
    storage pressure, not only quota exhaustion.
 

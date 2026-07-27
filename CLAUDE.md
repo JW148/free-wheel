@@ -57,6 +57,7 @@ cd engine
 ```bash
 cd web
 npm run build-catalogue                      # refresh the tile catalogue from brouter.de
+npm run fetch-map-assets                     # refresh glyphs + sprites into public/
 ```
 
 If a JDK ever goes missing, it is almost always the environment rather than the build. `openjdk@21`
@@ -150,7 +151,16 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   build silently emits a 0-byte worker chunk.
 - **Precache glyphs and sprites in the service worker.** PMTiles archives do not contain them
   and MapLibre fetches them separately; skipping this yields an offline map with no labels,
-  which looks like a styling bug.
+  which looks like a styling bug. They live in `web/public/{fonts,sprites}`, are **committed**
+  rather than generated, and are refreshed with `npm run fetch-map-assets`. `globPatterns`
+  must keep `pbf` and `png`. Glyph URLs must be **absolute** — they are fetched from
+  MapLibre's worker, where a relative URL resolves against `/assets/`.
+- **`zoom` must be the input to a top-level `interpolate` or `step`.** Nesting it inside a
+  `match` is a style validation error, and MapLibre reports that as an `error` *event* rather
+  than throwing — so the map silently never loads.
+- **Don't cap the map at the archive's max zoom.** MapLibre overzooms vector tiles by scaling
+  the deepest tile it has; `maxZoom: header.maxZoom` throws away usable detail and puts
+  street-level layers permanently out of reach.
 - **Don't vendor `@makina-corpus/maplibre-offline-pmtiles`** as the plan suggested — it opens
   its own OPFS handles and collides with the engine's registry. `src/map/opfsPmtiles.ts`
   implements the `pmtiles` `Source` interface against the shared registry instead.

@@ -1,13 +1,24 @@
 import type { StyleSpecification } from 'maplibre-gl'
 
 /**
- * A deliberately minimal basemap style for the Protomaps v4 schema.
+ * A minimal basemap style for the Protomaps v4 schema, with everything it needs served from
+ * this origin and nothing fetched from the internet.
  *
- * **No text layers, and that is on purpose for now.** Labels need glyph PBFs, which the
- * PMTiles archive does not contain and which MapLibre fetches separately — the classic
- * offline-MapLibre trap the plan warns about. Rendering geometry first proves the
- * OPFS → PMTiles → MapLibre pipeline in isolation; glyphs are their own piece of work, and
- * bolting them on now would confuse a glyph failure with a tile-plumbing failure.
+ * ## Glyphs and sprites are the offline trap
+ *
+ * A PMTiles archive holds geometry and nothing else. Glyphs (SDF font atlases, one file per
+ * 256-codepoint range) and sprites (the icon sheet) are **separate HTTP requests** that
+ * MapLibre makes on its own. Point them at a CDN and the map renders beautifully on the desk
+ * and then loses every label and icon in airplane mode — which reads as a styling bug rather
+ * than a missing download.
+ *
+ * So they are self-hosted under `public/`, refreshed by `npm run fetch-map-assets`, and
+ * precached by the service worker (`globPatterns` in `vite.config.ts` includes `pbf` and
+ * `png` for exactly this reason).
+ *
+ * The URLs are absolute. **Glyph requests are issued from MapLibre's worker**, where a
+ * relative URL would resolve against `/assets/` and quietly 404 — the same class of bug that
+ * `maplibreWorker.ts` exists to fix.
  *
  * Also note this is **not** mapcn's default CARTO basemap, which is online-only and requires
  * a CARTO Enterprise licence for commercial use. Nothing here talks to a server.
@@ -26,13 +37,31 @@ const COLOURS = {
   major: '#fdf3d8',
   path: '#cbbfa8',
   boundary: '#b0a8a0',
+  label: '#41403c',
+  labelMuted: '#6b6862',
+  labelWater: '#3f6d99',
+  // Labels sit directly on top of map geometry, so every one of them gets a halo in the
+  // background colour. Without it, street names disappear wherever they cross a park.
+  halo: '#f6f4f0',
 }
+
+/** Font stacks, named exactly as the directories under `public/fonts/`. */
+const REGULAR = ['Noto Sans Regular']
+const MEDIUM = ['Noto Sans Medium']
+
+/**
+ * Absolute origin for style assets.
+ *
+ * `import.meta.env.BASE_URL` rather than a hardcoded `/`, so the app survives being served
+ * from a subpath. Built once at module load: the worker cannot compute this itself.
+ */
+const ASSETS = new URL(import.meta.env.BASE_URL, location.href).href
 
 export function basemapStyle(archive: string): StyleSpecification {
   return {
     version: 8,
-    // No glyphs or sprite declared: any layer needing them would fail at load rather than
-    // silently fetch from the network, which is what we want while offline is the point.
+    glyphs: `${ASSETS}fonts/{fontstack}/{range}.pbf`,
+    sprite: `${ASSETS}sprites/light`,
     sources: {
       basemap: {
         type: 'vector',
@@ -116,6 +145,133 @@ export function basemapStyle(archive: string): StyleSpecification {
         source: 'basemap',
         'source-layer': 'boundaries',
         paint: { 'line-color': COLOURS.boundary, 'line-dasharray': [2, 2], 'line-width': 1 },
+      },
+
+      // ── Labels and icons ────────────────────────────────────────────────────────────────
+      // Everything below needs glyphs; the POI layer also needs the sprite. Both are kept in
+      // the style so that a missing asset shows up immediately rather than the first time
+      // someone zooms in far enough to care.
+
+      {
+        id: 'water-labels',
+        type: 'symbol',
+        source: 'basemap',
+        'source-layer': 'water',
+        minzoom: 11,
+        filter: ['has', 'name'],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': REGULAR,
+          'text-size': 11,
+          'text-max-width': 6,
+          'symbol-placement': 'line',
+        },
+        paint: {
+          'text-color': COLOURS.labelWater,
+          'text-halo-color': COLOURS.halo,
+          'text-halo-width': 1.2,
+        },
+      },
+      {
+        id: 'road-labels',
+        type: 'symbol',
+        source: 'basemap',
+        'source-layer': 'roads',
+        minzoom: 14,
+        filter: ['has', 'name'],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': REGULAR,
+          'text-size': 11,
+          // Along the line, not above it: a street name only reads as a street name when it
+          // follows the street.
+          'symbol-placement': 'line',
+          'text-rotation-alignment': 'map',
+          'symbol-spacing': 300,
+        },
+        paint: {
+          'text-color': COLOURS.labelMuted,
+          'text-halo-color': COLOURS.halo,
+          'text-halo-width': 1.5,
+        },
+      },
+      {
+        id: 'poi-icons',
+        type: 'symbol',
+        source: 'basemap',
+        'source-layer': 'pois',
+        minzoom: 15,
+        // The sprite sheet does not have an icon for every `kind` in the schema, and MapLibre
+        // warns once per missing image. Restricting to what a cyclist stops for keeps the
+        // console clean and the map uncluttered — and every name here exists in
+        // `public/sprites/light.json`.
+        filter: [
+          'in',
+          ['get', 'kind'],
+          ['literal', [
+            'drinking_water',
+            'cafe',
+            'fast_food',
+            'restaurant',
+            'bench',
+            'toilets',
+            'train_station',
+            'bus_stop',
+            'ferry_terminal',
+            'supermarket',
+            'park',
+            'peak',
+          ]],
+        ],
+        layout: {
+          'icon-image': ['get', 'kind'],
+          'icon-size': 0.8,
+          'text-field': ['get', 'name'],
+          'text-font': REGULAR,
+          'text-size': 10,
+          'text-anchor': 'top',
+          'text-offset': [0, 0.9],
+          'text-optional': true,
+        },
+        paint: {
+          'text-color': COLOURS.labelMuted,
+          'text-halo-color': COLOURS.halo,
+          'text-halo-width': 1.2,
+        },
+      },
+      {
+        id: 'place-labels',
+        type: 'symbol',
+        source: 'basemap',
+        'source-layer': 'places',
+        // The schema carries the zoom at which each place is *meant* to appear. Honouring it
+        // is what stops every hamlet in the county appearing at z8.
+        filter: ['all', ['has', 'name'], ['>=', ['zoom'], ['get', 'min_zoom']]],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': MEDIUM,
+          // Scaled by settlement kind as well as zoom, so a city does not read as equal in
+          // weight to the neighbourhood next to it.
+          //
+          // `zoom` has to be the input to the *top-level* interpolate — nesting it inside the
+          // `match` is a style validation error, and MapLibre reports it as an `error` event
+          // on the map rather than a thrown exception, so the map simply fails to load.
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            8,
+            ['match', ['get', 'kind'], 'country', 14, 'region', 12, 'locality', 12, 10],
+            14,
+            ['match', ['get', 'kind'], 'country', 16, 'region', 14, 'locality', 16, 11],
+          ],
+          'text-max-width': 8,
+        },
+        paint: {
+          'text-color': COLOURS.label,
+          'text-halo-color': COLOURS.halo,
+          'text-halo-width': 1.5,
+        },
       },
     ],
   }
