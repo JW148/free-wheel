@@ -47,6 +47,13 @@ export default defineConfig({
       },
     }),
   ],
+  worker: {
+    // MapLibre constructs its worker with `{ type: 'module' }` and only falls back to a
+    // classic worker if that throws synchronously. Vite's default worker format is `iife`,
+    // which loads as a module too, but keeping both sides ESM means dev and build agree —
+    // and this pipeline has already lost enough time to a worker that failed quietly.
+    format: 'es',
+  },
   server: {
     // Reachable from a phone on the same network; pair with a tunnel for HTTPS.
     host: true,

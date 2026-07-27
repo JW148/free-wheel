@@ -1,15 +1,9 @@
 # Handoff
 
-Written 2026-07-26. Read `CLAUDE.md` first for the rules of the repo, then this for where the
-work actually stands.
+Written 2026-07-26, updated 2026-07-27. Read `CLAUDE.md` first for the rules of the repo, then
+this for where the work actually stands.
 
-## ⚠️ Nothing is committed
-
-`git log` reports *"your current branch 'main' does not have any commits yet"*. Every file in
-this repo is an untracked working copy. **Commit before doing anything else** — days of work
-are one careless `rm -rf` from gone.
-
-`brouter-link/` is correctly excluded and its own checkout is clean; verify with
+`brouter-link/` is correctly excluded from git and its own checkout is clean; verify with
 `cd brouter-link && git status --porcelain` (should print nothing).
 
 ## Where things stand
@@ -19,7 +13,7 @@ are one careless `rm -rf` from gone.
 | **Spike 1** — TeaVM toolchain | ✅ Passed, verified on a physical iPhone |
 | **Phase 1** — Wasm engine + OPFS VFS | ✅ Passed, verified on a physical iPhone |
 | **Phase 2** — worker harness, tiles | ✅ Complete, import verified on device |
-| **Phase 3** — React/MapLibre PWA | 🟡 Basemap pipeline built; **has never been seen to render** |
+| **Phase 3** — React/MapLibre PWA | 🟡 **Basemap renders** on desktop; not yet on device. Glyphs and map UI outstanding |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
@@ -35,28 +29,34 @@ more usefully — where the original plan turned out to be wrong.
 - **JSC's floating point matches HotSpot bit-for-bit**, which is what makes byte-identical GPX
   viable at all.
 
-## The single open question
+## The question that was open — and its answer
 
-**The map has never rendered.** `docs/phase-3-progress.md` has the full bisect. In short:
+**The map now renders.** It was never the OPFS pipeline, and it was never the preview browser.
 
-- The OPFS→PMTiles read path *works*: header and metadata read out of OPFS, TileJSON returned
-  and logged resolving.
-- MapLibre then requests **no tiles** and never fires `load`.
-- It fails **identically** with an HTTP-backed archive, and **identically again** with a plain
-  inline GeoJSON source and no PMTiles at all.
+MapLibre GL JS 6 ships its worker as a separate file and locates it from `import.meta.url` at
+runtime, so once bundled it asked for `/assets/maplibre-gl-worker.mjs` — never emitted. Every
+source type is parsed in the worker pool, which is why OPFS-backed PMTiles, HTTP-backed
+PMTiles and a plain inline GeoJSON source all failed identically. Two things hid it: the dev
+server's SPA fallback served `index.html` with a `200` for the missing script, and MapLibre's
+try/catch around `new Worker` cannot catch an async parse failure. No 404, no error event, no
+console output.
 
-That last case means MapLibre cannot complete style loading in the *preview browser* used for
-automated checks — silently, with no error event and nothing on the console. WebGL works there
-(the background layer paints; a framebuffer readback returns the exact configured colour), so
-the suspect is MapLibre's Web Worker pool.
+Fixed in `src/map/maplibreWorkerEntry.ts` + `src/map/maplibreWorker.ts`. Full write-up, and the
+two follow-on traps (tree-shaking emitting a 0-byte worker chunk; the missing `declare module`),
+in `docs/phase-3-progress.md`.
 
-**Next action: open `http://localhost:4174` in real Safari, import
-`data/basemap/london.pmtiles`, and see whether a map appears.** The panel prints its own
-diagnostics — load stages, OPFS read count, protocol request log, and rendered features by
-layer. If Safari reaches `stages: … → load` and the read count climbs past 3, the pipeline was
-always fine and the preview browser was the problem.
+Measured on desktop:
 
-Do not assume the OPFS code is broken before that check. The evidence points away from it.
+```
+stages: dataloading → source loaded → load
+OPFS reads 6, 621 kB
+2608 features: boundaries 8, roads 565, roads-casing 567, water 31, landuse 1433, earth 4
+```
+
+**Next action: the same check on a physical iPhone**, per the standing rule that desktop proves
+nothing about the device. The panel's diagnostics are deliberately still in place for it,
+including a `worker ok:` / `worker BROKEN` line that fetches the worker URL and checks the
+content type — the status code was `200` in the broken case, so the content type is the tell.
 
 ## Environment — the parts that will waste your time
 
@@ -152,23 +152,26 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
   registration is wrapped to log this.
 - **`input.files = dt.files` empties the DataTransfer**, so reading it afterwards reports zero
   files. That is a test-harness gotcha, not a bug.
+- **An SPA fallback turns a missing asset into a `200` of HTML.** That is how the MapLibre
+  worker went missing for a whole phase without a single 404. `tools/report-server.mjs` now
+  404s anything under `/assets/` or with a build-artefact extension; keep it that way.
 - **macOS firewall blocks inbound to `node`**, and `jwig` is not in the `admin` group so `sudo`
   is unavailable. Already allowed, but it will recur after a node upgrade.
 
 ## Suggested order from here
 
-1. **Commit everything.**
-2. Settle the basemap render question in Safari (above). Then remove the `window.__map` debug
-   hook and the heavier diagnostics in `MapPanel.tsx` once it is stable.
-3. **Glyphs and sprites** — self-hosted and precached. The style has no text layers yet
+1. **See the basemap render on the phone** (above). Then remove the `window.__map` debug hook
+   and thin the diagnostics in `MapPanel.tsx` — but keep the `worker ok:` check, which is
+   cheap and guards a failure mode that is invisible without it.
+2. **Glyphs and sprites** — self-hosted and precached. The style has no text layers yet
    precisely so a glyph failure stays distinguishable from a tile failure. The plan flags this
    as the classic offline-MapLibre trap.
-4. **Map UI** — waypoints, drag to reshape, profile picker, route rendering, GPX export.
+3. **Map UI** — waypoints, drag to reshape, profile picker, route rendering, GPX export.
    `Router.route()` already returns GPX; `FormatJson` in brouter-core would give GeoJSON more
    directly for rendering.
-5. Foreground following (`watchPosition` + Screen Wake Lock), and re-derive elapsed time on
+4. Foreground following (`watchPosition` + Screen Wake Lock), and re-derive elapsed time on
    resume — iOS suspends timers when backgrounded.
-6. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
+5. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
    which reduces but does not eliminate the risk: WebKit also evicts under overall system
    storage pressure, not only quota exhaustion.
 

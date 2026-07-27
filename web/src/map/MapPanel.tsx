@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Map as MapLibreMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { mountBasemap, registerPmtilesProtocol, sourceStats } from './opfsPmtiles'
+import { checkMapLibreWorker, configureMapLibreWorker } from './maplibreWorker'
 import { basemapStyle } from './style'
 import { sharedEngine } from '../engine/engineClient'
 import type { ImportProgress } from '../engine/tileStore'
 
-// Registered at module scope, before any Map can be constructed. `addProtocol` is global to
-// the maplibre module rather than per-instance, and a Map built first cannot resolve the
-// scheme — so this must not live inside a component effect.
+// Both at module scope, before any Map can be constructed. `addProtocol` is global to the
+// maplibre module rather than per-instance, and a Map built first cannot resolve the scheme.
+// The worker URL is read when the pool is first created, so it has the same constraint —
+// and getting it wrong is silent. See `maplibreWorker.ts`.
 registerPmtilesProtocol()
+const workerUrl = configureMapLibreWorker()
 
 const formatBytes = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e3).toFixed(0)} kB`
@@ -31,6 +34,7 @@ export default function MapPanel() {
   const [rendered, setRendered] = useState<string | null>(null)
   const [stage, setStage] = useState<string | null>(null)
   const [reads, setReads] = useState<string | null>(null)
+  const [worker, setWorker] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -42,6 +46,11 @@ export default function MapPanel() {
 
   useEffect(() => {
     void refresh()
+    // A dead worker is invisible from the map's own events, so ask directly rather than
+    // waiting for a render that never comes.
+    void checkMapLibreWorker().then((problem) =>
+      setWorker(problem ? `worker BROKEN — ${problem}` : `worker ok: ${workerUrl}`),
+    )
   }, [refresh])
 
   const show = useCallback(async (name: string) => {
@@ -172,6 +181,7 @@ export default function MapPanel() {
         ))}
       </div>
 
+      {worker && <p className={worker.includes('BROKEN') ? 'error' : 'meta'}>{worker}</p>}
       {info && <p className="meta">{info}</p>}
       {stage && <p className="meta">stages: {stage}</p>}
       {reads && <p className="meta">{reads}</p>}

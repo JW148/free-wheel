@@ -200,7 +200,14 @@ async function serveStatic(req, res) {
     return
   }
 
-  for (const target of [candidate, join(DIST, 'index.html')]) {
+  // A missing build artefact must 404, not fall through to index.html. Serving a hashed
+  // asset path as HTML with a 200 is how a missing MapLibre worker chunk masqueraded as a
+  // map that simply would not render — see src/map/maplibreWorker.ts. The SPA fallback is
+  // for routes, and /assets/ never contains one.
+  const isBuildArtefact = /^assets\//.test(relative) || /\.(js|mjs|css|wasm|map)$/.test(relative)
+  const targets = isBuildArtefact ? [candidate] : [candidate, join(DIST, 'index.html')]
+
+  for (const target of targets) {
     try {
       const file = await readFile(target)
       res.writeHead(200, {

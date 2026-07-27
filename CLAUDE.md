@@ -135,7 +135,19 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   to the JVM build for a fixed route corpus. Prefer adding to that corpus over writing new
   bespoke assertions.
 - **Register `maplibregl.addProtocol()` before any `Map` is created** — it is global to the
-  module, not per-instance.
+  module, not per-instance. `setWorkerUrl()` has the same constraint; both are called at module
+  scope in `MapPanel.tsx`.
+- **MapLibre 6's worker must be pointed at explicitly.** It locates
+  `maplibre-gl-worker.mjs` from `import.meta.url` at runtime, which no bundler can follow, so
+  bundled it asks for `/assets/maplibre-gl-worker.mjs` and gets nothing. `maplibreWorkerEntry.ts`
+  makes Vite emit the chunk and `maplibreWorker.ts` feeds the URL to `setWorkerUrl()`. **This
+  cost the whole of Phase 3.** It hides well: a dev server's SPA fallback answers the missing
+  path with `index.html` and a `200`, and MapLibre's try/catch around `new Worker` cannot catch
+  an async parse failure — so the map just sits there with no error. A dead worker looks exactly
+  like a broken tile source, because *every* source type is parsed in the worker pool.
+- **The maplibre worker import must use its default export, not be a bare import.** maplibre's
+  `sideEffects` field excludes `dist/*`, so a side-effect-only import is tree-shaken and the
+  build silently emits a 0-byte worker chunk.
 - **Precache glyphs and sprites in the service worker.** PMTiles archives do not contain them
   and MapLibre fetches them separately; skipping this yields an offline map with no labels,
   which looks like a styling bug.
