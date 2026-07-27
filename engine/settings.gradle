@@ -1,0 +1,13 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'brouter-wasm'
+
+// NOTE: deliberately NOT a composite build (`includeBuild '../brouter-link'`).
+// An included build would create `.gradle/` and `build/` directories inside the
+// linked upstream BRouter checkout. We compile its sources via additive
+// sourceSet srcDirs instead, so brouter-link stays strictly read-only.

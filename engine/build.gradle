@@ -1,0 +1,272 @@
+import org.teavm.gradle.api.JSModuleType
+
+plugins {
+    id 'java'
+    id 'org.teavm' version '0.15.0'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // For org.teavm.runtime.fs.* — the VirtualFileSystem SPI that lets BRouter's
+    // RandomAccessFile I/O be redirected at OPFS without forking BRouter. These classes
+    // live in teavm-core (the toolchain), not teavm-classlib, and the TeaVM runtime
+    // supplies them to translated code; this dependency is only so our own sources
+    // compile against them.
+    implementation "org.teavm:teavm-core:0.15.0"
+}
+
+// ---------------------------------------------------------------------------
+// Upstream BRouter sources, compiled in-place from the read-only symlink.
+//
+// Phase 1: the whole routing path. These five modules have zero third-party
+// runtime dependencies, which is what makes compiling them in place viable.
+// Deliberately excluded: :brouter-server and :brouter-map-creator.
+// ---------------------------------------------------------------------------
+def brouterRoot = file('../brouter-link')
+def brouterModules = [
+    'brouter-util',
+    'brouter-codec',
+    'brouter-expressions',
+    'brouter-mapaccess',
+    'brouter-core',
+]
+
+if (!brouterRoot.exists()) {
+    throw new GradleException(
+        "brouter-link symlink is missing. Expected a checkout of upstream BRouter at ${brouterRoot}.")
+}
+
+// BRouter's sources are copied into build/brouter-src and compiled from there, rather
+// than compiled in place. Two reasons:
+//
+//  1. Two files cannot be translated as-is (see sourceSubstitutions / sourcePatches
+//     below). Copying gives a place to substitute them without ever writing to
+//     brouter-link, which is read-only.
+//  2. Both the WasmGC build and the JVM reference build compile these same outputs, so
+//     any substitution applies to both — which is what keeps GPX parity true by
+//     construction rather than by coincidence.
+def brouterSrcDir = layout.buildDirectory.dir('brouter-src')
+
+// Debug symbols in the Wasm build. Opt-in: see the wasmGC block below.
+def wasmDebug = project.hasProperty('wasmDebug')
+
+// Upstream's own version number, so the value tracks brouter-link instead of drifting.
+def brouterVersion = { ->
+    def versionFile = file("${brouterRoot}/buildSrc/src/main/groovy/brouter.version-conventions.gradle")
+    def matcher = versionFile.text =~ /(?m)^\s*version\s*=\s*'([^']+)'/
+    if (!matcher.find()) {
+        throw new GradleException("could not read the BRouter version from ${versionFile}")
+    }
+    matcher.group(1)
+}()
+
+// Files replaced wholesale by an equivalent in src/main/java.
+def sourceSubstitutions = ['btools/util/StackSampler.java']
+
+// Single-expression rewrites. Each is asserted to have applied, so an upstream change
+// breaks the build loudly instead of silently reverting to untranslatable code.
+def sourcePatches = [
+    [
+        path  : 'btools/router/OsmTrack.java',
+        find  : 'OsmTrack.class.getPackage().getImplementationVersion()',
+        replace: "\"${brouterVersion}\"",
+        // TeaVM's java.lang.Package has no getImplementationVersion(). The value is not
+        // cosmetic: FormatGpx writes it into the GPX header as creator="BRouter-<version>",
+        // so it has to be both translatable and stable for byte-identical GPX parity.
+        // Hard-coding upstream's version also matches what a real BRouter jar reports,
+        // whereas running from a classes directory would yield null.
+        reason: 'TeaVM lacks java.lang.Package.getImplementationVersion()',
+    ],
+    // ---------------------------------------------------------------------------------
+    // OsmNodesMap.cleanupPeninsulas walks the road graph depth-first with no bound, and
+    // upstream deliberately relies on `catch (StackOverflowError)` to stop it:
+    //
+    //     try { minVisitIdInSubtree(null, n); }
+    //     catch (StackOverflowError soe) { /* expected */ }
+    //
+    // On WasmGC that catch can never fire. Stack exhaustion arrives as a JS RangeError,
+    // which is not representable as a Java Throwable — it unwinds straight through every
+    // Java frame, past even `catch (Throwable)`, and escapes into JS.
+    //
+    // So the recursion is bounded explicitly instead, throwing the error upstream already
+    // expects. This restores upstream's own control flow rather than changing the
+    // algorithm, and makes the cut-off deterministic instead of dependent on whatever
+    // stack the host happens to provide (measured: ~63,500 frames in V8; JSC on iOS will
+    // be smaller). The cap is applied to the JVM reference build too, since both compile
+    // from build/brouter-src — so JVM and Wasm cut off at exactly the same place and GPX
+    // parity is preserved.
+    //
+    // Only dead-end "peninsulas" go unpruned when it fires, which enlarges the search
+    // space slightly without changing the optimal route. Verified: the reference corpus
+    // produces byte-identical GPX before and after this patch.
+    // ---------------------------------------------------------------------------------
+    [
+        path  : 'btools/mapaccess/OsmNodesMap.java',
+        find  : 'private int minVisitIdInSubtree(OsmNode source, OsmNode n) {',
+        replace: 'private int minVisitIdInSubtree(OsmNode source, OsmNode n, int depth) {\n' +
+                 '    if (depth > 200) throw new StackOverflowError(); // free-wheel: see build.gradle',
+        reason: 'WasmGC cannot surface stack exhaustion as StackOverflowError',
+    ],
+    [
+        path  : 'btools/mapaccess/OsmNodesMap.java',
+        find  : 'minVisitIdInSubtree(null, n);',
+        replace: 'minVisitIdInSubtree(null, n, 0);',
+        reason: 'threads the depth counter from the entry point',
+    ],
+    [
+        path  : 'btools/mapaccess/OsmNodesMap.java',
+        find  : 'minIdSub = minVisitIdInSubtree(n, t);',
+        replace: 'minIdSub = minVisitIdInSubtree(n, t, depth + 1);',
+        reason: 'threads the depth counter through the recursive call',
+    ],
+]
+
+def prepareBrouterSources = tasks.register('prepareBrouterSources', Sync) {
+    description = 'Copies BRouter sources out of the read-only symlink, applying build-time patches.'
+    brouterModules.each { module -> from("${brouterRoot}/${module}/src/main/java") }
+    into brouterSrcDir
+    exclude sourceSubstitutions
+
+    sourcePatches.each { patch ->
+        filesMatching(patch.path) { details ->
+            filter { line -> line.replace(patch.find, patch.replace) }
+        }
+    }
+
+    doLast {
+        sourcePatches.each { patch ->
+            def patched = brouterSrcDir.get().file(patch.path).asFile
+            if (!patched.exists()) {
+                throw new GradleException("patch target vanished: ${patch.path} — did upstream move it?")
+            }
+            def text = patched.text
+            if (text.contains(patch.find) || !text.contains(patch.replace)) {
+                throw new GradleException(
+                    "patch did not apply to ${patch.path} (${patch.reason}).\n" +
+                    "  looked for: ${patch.find}\n" +
+                    "Upstream has probably changed; re-check the substitution.")
+            }
+        }
+        sourceSubstitutions.each { path ->
+            if (brouterSrcDir.get().file(path).asFile.exists()) {
+                throw new GradleException("${path} should have been excluded but was copied")
+            }
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java', brouterSrcDir]
+        }
+    }
+}
+
+tasks.named('compileJava') { dependsOn prepareBrouterSources }
+
+java {
+    toolchain {
+        // TeaVM 0.15.0 requires JDK 17+ to *run*.
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+compileJava {
+    // Match upstream BRouter's bytecode target (brouter.java-conventions.gradle).
+    options.release = 11
+}
+
+// `options.release = 11` makes Gradle advertise this project as a JVM-11 *consumer*,
+// which then refuses org.teavm:teavm-classlib (built for 17+). The bytecode target and
+// what we can read off the classpath are separate concerns: javac on JDK 21 reads v61
+// class files regardless of --release, and TeaVM only ever runs on 17+ anyway.
+// So: still emit Java 11 bytecode, but consume 21-targeted libraries.
+[configurations.compileClasspath, configurations.runtimeClasspath].each { config ->
+    config.attributes {
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
+    }
+}
+
+teavm {
+    all {
+        mainClass = 'btools.wasm.SpikeMain'
+        // VfsProbe is not reachable from main(), so DCE would drop it along with its
+        // @JSExport methods. Preserve it explicitly rather than adding a fake call.
+        preservedClasses = ['btools.wasm.VfsProbe', 'btools.wasm.Router']
+    }
+    // The plugin appends a per-target subdirectory, so these land in
+    // web/public/engine/{wasm-gc,js}/ — served as static assets by Vite.
+    //
+    // WasmGC is TeaVM 0.15's only Wasm backend.
+    wasmGC {
+        outputDir = file('../web/public/engine')
+        // `-PwasmDebug` keeps Java names and line numbers in browser stack traces. Without
+        // it a fault inside the engine reports only `wasm-function[668]`, which localises
+        // nothing — that flag is what turned an opaque RangeError into
+        // `OsmNodesMap.minVisitIdInSubtree`. Off by default: it inflates the artifact from
+        // 1.20 MB to 1.75 MB and must not skew perf measurements.
+        obfuscated = !wasmDebug
+        debugInformation = wasmDebug
+        sourceMap = wasmDebug
+        // Emit the runtime as an ES module exporting `load`, rather than the default
+        // IIFE that installs a globalThis.TeaVM. Lets the worker import it properly.
+        modularRuntime = true
+    }
+    // Feature-detected fallback, emitted from the same source. Shipped from day
+    // one because TeaVM's maintainer considers Safari support out of scope (#1151).
+    js {
+        outputDir = file('../web/public/engine')
+        // Default is UMD, which assigns exports onto `self` in a worker. ES2015 gives
+        // real named exports so both backends load the same way.
+        moduleType = JSModuleType.ES2015
+    }
+}
+
+// Reference values and timings from the JVM, for the bit-identical parity check.
+tasks.register('jvmParity', JavaExec) {
+    group = 'verification'
+    description = 'Print JVM reference values and timings for the Spike 1 exports.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'btools.wasm.JvmParityMain'
+}
+
+// Cycling profiles, copied out of upstream so they track brouter-link rather than being
+// hand-copied and silently going stale. car-vario*.brf are deliberately NOT shipped: they
+// are the only profiles using a ---model: directive, which is the sole path reaching
+// Class.forName in RoutingContext.
+def shippedProfiles = [
+    'trekking', 'fastbike', 'fastbike-verylowtraffic', 'gravel', 'mtb', 'shortest',
+]
+
+tasks.register('syncProfiles', Sync) {
+    group = 'build'
+    description = 'Copies the cycling profiles and lookups.dat into web/public/profiles2.'
+    from("${brouterRoot}/misc/profiles2") {
+        include 'lookups.dat'
+        shippedProfiles.each { include "${it}.brf" }
+    }
+    into file('../web/public/profiles2')
+
+    doLast {
+        def missing = (shippedProfiles.collect { "${it}.brf" } + 'lookups.dat').findAll {
+            !file("../web/public/profiles2/${it}").exists()
+        }
+        if (missing) {
+            throw new GradleException("profiles missing from upstream misc/profiles2: ${missing}")
+        }
+    }
+}
+
+// Phase 1: real routes through the real engine, as the GPX parity reference.
+tasks.register('jvmRoutes', JavaExec) {
+    group = 'verification'
+    description = 'Route the reference corpus on the JVM and record GPX length + CRC-32.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'btools.wasm.JvmRouteMain'
+    // Routing wants headroom; RoutingContext.memoryclass is 128 MB.
+    maxHeapSize = '1g'
+}
