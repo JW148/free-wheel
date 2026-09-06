@@ -1,0 +1,16 @@
+{
+  "generatedBy": "JVM 21.0.12",
+  "profileDir": "../web/public/profiles2",
+  "segmentDir": "../data/segments4",
+  "routes": [
+    {"id": "urban-short", "profile": "trekking", "lonLats": "-0.1278,51.5074|-0.1425,51.5010", "note": "~1.5 km across central London; smallest useful search", "ok": true, "gpxLength": 8624, "gpxCrc32": 266934936, "jvmMs": 181.9, "tiles": ["W5_N50"]},
+    {"id": "urban-medium", "profile": "trekking", "lonLats": "-0.1278,51.5074|-0.0754,51.5155", "note": "~4 km London, City-bound; several turn decisions", "ok": true, "gpxLength": 19579, "gpxCrc32": 837626376, "jvmMs": 200.4, "tiles": ["W5_N50"]},
+    {"id": "fastbike-medium", "profile": "fastbike", "lonLats": "-0.1278,51.5074|-0.0754,51.5155", "note": "same waypoints, different cost function — proves the profile is really read", "ok": true, "gpxLength": 23800, "gpxCrc32": 2026425749, "jvmMs": 226.5, "tiles": ["W5_N50"]},
+    {"id": "shortest-medium", "profile": "shortest", "lonLats": "-0.1278,51.5074|-0.0754,51.5155", "note": "same waypoints again, minimal profile", "ok": true, "gpxLength": 20978, "gpxCrc32": -133505748, "jvmMs": 125.4, "tiles": ["W5_N50"]},
+    {"id": "gravel-medium", "profile": "gravel", "lonLats": "-0.1278,51.5074|-0.0754,51.5155", "note": "same waypoints, gravel costing", "ok": true, "gpxLength": 19211, "gpxCrc32": 3435212, "jvmMs": 161.3, "tiles": ["W5_N50"]},
+    {"id": "london-brighton", "profile": "trekking", "lonLats": "-0.1278,51.5074|-0.1372,50.8225", "note": "~76 km; the long case, and the one that will show the quadratic wall", "ok": true, "gpxLength": 235640, "gpxCrc32": 1869357118, "jvmMs": 2191.2, "tiles": ["W5_N50"]},
+    {"id": "cross-tile-short", "profile": "trekking", "lonLats": "-0.0875,51.5079|0.2196,51.4465", "note": "~25 km London Bridge to Dartford; crosses the meridian, so W5_N50 -> E0_N50", "ok": true, "gpxLength": 96527, "gpxCrc32": 73139221, "jvmMs": 559.5, "tiles": ["W5_N50", "E0_N50"]},
+    {"id": "cross-tile-long", "profile": "trekking", "lonLats": "-0.1278,51.5074|1.0789,51.2798", "note": "~90 km London to Canterbury; well into the neighbouring tile", "ok": true, "gpxLength": 289158, "gpxCrc32": 991510170, "jvmMs": 2132.9, "tiles": ["W5_N50", "E0_N50"]},
+    {"id": "east-only", "profile": "trekking", "lonLats": "0.2196,51.4465|1.0789,51.2798", "note": "~70 km entirely inside E0_N50; proves the second tile stands alone", "ok": true, "gpxLength": 186252, "gpxCrc32": -261819656, "jvmMs": 466.6, "tiles": ["E0_N50"]}
+  ]
+}

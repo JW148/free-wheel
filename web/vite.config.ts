@@ -17,12 +17,15 @@ export default defineConfig({
       // strictly required to Add to Home Screen — but it is what gives the standalone
       // display mode that the spike reports on.
       manifest: {
-        name: 'free-wheel — Spike 1',
+        name: 'free-wheel',
         short_name: 'free-wheel',
-        description: 'Offline cycle route planner: TeaVM toolchain proof',
+        description: 'Offline cycle route planner — routing and maps entirely on the phone',
         display: 'standalone',
-        background_color: '#17181d',
-        theme_color: '#17181d',
+        // Matches the ride screen's chrome, so the status bar area does not flash a
+        // different colour on launch.
+        background_color: '#14181c',
+        theme_color: '#14181c',
+        orientation: 'portrait',
         icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
       },
       workbox: {
@@ -32,7 +35,13 @@ export default defineConfig({
         // `pbf` and `png` are the glyph ranges and sprite sheet. PMTiles archives contain
         // neither, and MapLibre fetches them over the network on its own — miss them here and
         // the map goes offline with no labels and no icons, which looks like a styling bug.
-        globPatterns: ['**/*.{js,css,html,svg,json,wasm,pbf,png}'],
+        //
+        // `brf` and `dat` are the routing profiles. These normally reach the phone via
+        // `provisionOpfs` on first init, which fetches them — fine, because the first launch
+        // is online. The failure mode they close is the second one: WebKit evicts OPFS under
+        // storage pressure, and without a precached copy the profiles cannot be restored
+        // offline, so routing dies mid-ride with no way back. 144 kB is cheap for that.
+        globPatterns: ['**/*.{js,css,html,svg,json,wasm,pbf,png,brf,dat}'],
         // Without these, a new build sits in "waiting" until every tab of the app is
         // closed — and an iOS home-screen app is almost never truly closed, so a pull to
         // refresh keeps serving the previous bundle. This cost real debugging time three
@@ -42,6 +51,9 @@ export default defineConfig({
         // The tile catalogue is regenerated independently of the app bundle, so it must
         // not be frozen into a precache entry keyed by the build.
         navigateFallbackDenylist: [/^\/segments4\//, /^\/ca\.crt$/],
+        // A 76 km route's Wasm engine plus glyphs runs past the 2 MiB default, and a
+        // partially precached app is an app that fails in airplane mode.
+        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
       },
       devOptions: {
         // Exercise the service worker in `npm run dev` rather than only after a

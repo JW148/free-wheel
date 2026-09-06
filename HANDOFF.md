@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-07-26, updated 2026-07-27. Read `CLAUDE.md` first for the rules of the repo, then
+Written 2026-07-26, updated 2026-09-06. Read `CLAUDE.md` first for the rules of the repo, then
 this for where the work actually stands.
 
 `brouter-link/` is correctly excluded from git and its own checkout is clean; verify with
@@ -13,12 +13,14 @@ this for where the work actually stands.
 | **Spike 1** — TeaVM toolchain | ✅ Passed, verified on a physical iPhone |
 | **Phase 1** — Wasm engine + OPFS VFS | ✅ Passed, verified on a physical iPhone |
 | **Phase 2** — worker harness, tiles | ✅ Complete, import verified on device |
-| **Phase 3** — React/MapLibre PWA | 🟡 **Basemap renders with labels, offline** on desktop; not yet on device. Map UI outstanding |
+| **Phase 3** — React/MapLibre PWA | ✅ Basemap renders with labels, offline |
+| **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. Not yet ridden |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
-`docs/phase-2-progress.md`, `docs/phase-3-progress.md`. Each records what was measured, and —
-more usefully — where the original plan turned out to be wrong.
+`docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`. Each
+records what was measured, and — more usefully — where the original plan turned out to be
+wrong.
 
 ### The headline results, so they are not lost
 
@@ -29,34 +31,46 @@ more usefully — where the original plan turned out to be wrong.
 - **JSC's floating point matches HotSpot bit-for-bit**, which is what makes byte-identical GPX
   viable at all.
 
-## The question that was open — and its answer
+## Where to pick up
 
-**The map now renders.** It was never the OPFS pipeline, and it was never the preview browser.
+**The next action is a ride.** Everything below the acceptance test has been verified
+somewhere; none of it has been verified on a physical iPhone, which per `CLAUDE.md` is the
+only verification that counts.
 
-MapLibre GL JS 6 ships its worker as a separate file and locates it from `import.meta.url` at
-runtime, so once bundled it asked for `/assets/maplibre-gl-worker.mjs` — never emitted. Every
-source type is parsed in the worker pool, which is why OPFS-backed PMTiles, HTTP-backed
-PMTiles and a plain inline GeoJSON source all failed identically. Two things hid it: the dev
-server's SPA fallback served `index.html` with a `200` for the missing script, and MapLibre's
-try/catch around `new Worker` cannot catch an async parse failure. No 404, no error event, no
-console output.
+The acceptance test, unchanged: airplane mode, cold launch from the Home Screen, plan a route,
+follow it.
 
-Fixed in `src/map/maplibreWorkerEntry.ts` + `src/map/maplibreWorker.ts`. Full write-up, and the
-two follow-on traps (tree-shaking emitting a 0-byte worker chunk; the missing `declare module`),
-in `docs/phase-3-progress.md`.
+What is known to work, and where:
 
-Measured on desktop:
+- **Desktop** — basemap, waypoints, routing, stats, GPX export, persistence across a cold
+  reload. Edinburgh → Dalkeith on `trekking` returns 12.3 km / 40 min / 98 m, matching the GPX
+  header exactly.
+- **iOS 26.5 Simulator** — the app boots to the empty state, which is only reachable once
+  `init()` resolves. That means the WasmGC engine loads, profiles provision into OPFS, and the
+  VFS installs on real iOS WebKit. Nothing past that was exercised, because pushing a 34 MB
+  archive through the Files picker in a Simulator is not scriptable.
+- **Never** — wake lock (needs a home-screen PWA on iOS 18.4+), follow mode against a moving
+  fix, and peak memory during routing.
 
-```
-stages: dataloading → source loaded → load
-OPFS reads 6, 621 kB
-2608 features: boundaries 8, roads 565, roads-casing 567, water 31, landuse 1433, earth 4
-```
+Detail and the reasoning behind the phase's design choices are in `docs/phase-4-progress.md`.
 
-**Next action: the same check on a physical iPhone**, per the standing rule that desktop proves
-nothing about the device. The panel's diagnostics are deliberately still in place for it,
-including a `worker ok:` / `worker BROKEN` line that fetches the worker URL and checks the
-content type — the status code was `200` in the broken case, so the content type is the tell.
+## Deployment
+
+`vercel.json` at the repo root builds `web/` and serves `web/dist`. Static, no env vars, no
+backend — there is nothing to configure.
+
+This is why **`web/public/engine/` and `web/public/profiles2/` are now committed** despite
+being generated: building them needs JDK 21, Gradle, and the `brouter-link` symlink to a
+separate local checkout, and a static host's build machine has none of those. Only the
+`-PwasmDebug` sidecars (`.wasm.map`, `.teadbg`, the deobfuscator, `wasm-gc/src/`) stay
+ignored. Regenerate with Gradle and commit the result; do not hand-edit.
+
+**The data files are still not deployed, and must not be.** `.rd5` and `.pmtiles` go on the
+phone by hand — see *Tiles are import-only* below. Getting them there:
+
+1. AirDrop `data/segments4/W5_N55.rd5` and `data/basemap/edinburgh.pmtiles` from this Mac.
+2. Save to Files on the phone.
+3. In the app: Setup → Maps and data → import each one.
 
 ## Environment — the parts that will waste your time
 
@@ -81,17 +95,22 @@ account has no effect.
 
 - `data/segments4/W5_N50.rd5` — 137 MB, southern Britain
 - `data/segments4/E0_N50.rd5` — 78 MB, Kent/Belgium, for cross-tile tests
+- `data/segments4/W5_N55.rd5` — 26 MB, central Scotland; Edinburgh lives here
 - `data/basemap/london.pmtiles` — 35 MB, built by `pmtiles extract`
+- `data/basemap/edinburgh.pmtiles` — 34 MB, bbox `-3.85,55.65` to `-2.55,56.20`
 
-Re-fetch the `.rd5` files from `https://brouter.de/brouter/segments4/`. Rebuild the basemap:
+Re-fetch the `.rd5` files from `https://brouter.de/brouter/segments4/`. Rebuild a basemap:
 
 ```bash
-~/bin/pmtiles extract https://demo-bucket.protomaps.com/v4.pmtiles data/basemap/london.pmtiles \
-  --bbox=-0.35,51.35,0.15,51.65 --maxzoom=14
+~/bin/pmtiles extract https://build.protomaps.com/20260906.pmtiles data/basemap/edinburgh.pmtiles \
+  --bbox=-3.85,55.65,-2.55,56.20 --maxzoom=14
 ```
 
-That took 2.6 s and transferred 37 MB out of a 137 GB remote archive — ranged reads work
-exactly as the plan promised.
+36 MB transferred for a 34 MB archive, in 16 s. Ranged reads work exactly as the plan promised.
+
+**The source URL in the original plan is dead.** `https://demo-bucket.protomaps.com/v4.pmtiles`
+now 404s. Use the dated daily builds at `https://build.protomaps.com/YYYYMMDD.pmtiles` — and
+note they expire, `20260801` already 404s, so pick a recent date.
 
 ## Running it
 
@@ -104,8 +123,22 @@ cd engine
 
 cd ../web
 npm run build
+npx vitest run                               # gpx.ts unit tests
 npm run spike-server -- 4174                 # http, for desktop (localhost is a secure context)
 npm run spike-server-https                   # https on 4173, required for any device test
+```
+
+The iOS Simulator reaches the Mac's `localhost` directly, and `http://localhost` is a secure
+context — so unlike a physical device it needs no HTTPS and no trusted CA:
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+SIMCTL=$DEVELOPER_DIR/usr/bin/simctl          # xcode-select points at CommandLineTools here,
+$SIMCTL list devices available                # where simctl does not exist at all
+$SIMCTL boot <udid>
+$SIMCTL location <udid> set 55.9533,-3.1883   # Edinburgh, for follow mode
+$SIMCTL openurl <udid> http://localhost:4174/
+$SIMCTL io <udid> screenshot /tmp/sim.png
 ```
 
 Two servers because **OPFS needs a secure context**: `navigator.storage` is `[SecureContext]`,
@@ -160,14 +193,12 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
 
 ## Suggested order from here
 
-1. **See the basemap render on the phone** (above). Then remove the `window.__map` debug hook
-   and thin the diagnostics in `MapPanel.tsx` — but keep the `worker ok:` check, which is
-   cheap and guards a failure mode that is invisible without it.
-2. **Map UI** — waypoints, drag to reshape, profile picker, route rendering, GPX export.
-   `Router.route()` already returns GPX; `FormatJson` in brouter-core would give GeoJSON more
-   directly for rendering.
-3. Foreground following (`watchPosition` + Screen Wake Lock), and re-derive elapsed time on
-   resume — iOS suspends timers when backgrounded.
+1. **Ride with it.** Everything else is speculation until then.
+2. Re-derive elapsed time on resume — iOS suspends timers when backgrounded, so any
+   ride-duration display computed by accumulating ticks will drift. Nothing currently shows
+   elapsed time, which is why this has not bitten yet.
+3. Turn-by-turn, if the ride shows it is wanted. BRouter already computes voice hints;
+   `FormatGpx` emits them under several `turnInstructionMode` values.
 4. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
    which reduces but does not eliminate the risk: WebKit also evicts under overall system
    storage pressure, not only quota exhaustion.

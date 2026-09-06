@@ -1,0 +1,505 @@
+/*
+ * The ride screen.
+ *
+ * Two ideas drive everything here.
+ *
+ * **The map is the content.** Chrome is a bezel around it, not a set of cards floating on
+ * top of it. So the rail and the sheet are opaque, edge-to-edge and dark: they read as the
+ * instrument surround of a bike computer, they cede every spare pixel to the map, and dark
+ * slate is the one thing that never competes with a warm, light basemap.
+ *
+ * **It is read at a glance, at speed, in daylight.** Hence large tabular figures, high
+ * contrast throughout, no grey-on-white anywhere, and touch targets sized for a gloved
+ * thumb rather than a mouse.
+ *
+ * There is no webfont, deliberately. The app has to work with the network off, and shipping
+ * a font family for chrome this sparse is not worth the bytes or the offline failure mode.
+ * The system stack is SF Pro on the target device, which has genuinely good tabular
+ * numerals — those are switched on rather than left to chance.
+ */
+
+.ride {
+  --chrome: #14181c;
+  --chrome-raised: #1e252c;
+  --chrome-text: #f2f5f6;
+  --chrome-muted: #93a0a8;
+  --chrome-rule: rgb(255 255 255 / 12%);
+  /* Orange means "your route" and nothing else: the line on the map, the marker on the
+     stats rail, and the primary action are all this colour, so the connection is learnable
+     rather than decorative. */
+  --route: #e8590c;
+  --rider: #1c7ed6;
+
+  position: fixed;
+  inset: 0 0 auto;
+  /* `100dvh`, not `inset: 0`. In Safari proper the bottom toolbar overlaps a viewport-
+     height fixed element, which would bury the action bar — the one control that has to be
+     reachable. `dvh` tracks the chrome as it collapses. In a home-screen app the two are
+     identical, so this only helps and never hurts. */
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--chrome);
+  color: var(--chrome-text);
+  font-variant-numeric: tabular-nums;
+  overscroll-behavior: none;
+}
+
+.ride-map {
+  position: absolute;
+  inset: 0;
+}
+
+/* ── Stats rail ─────────────────────────────────────────────────────────────────────── */
+
+.rail {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: max(env(safe-area-inset-top), 0.5rem) max(env(safe-area-inset-right), 0.75rem) 0.6rem
+    max(env(safe-area-inset-left), 0.75rem);
+  background: var(--chrome);
+  border-bottom: 1px solid var(--chrome-rule);
+}
+
+/* The rail carries the route's own colour along its edge once there is a route to carry.
+   It is the same orange as the line below it — the rail is *about* that line. */
+.rail[data-routed='yes']::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--route);
+}
+
+.stats {
+  display: flex;
+  flex: 1;
+  gap: 1.5rem;
+  margin: 0;
+}
+
+.stats div {
+  display: flex;
+  flex-direction: column-reverse; /* value above label, without reordering the markup */
+}
+
+.stats dd {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.stats dt {
+  font-size: 0.72rem;
+  color: var(--chrome-muted);
+  letter-spacing: 0.01em;
+}
+
+.rail-hint {
+  flex: 1;
+  margin: 0;
+  padding: 0.35rem 0;
+  font-size: 0.95rem;
+  color: var(--chrome-muted);
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────────────────── */
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--chrome-rule);
+  border-radius: 10px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  cursor: pointer;
+}
+
+.icon-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.icon-button[data-active='yes'] {
+  background: var(--rider);
+  border-color: var(--rider);
+  color: #fff;
+}
+
+.icon-button[data-active='yes'] svg path {
+  fill: currentColor;
+}
+
+.map-controls {
+  position: absolute;
+  z-index: 2;
+  right: max(env(safe-area-inset-right), 0.75rem);
+  /* Clear of the sheet, which is the tallest thing on this edge. */
+  bottom: calc(env(safe-area-inset-bottom) + 6.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.map-controls .icon-button {
+  box-shadow: 0 2px 10px rgb(0 0 0 / 30%);
+}
+
+.following-note {
+  position: absolute;
+  z-index: 2;
+  left: max(env(safe-area-inset-left), 0.75rem);
+  bottom: calc(env(safe-area-inset-bottom) + 6.5rem);
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  background: rgb(20 24 28 / 88%);
+  font-size: 0.8rem;
+  color: var(--chrome-text);
+}
+
+.ride-error {
+  position: absolute;
+  z-index: 3;
+  inset-inline: max(env(safe-area-inset-left), 0.75rem) max(env(safe-area-inset-right), 0.75rem);
+  top: calc(env(safe-area-inset-top) + 4.5rem);
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  background: #7a1d1d;
+  color: #ffecec;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────────────────── */
+
+.curtain {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem 1.5rem;
+  background: var(--chrome);
+}
+
+.curtain h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.curtain p {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--chrome-muted);
+  line-height: 1.5;
+}
+
+/* ── Waypoint pins ──────────────────────────────────────────────────────────────────── */
+
+/* A round pin with a white ring, sitting on the point rather than above it. The obvious
+   teardrop shape needs a 45deg rotation, which rotates the letter inside it too — and the
+   letter is the part that has to be readable. A ring reads as a map pin regardless. */
+.pin {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--chrome);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+  cursor: pointer;
+}
+
+.pin[data-role='start'] {
+  background: #2f9e44;
+}
+
+.pin[data-role='finish'] {
+  background: var(--route);
+}
+
+.pin[data-role='via'] {
+  background: #495057;
+}
+
+/* ── Sheet ──────────────────────────────────────────────────────────────────────────── */
+
+.sheet {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  background: var(--chrome);
+  border-top: 1px solid var(--chrome-rule);
+  padding-bottom: env(safe-area-inset-bottom);
+  max-height: 70vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sheet-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+  padding: 0.7rem max(env(safe-area-inset-right), 0.75rem) 0.7rem
+    max(env(safe-area-inset-left), 0.75rem);
+}
+
+.sheet-toggle {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.1rem;
+  min-height: 3.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--chrome-rule);
+  border-radius: 10px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sheet-profile {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sheet-count {
+  font-size: 0.78rem;
+  color: var(--chrome-muted);
+}
+
+.primary {
+  min-width: 8.5rem;
+  min-height: 3.25rem;
+  padding: 0 1.1rem;
+  border: none;
+  border-radius: 10px;
+  background: var(--route);
+  color: #fff;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  background: var(--chrome-raised);
+  color: var(--chrome-muted);
+  cursor: default;
+}
+
+.primary.busy {
+  background: #495057;
+}
+
+.sheet-body {
+  display: grid;
+  gap: 1.25rem;
+  padding: 0.25rem max(env(safe-area-inset-right), 0.75rem) 1rem
+    max(env(safe-area-inset-left), 0.75rem);
+  border-top: 1px solid var(--chrome-rule);
+  padding-top: 1rem;
+}
+
+.warn {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: #4a3410;
+  color: #ffe8bd;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.profiles {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.profiles legend {
+  padding: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--chrome-muted);
+}
+
+.profiles label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  min-height: 2.9rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--chrome-rule);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.profiles label[data-selected='yes'] {
+  border-color: var(--route);
+  background: rgb(232 89 12 / 12%);
+}
+
+.profiles input {
+  grid-row: span 2;
+  align-self: center;
+  accent-color: var(--route);
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+}
+
+.profile-label {
+  font-weight: 600;
+}
+
+.profile-note {
+  grid-column: 2;
+  font-size: 0.8rem;
+  color: var(--chrome-muted);
+}
+
+.waypoints {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.waypoints li {
+  display: grid;
+  grid-template-columns: 5rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--chrome-rule);
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+
+.waypoint-role {
+  font-weight: 600;
+}
+
+.waypoint-coords {
+  color: var(--chrome-muted);
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.sheet-body button:not(.primary),
+.sheet-actions button {
+  min-height: 2.9rem;
+  padding: 0 1rem;
+  border: 1px solid var(--chrome-rule);
+  border-radius: 10px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.sheet-body button:disabled {
+  color: var(--chrome-muted);
+  cursor: default;
+}
+
+.sheet-actions button {
+  flex: 1;
+}
+
+/* ── Setup overlay ──────────────────────────────────────────────────────────────────── */
+
+/* Setup sits above the ride screen rather than replacing it, so the map keeps its state —
+   its tiles, its centre, and its OPFS handles — while tiles are imported behind it. */
+.setup {
+  position: fixed;
+  z-index: 10;
+  inset: 0 0 auto;
+  height: 100dvh;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.setup-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+
+.setup-header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.setup-close {
+  min-height: 2.75rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:where(button, input, a):focus-visible {
+  outline: 2px solid var(--route);
+  outline-offset: 2px;
+}

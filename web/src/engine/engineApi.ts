@@ -117,6 +117,20 @@ const engineApi = {
     const installed = wasm.OpfsVirtualFileSystem.installOpfsVfs()
     if (installed !== 'ok') throw new Error(`could not install the VFS: ${installed}`)
 
+    // Open the imported tiles here, not somewhere in the UI.
+    //
+    // Two things depend on it, and both are invisible until a route is attempted. Reads are
+    // synchronous, so every `.rd5` handle must already be open — a sync `read()` can never
+    // open one. And the VFS's directory registry is in-memory, populated as files are opened,
+    // so without this `/segments4` simply is not known to exist and BRouter fails with
+    // "segment directory /segments4 does not exist" while the files sit there in OPFS.
+    //
+    // This used to happen by accident: `TilesPanel` called `installedTiles()` on mount, and it
+    // mounted on every page load. Once it moved behind Setup, a cold start that went straight
+    // to routing never opened anything — which is exactly the ride-day path (plan at home,
+    // reopen on the bike, reroute). The engine must not depend on a component having mounted.
+    await installedTiles()
+
     return { files: provisionedFiles() }
   },
 

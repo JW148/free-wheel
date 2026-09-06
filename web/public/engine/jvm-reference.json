@@ -1,0 +1,15 @@
+{
+  "generatedBy": "JVM 21.0.12 (OpenJDK 64-Bit Server VM)",
+  "cases": [
+    {"id": "distance/hyde-park-corner", "kind": "distanceBits", "args": [51.502, -0.152, 51.507, -0.144], "expected": "40888e141c1bc8d4", "note": "~800 m; sub-kilometre precision (JVM: 785.7598192377723 m)"},
+    {"id": "distance/london-brighton", "kind": "distanceBits", "args": [51.5074, -0.1278, 50.8225, -0.1372], "expected": "40f29a70c9fa3447", "note": "~76 km; a realistic single-day route length (JVM: 76199.04931087895 m)"},
+    {"id": "distance/london-paris", "kind": "distanceBits", "args": [51.5074, -0.1278, 48.8566, 2.3522], "expected": "4114ff872466efb6", "note": "~340 km; spans multiple scale-cache buckets (JVM: 344033.7855489211 m)"},
+    {"id": "heap/1000", "kind": "heapBenchmark", "args": [1000], "expected": "353718958", "note": "small heap, stays in the low bins"},
+    {"id": "heap/200000", "kind": "heapBenchmark", "args": [200000], "expected": "-1074197140", "note": "forces repeated bin merges; the shape of a real route search"},
+    {"id": "crc/1000", "kind": "crcBenchmark", "args": [1000], "expected": "-1041974739", "note": "1000 passes over 4 KB"}
+  ],
+  "benchmarks": [
+    {"id": "bench/heap/200000", "kind": "heapBenchmark", "args": [200000], "iterations": 5, "jvmBestMs": 21.516},
+    {"id": "bench/crc/5000", "kind": "crcBenchmark", "args": [5000], "iterations": 5, "jvmBestMs": 42.11}
+  ]
+}
