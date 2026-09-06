@@ -137,21 +137,44 @@ async function directoryFor(path: string): Promise<FileSystemDirectoryHandle> {
  * would fail. Sharing one registry is what lets a tile be downloaded and then routed against
  * without closing anything in between.
  */
-export async function openHandle(path: string): Promise<SyncAccessHandle> {
+/**
+ * Opens in flight, keyed by path.
+ *
+ * Two callers asking for the same file concurrently must not both reach
+ * `createSyncAccessHandle()` — OPFS permits exactly one open handle per file, so the second
+ * throws `InvalidStateError: Access Handles cannot be created...`. The `files` cache alone
+ * cannot prevent it, because neither call has populated it yet while both are still awaiting.
+ *
+ * This is not hypothetical: the startup check and the map controller both ask the engine what
+ * is installed as the app boots, and the collision made a fully provisioned app report that
+ * it had no data at all.
+ */
+const opening = new Map<string, Promise<SyncAccessHandle>>()
+
+export function openHandle(path: string): Promise<SyncAccessHandle> {
   assertOpfsAvailable()
   const key = normalise(path)
 
   const existing = files.get(key)
-  if (existing) return existing.handle
+  if (existing) return Promise.resolve(existing.handle)
 
-  const dir = await directoryFor(key)
-  const name = key.slice(key.lastIndexOf('/') + 1)
-  const fileHandle = (await dir.getFileHandle(name, { create: true })) as FileHandleWithSync
-  const handle = await fileHandle.createSyncAccessHandle()
+  const inFlight = opening.get(key)
+  if (inFlight) return inFlight
 
-  files.set(key, { handle, size: handle.getSize() })
-  registerDirectories(key)
-  return handle
+  const attempt = (async () => {
+    const dir = await directoryFor(key)
+    const name = key.slice(key.lastIndexOf('/') + 1)
+    const fileHandle = (await dir.getFileHandle(name, { create: true })) as FileHandleWithSync
+    const handle = await fileHandle.createSyncAccessHandle()
+
+    files.set(key, { handle, size: handle.getSize() })
+    registerDirectories(key)
+    return handle
+  })()
+
+  opening.set(key, attempt)
+  // Cleared either way: a failed open must not poison every later attempt on that path.
+  return attempt.finally(() => opening.delete(key))
 }
 
 /**
@@ -387,6 +410,7 @@ export function installVfsBridge(): void {
 export function closeOpfs(): void {
   for (const { handle } of files.values()) handle.close()
   files.clear()
+  opening.clear()
   directories.clear()
   directories.add('/')
 }
