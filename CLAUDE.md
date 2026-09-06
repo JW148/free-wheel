@@ -195,7 +195,17 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **Imported tiles go stale.** brouter.de rebuilds weekly; imports are snapshots that never
   update. Surface the age rather than hiding it.
 - **Only one open OPFS sync access handle per file.** The engine's VFS and the tile downloader
-  therefore share one registry in `opfsVfs.ts` — never open handles elsewhere.
+  therefore share one registry in `opfsVfs.ts` — never open handles elsewhere. The registry
+  also de-duplicates *in-flight* opens: two concurrent `openHandle` calls for one path would
+  otherwise both reach `createSyncAccessHandle()` and the second throws `InvalidStateError`,
+  because neither has populated the cache yet. Two Safari tabs collide the same way, and
+  there is nothing the app can do about that one.
+- **`zoom` must be the input to a top-level `interpolate` or `step`**, and **every `fill`
+  layer must filter to `['==', ['geometry-type'], 'Polygon']`.** Protomaps ships canals,
+  streams and rivers as LineStrings in the same `water` source-layer as lakes, and MapLibre's
+  fill bucket closes a LineString into a ring and fills it — an unfiltered fill paints a canal
+  as a lake-sized slab across the tile. `src/map/style.test.ts` asserts the guard on every
+  fill layer.
 - **`RoutingEngine.terminate()` can't cancel from a Worker.** It is cooperative and needs a
   second thread; during `doRun` the Worker is blocked in Wasm and processes no messages.
   `EngineClient.cancel()` terminates the Worker instead.

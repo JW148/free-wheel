@@ -144,6 +144,65 @@ closes is the second one: WebKit evicts OPFS under storage pressure, and without
 copy the profiles cannot be restored offline, so routing dies mid-ride with no way back.
 144 kB for that is cheap. Precache is now 40 entries, 5.0 MB.
 
+## Round two: acting on ride feedback
+
+The first build was ridden-adjacent, not rideable. What came back, and what changed.
+
+### The map was torn — and it was our style, not the data
+
+Wide blue slabs across the basemap, on desktop as well as iOS. Decoding tile `14/8045/5107`
+directly settled it:
+
+```
+water: LineString kind=canal x1, LineString kind=stream x1, Polygon kind=water x2
+```
+
+Protomaps ships **linear water in the same source-layer as areal water**, and MapLibre's fill
+bucket closes a LineString into a ring and fills it. The Union Canal was being painted as a
+lake. London was affected too — the Thames is a real polygon, which masked it.
+
+Every fill layer now filters to `Polygon`, not just `water`: `landuse` and `landcover` carry
+linear features elsewhere. Linear water returns as a `line` layer rather than being dropped,
+because a canal towpath is worth riding on. `style.test.ts` asserts the guard so a new fill
+layer cannot reintroduce it.
+
+### Dark by default, light one tap away
+
+The chrome went from an opaque bezel to translucent panels floating over a full-bleed map.
+The map is the content; framing it wasted screen and read as a web page rather than an app.
+
+Both palettes exist because the trade-off is real: dark recedes behind the route and suits
+dusk and OLED, but a dark map in direct sunlight loses to glare. The *map* switches; the UI
+around it does not. Having two notions of "theme" was what produced a white button with white
+text on the dark setup screen, so the chrome tokens are now unconditionally dark.
+
+### Elevation and comparison, from data already in hand
+
+BRouter returns a `<ele>` per track point and the app was discarding it. The x-axis is summed
+from coordinates; extremes come from every point rather than the downsampled ones, since the
+summit is usually a point sampling dropped.
+
+Comparison routes several profiles sequentially — the Worker blocks inside Wasm, so parallel
+issuing would queue anyway and lose the per-profile progress. Colours are fixed per profile
+and never cycled: adding a fourth must not repaint the other three. The palette was run
+through a CVD validator against the dark surface (worst adjacent pair ΔE 11.5 deuteranopia,
+24.4 normal), and rows carry a label and swatch so identity is never colour alone.
+
+### Cycle-specific tiles: not possible as originally done
+
+The dissertation app used an online raster cycle-tile provider. That is fundamentally
+incompatible with offline-first — there is no archive to import and no legal bulk cache. The
+achievable version is styling the Protomaps vector data to emphasise cycleways and surface,
+which is deferred, not blocked.
+
+### A second concurrency bug
+
+The startup check and the map controller now both ask the engine what is installed at boot.
+Two concurrent `openHandle` calls for one path both reached `createSyncAccessHandle()`, the
+second threw, and a fully provisioned app reported having no data. `openHandle` now returns
+the in-flight promise per path. Note this is the same constraint that makes **two Safari tabs**
+fatal — that one the app cannot fix, only report better.
+
 ## Not verified, and why
 
 - **Anything past the empty state on the Simulator.** Getting a 34 MB archive through the
