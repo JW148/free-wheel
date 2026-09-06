@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Map as MapLibreMap } from 'maplibre-gl'
+import { AttributionControl, Map as MapLibreMap } from 'maplibre-gl'
 import { mountBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
 import { checkMapLibreWorker, configureMapLibreWorker } from '../map/maplibreWorker'
 import { basemapStyle, type MapTheme } from '../map/style'
@@ -82,13 +82,16 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
           // scaling the deepest tile it has, so capping here would put street-level detail
           // permanently out of reach on a map whose whole job is street-level detail.
           maxZoom: Math.min(header.maxZoom + 5, 19),
-          attributionControl: { compact: true },
+          // Added by hand below so it can go bottom-*left*. The default corner is
+          // bottom-right, which is where the control column and the action bar both live.
+          attributionControl: false,
           // A rotated map is disorienting on a bike and easy to trigger by accident with a
           // gloved two-finger touch. Pitch likewise buys nothing here.
           pitchWithRotate: false,
           dragRotate: false,
         })
         created.touchZoomRotate.disableRotation()
+        created.addControl(new AttributionControl({ compact: true }), 'bottom-left')
 
         created.on('error', (e) => setError(e.error?.message ?? 'map error'))
         created.once('load', () => {

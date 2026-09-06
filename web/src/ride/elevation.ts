@@ -70,3 +70,54 @@ export function elevationProfile(route: ParsedRoute): ElevationProfileData | nul
 
   return { points, minElevM, maxElevM, totalDistanceM }
 }
+
+/** One route's profile, ready to plot on axes shared with the others. */
+export interface ComparisonSeries {
+  /** The profile id, so the caller can look up its colour and label. */
+  id: string
+  points: ElevationPoint[]
+}
+
+export interface ElevationComparison {
+  series: ComparisonSeries[]
+  /** The longest route's length. Every series is plotted against this, so a shorter one
+   *  visibly stops short rather than being stretched to the full width. */
+  maxDistanceM: number
+  /** Shared vertical extent across every series. */
+  minElevM: number
+  maxElevM: number
+}
+
+/**
+ * Several routes' profiles on one pair of axes.
+ *
+ * The whole value is in the axes being *shared*. Six separate charts, each auto-scaled to its
+ * own route, is what the detail view already gives you one at a time — and it is actively
+ * misleading side by side, because the flattest route and the hilliest one both fill the box.
+ * Plotting against a common distance and a common height is what makes "at a glance" mean
+ * anything: a route that stops short is shorter, and a line that sits higher climbs more.
+ *
+ * Returns `null` for fewer than two plottable routes — there is nothing to compare, and the
+ * detail view's single profile is the better thing to show.
+ */
+export function elevationComparison(
+  routes: Record<string, ParsedRoute>,
+): ElevationComparison | null {
+  const series: ComparisonSeries[] = []
+  let maxDistanceM = 0
+  let minElevM = Infinity
+  let maxElevM = -Infinity
+
+  for (const [id, route] of Object.entries(routes)) {
+    const profile = elevationProfile(route)
+    // A route with one point has no profile; one with no length would divide by zero below.
+    if (!profile || profile.totalDistanceM === 0) continue
+    series.push({ id, points: profile.points })
+    maxDistanceM = Math.max(maxDistanceM, profile.totalDistanceM)
+    minElevM = Math.min(minElevM, profile.minElevM)
+    maxElevM = Math.max(maxElevM, profile.maxElevM)
+  }
+
+  if (series.length < 2) return null
+  return { series, maxDistanceM, minElevM, maxElevM }
+}

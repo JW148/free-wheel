@@ -3,60 +3,9 @@ import { sharedEngine } from '../engine/engineClient'
 import { tilesForWaypoints } from '../engine/tiles'
 import { haversineM } from './geo'
 import { parseBrouterGpx, type ParsedRoute } from './gpx'
+import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
 
-export interface Waypoint {
-  id: string
-  lon: number
-  lat: number
-}
-
-/**
- * The profiles shipped in `public/profiles2`, in the order a cyclist is likely to want them.
- *
- * Each carries the colour used **when several are compared at once**. A lone route is drawn
- * near-white instead (see {@link SOLO_ROUTE_COLOUR}) — the chrome is deliberately free of hue,
- * and a single line does not need one to be unambiguous.
- *
- * Hue only appears where it earns its place. Three fully neutral colours are not separable:
- * checked against a dark surface, the best neutral trio managed ΔE 12.7 for normal vision
- * against a floor of 15 — unreadable as categories. These three (amber, slate blue, sage) pass
- * all six checks: worst adjacent pair ΔE 17.3 deuteranopia, 18.0 normal. They are muted enough
- * to sit with the slate palette and none of them is the orange that started this.
- *
- * Assigned by profile and never cycled, so ticking a fourth profile cannot repaint the three
- * already on screen — which would make the map unreadable exactly when you are reading it.
- * Rows carry a label and a swatch as well, so identity is never colour alone.
- */
-export const PROFILES = [
-  {
-    id: 'trekking',
-    label: 'Trekking',
-    note: 'The sane default — quiet roads and decent surfaces',
-    colour: '#b8873c',
-  },
-  { id: 'fastbike', label: 'Fast', note: 'Road bike; prefers speed over quiet', colour: '#4a86c4' },
-  { id: 'gravel', label: 'Gravel', note: 'Happy on unsurfaced tracks', colour: '#5a9e63' },
-  {
-    id: 'fastbike-verylowtraffic',
-    label: 'Fast, quiet',
-    note: 'Road bike, traffic-averse',
-    colour: '#9d7fa8',
-  },
-  { id: 'mtb', label: 'MTB', note: 'Off-road', colour: '#c4707a' },
-  {
-    id: 'shortest',
-    label: 'Shortest',
-    note: 'Distance only, ignores surface and traffic',
-    colour: '#7f9aa8',
-  },
-] as const
-
-/** What a single route is drawn in: the lightest slate, maximum contrast, no hue. */
-export const SOLO_ROUTE_COLOUR = '#ccd0cf'
-
-export type ProfileId = (typeof PROFILES)[number]['id']
-
-export const profileById = (id: string) => PROFILES.find((p) => p.id === id) ?? PROFILES[0]
+export type { Waypoint } from './plan'
 
 /**
  * Air distance beyond which BRouter's search gets uncomfortably slow on a phone.
@@ -67,41 +16,15 @@ export const profileById = (id: string) => PROFILES.find((p) => p.id === id) ?? 
  */
 const AIR_DISTANCE_CEILING_M = 150_000
 
-const STORAGE_KEY = 'free-wheel.plan.v2'
-
 /**
- * Plans go in localStorage so one survives the app being closed.
+ * The plan: waypoints, which profiles to route them with, and which result the rider picked.
  *
- * That matters more here than in most apps: the realistic workflow is planning at home and
- * riding hours later, by which time iOS has certainly evicted the page. GPX is stored
- * verbatim rather than parsed, because it is also what Export hands over — one
- * representation, no chance of the two drifting.
+ * `chosen` is the load-bearing piece. It is `null` while a comparison is open, and only a
+ * rider's tap — on a line on the map, or on a row in the sheet — fills it in. Everything
+ * downstream keys off that: the stats rail, the elevation profile, whether Start is offered,
+ * and which line is drawn thick. The one exception is a run that returns a single route,
+ * where there is nothing to weigh and committing saves a pointless tap.
  */
-const MAX_STORED_GPX = 2_000_000
-
-interface StoredPlan {
-  waypoints: Waypoint[]
-  selection: string[]
-  focused: string
-  gpx?: Record<string, string>
-}
-
-function loadPlan(): StoredPlan {
-  const fallback: StoredPlan = { waypoints: [], selection: ['trekking'], focused: 'trekking' }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return fallback
-    const parsed = JSON.parse(raw) as StoredPlan
-    if (!Array.isArray(parsed.waypoints) || !Array.isArray(parsed.selection)) return fallback
-    if (parsed.selection.length === 0) return fallback
-    return parsed
-  } catch {
-    // A corrupt plan must never stop the app starting — the map and a fresh set of
-    // waypoints are still perfectly useful.
-    return fallback
-  }
-}
-
 export function useRoute() {
   const restored = useRef<StoredPlan | null>(null)
   restored.current ??= loadPlan()
@@ -109,8 +32,8 @@ export function useRoute() {
   const [waypoints, setWaypoints] = useState<Waypoint[]>(restored.current.waypoints)
   /** Profiles to route. One is the normal case; several is a comparison. */
   const [selection, setSelection] = useState<string[]>(restored.current.selection)
-  /** Which result the stats rail and the elevation profile describe. */
-  const [focused, setFocused] = useState<string>(restored.current.focused)
+  /** The profile the rider committed to, or `null` while a comparison is still open. */
+  const [chosen, setChosen] = useState<string | null>(restored.current.chosen)
   const [gpx, setGpx] = useState<Record<string, string>>(restored.current.gpx ?? {})
   const [routes, setRoutes] = useState<Record<string, ParsedRoute>>(() => {
     const parsed: Record<string, ParsedRoute> = {}
@@ -129,15 +52,8 @@ export function useRoute() {
   // Persist on change. The alternative — persisting on unload — does not fire reliably when
   // iOS kills a backgrounded web app.
   useEffect(() => {
-    try {
-      const plan: StoredPlan = { waypoints, selection, focused }
-      const total = Object.values(gpx).reduce((n, doc) => n + doc.length, 0)
-      if (total > 0 && total < MAX_STORED_GPX) plan.gpx = gpx
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(plan))
-    } catch {
-      // Quota, or private browsing. Losing persistence is not worth breaking the ride over.
-    }
-  }, [waypoints, selection, focused, gpx])
+    savePlan({ waypoints, selection, chosen, gpx })
+  }, [waypoints, selection, chosen, gpx])
 
   const addWaypoint = useCallback((lon: number, lat: number) => {
     setWaypoints((current) => [...current, { id: crypto.randomUUID(), lon, lat }])
@@ -155,22 +71,45 @@ export function useRoute() {
     setWaypoints([])
     setRoutes({})
     setGpx({})
+    setChosen(null)
     setError(null)
   }, [])
 
-  /** Toggles a profile in or out of the comparison, never leaving the selection empty. */
+  /**
+   * Toggles a profile in or out of the comparison, never leaving the selection empty.
+   *
+   * Deliberately does *not* choose the profile it adds. Ticking a box says "route this too";
+   * choosing is a separate act, and conflating them is what made the old elevation profile
+   * ambiguous. Unticking the chosen profile does drop the choice — it would otherwise point
+   * at something no longer on the map.
+   */
   const toggleProfile = useCallback((id: string) => {
     setSelection((current) => {
       if (current.includes(id)) {
         if (current.length === 1) return current
-        const next = current.filter((p) => p !== id)
-        setFocused((f) => (f === id ? next[0] : f))
-        return next
+        setChosen((c) => (c === id ? null : c))
+        return current.filter((p) => p !== id)
       }
-      setFocused(id)
       return [...current, id]
     })
   }, [])
+
+  /** Commits to one of the computed routes. Ignored for a profile with no result to ride. */
+  const chooseProfile = useCallback(
+    (id: string) => {
+      if (routes[id]) setChosen(id)
+    },
+    [routes],
+  )
+
+  /**
+   * Puts a comparison back the way it was: no choice, every route in its own colour.
+   *
+   * The counterpart to {@link chooseProfile}, and the thing whose absence made a choice a
+   * one-way door — once `chosen` was set there was no way back to the state that let you
+   * weigh the routes against each other.
+   */
+  const clearChoice = useCallback(() => setChosen(null), [])
 
   const run = useCallback(async () => {
     if (waypoints.length < 2) {
@@ -178,6 +117,7 @@ export function useRoute() {
       return
     }
     setError(null)
+    setChosen(null)
     const lonLats = waypoints.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
     const computed: Record<string, ParsedRoute> = {}
@@ -205,13 +145,11 @@ export function useRoute() {
     setRouting(null)
     setRoutes(computed)
     setGpx(documents)
+    setChosen(chosenAfterRun(Object.keys(computed)))
 
     // A partial comparison is still useful — say what failed rather than discarding the rest.
     if (failures.length) setError([...new Set(failures)].join(' '))
-    if (Object.keys(computed).length > 0 && !computed[focused]) {
-      setFocused(Object.keys(computed)[0])
-    }
-  }, [waypoints, selection, focused])
+  }, [waypoints, selection])
 
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
@@ -223,16 +161,23 @@ export function useRoute() {
   return {
     waypoints,
     selection,
-    focused,
+    /** The profile the rider committed to, or `null` while a comparison is open. */
+    chosen,
     routes,
     gpx,
-    /** The result the rail and elevation profile describe, if there is one. */
-    route: routes[focused] ?? null,
-    focusedGpx: gpx[focused] ?? null,
+    /** The chosen route, if one has been chosen. What the rail and the detail view describe. */
+    route: chosen ? routes[chosen] ?? null : null,
+    chosenGpx: chosen ? gpx[chosen] ?? null : null,
     routing,
     error,
     warning: longRouteWarning(waypoints, selection.length),
-    setFocused,
+    chooseProfile,
+    clearChoice,
+    /**
+     * Whether a choice exists that is worth reverting. A lone route is not a comparison:
+     * there is nothing to go back to, and clearing would only disable Start.
+     */
+    clearableChoice: chosen !== null && Object.keys(routes).length > 1,
     toggleProfile,
     addWaypoint,
     moveWaypoint,
@@ -243,6 +188,8 @@ export function useRoute() {
     setError,
   }
 }
+
+export type Plan = ReturnType<typeof useRoute>
 
 /**
  * Turns BRouter's diagnostics into something actionable.

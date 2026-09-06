@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Marker } from 'maplibre-gl'
+import { Marker, type MapMouseEvent } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
-import { profileById, SOLO_ROUTE_COLOUR, useRoute } from './useRoute'
+import { useRoute } from './useRoute'
 import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
-import { boundsOf, setPosition, setRoutes, type DrawnRoute } from './routeLayers'
+import { boundsOf, drawnRoutes, mapTapAction, routeAt, setPosition, setRoutes } from './routeLayers'
 import { formatDistance, formatDuration } from './gpx'
 import RouteSheet from './RouteSheet'
+import { useRouteSheet } from './useRouteSheet'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -34,6 +35,7 @@ export default function RideView({
 }) {
   const { map, error: mapError, styleReady, workerProblem, theme, setTheme } = basemap
   const plan = useRoute()
+  const sheet = useRouteSheet(plan)
   const [riding, setRiding] = useState(false)
   /**
    * Whether a tap on the map drops a waypoint.
@@ -57,17 +59,37 @@ export default function RideView({
   moveWaypoint.current = plan.moveWaypoint
   const removeWaypoint = useRef(plan.removeWaypoint)
   removeWaypoint.current = plan.removeWaypoint
+  const chooseRoute = useRef(sheet.choose)
+  chooseRoute.current = sheet.choose
+  const clearChoice = useRef(plan.clearChoice)
+  clearChoice.current = plan.clearChoice
+  // Choosing is a planning act. Mid-ride the decision is made, and a bump in the road that
+  // lands a tap on the line must not throw the drawer over the map being navigated by.
+  const canChoose = useRef(true)
+  canChoose.current = !riding
+  const clearable = useRef(false)
+  clearable.current = plan.clearableChoice
   const editable = placing && !riding
   const canPlace = useRef(editable)
   canPlace.current = editable
+  const closeSheet = useRef<() => void>(() => {})
+  closeSheet.current = () => sheet.setOpen(false)
 
-  // ── Tap to place a waypoint ────────────────────────────────────────────────────────────
+  // ── Tap to choose a route, clear a choice, or place a waypoint ─────────────────────────
+  // Three intents, one gesture. `mapTapAction` owns the precedence and is tested directly.
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
-    const onClick = (e: { lngLat: { lng: number; lat: number } }) => {
-      if (!canPlace.current) return
-      addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
+    const onClick = (e: MapMouseEvent) => {
+      const action = mapTapAction({
+        profileUnderTap: canChoose.current ? routeAt(instance, e.point) : null,
+        choosing: canChoose.current,
+        clearableChoice: clearable.current,
+        placing: canPlace.current,
+      })
+      if (action.do === 'choose') chooseRoute.current(action.profile)
+      else if (action.do === 'clear') clearChoice.current()
+      else if (action.do === 'place') addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
     }
     instance.on('click', onClick)
     return () => {
@@ -138,15 +160,14 @@ export default function RideView({
     const instance = map.current
     if (!instance || !styleReady) return
 
-    // One route needs no hue to be unambiguous, so it gets the neutral near-white. Colours
-    // appear only once there is something to tell apart.
-    const ids = Object.keys(plan.routes)
-    const drawn: DrawnRoute[] = Object.entries(plan.routes).map(([id, route]) => ({
-      id,
-      coords: route.coords,
-      colour: ids.length > 1 ? profileById(id).colour : SOLO_ROUTE_COLOUR,
-      focused: id === plan.focused,
-    }))
+    // While riding, the comparison is over: only the route being ridden is drawn, and it is
+    // drawn as a lone route — neutral near-white, maximum contrast for a glance at speed. The
+    // rejected routes stay in state, so ending the ride puts the comparison back.
+    const chosenRoute = plan.chosen ? plan.routes[plan.chosen] : undefined
+    const visible =
+      riding && plan.chosen && chosenRoute ? { [plan.chosen]: chosenRoute } : plan.routes
+    const ids = Object.keys(visible)
+    const drawn = drawnRoutes(visible, plan.chosen)
     setRoutes(instance, drawn)
 
     // Fit only when the *set* of routes changes, and never while riding — the camera belongs
@@ -161,7 +182,7 @@ export default function RideView({
       }
     }
     if (drawn.length === 0) lastFitted.current = null
-  }, [map, styleReady, plan.routes, plan.focused, plan.waypoints.length, riding])
+  }, [map, styleReady, plan.routes, plan.chosen, plan.waypoints.length, riding])
 
   // ── The rider ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -181,6 +202,9 @@ export default function RideView({
   const startRiding = useCallback(async () => {
     setRiding(true)
     setPlacing(false)
+    // Ride can be started from inside the drawer, which covers the map it is about to lock
+    // to the rider.
+    closeSheet.current()
     const here = await locateOnce()
     if (!map.current) return
     map.current.easeTo({
@@ -192,6 +216,8 @@ export default function RideView({
 
   const problem = plan.error ?? mapError ?? fixError ?? workerProblem
   const route = plan.route
+  /** How many routes are on the map. More than one, with none chosen, is the decision state. */
+  const routeCount = Object.keys(plan.routes).length
 
   if (riding) {
     return (
@@ -272,6 +298,10 @@ export default function RideView({
                 <dt>climbing</dt>
               </div>
             </dl>
+          ) : routeCount > 1 ? (
+            <p className="rail-hint panel">
+              {routeCount} routes — tap one to choose it.
+            </p>
           ) : (
             <p className="rail-hint panel">
               {plan.waypoints.length === 0
@@ -333,7 +363,7 @@ export default function RideView({
           </button>
         </div>
 
-        <RouteSheet plan={plan} onStart={() => void startRiding()} />
+        <RouteSheet plan={plan} sheet={sheet} onStart={() => void startRiding()} />
       </div>
     </div>
   )

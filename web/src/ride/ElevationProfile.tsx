@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { elevationProfile } from './elevation'
 import { formatDistance } from './gpx'
 import type { ParsedRoute } from './gpx'
@@ -10,9 +10,14 @@ import type { ParsedRoute } from './gpx'
  * precached, and this is one series with no axes worth the name. A chart library would be
  * more code than the chart.
  *
- * One series, so there is no legend — the heading names it. The readout replaces a tooltip:
- * on a phone there is no hover, so dragging along the profile is the equivalent gesture, and
- * it answers the question actually being asked ("how bad is the bit at 8 km?").
+ * One series, so there is no legend — but the series has to be *named*, and drawn in the same
+ * colour as its line on the map. Without that, a comparison of six profiles put a graph on
+ * screen that described one of them and said nothing about which. The heading and the stroke
+ * are the two places a rider looks, so both carry the identity.
+ *
+ * The readout replaces a tooltip: on a phone there is no hover, so dragging along the profile
+ * is the equivalent gesture, and it answers the question actually being asked ("how bad is
+ * the bit at 8 km?").
  */
 
 const WIDTH = 320
@@ -20,9 +25,27 @@ const HEIGHT = 96
 const PAD_TOP = 10
 const PAD_BOTTOM = 16
 
-export default function ElevationProfile({ route }: { route: ParsedRoute }) {
+/** The near-white a lone route is drawn in, for when there is no profile colour to match. */
+const NEUTRAL = '#ccd0cf'
+
+export default function ElevationProfile({
+  route,
+  colour = NEUTRAL,
+  label,
+}: {
+  route: ParsedRoute
+  /** The colour of this route's line on the map, so the two are obviously the same thing. */
+  colour?: string
+  /** The profile's name, for the heading. Omitted when there is only ever one route. */
+  label?: string
+}) {
   const svg = useRef<SVGSVGElement | null>(null)
   const [cursor, setCursor] = useState<number | null>(null)
+  // The gradient is referenced by id from `fill`, so it has to be unique per instance or a
+  // second profile on screen would silently paint itself with the first one's colour.
+  // `url(#…)` is a literal IDREF rather than a selector, so React's punctuation is stripped
+  // rather than escaped — escaping it would stop it matching the `id` attribute at all.
+  const gradientId = `elev-${useId().replace(/[^a-zA-Z0-9]/g, '')}`
 
   const profile = useMemo(() => elevationProfile(route), [route])
 
@@ -58,10 +81,10 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
   return (
     <div>
       <p className="section-label">
-        Elevation
+        {label ? `Elevation — ${label}` : 'Elevation'}
         {at && (
           <span className="elevation-readout">
-            {' — '}
+            {' · '}
             {formatDistance(at.distanceM)} at {Math.round(at.elevM)} m
           </span>
         )}
@@ -73,7 +96,7 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Elevation profile: ${Math.round(minElevM)} to ${Math.round(maxElevM)} metres over ${formatDistance(totalDistanceM)}`}
+        aria-label={`Elevation profile${label ? ` for ${label}` : ''}: ${Math.round(minElevM)} to ${Math.round(maxElevM)} metres over ${formatDistance(totalDistanceM)}`}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId)
           track(e.clientX)
@@ -85,9 +108,9 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
         onPointerCancel={() => setCursor(null)}
       >
         <defs>
-          <linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#9ba8ab" stopOpacity="0.45" />
-            <stop offset="100%" stopColor="#9ba8ab" stopOpacity="0.02" />
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={colour} stopOpacity="0.4" />
+            <stop offset="100%" stopColor={colour} stopOpacity="0.02" />
           </linearGradient>
         </defs>
 
@@ -107,11 +130,11 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
           />
         ))}
 
-        <path d={area} fill="url(#elevation-fill)" />
+        <path d={area} fill={`url(#${gradientId})`} />
         <path
           d={`M${line}`}
           fill="none"
-          stroke="#ccd0cf"
+          stroke={colour}
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -136,7 +159,7 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
               cx={x(at.distanceM)}
               cy={y(at.elevM)}
               r="4"
-              fill="#ccd0cf"
+              fill={colour}
               stroke="#11212d"
               strokeWidth="2"
               vectorEffect="non-scaling-stroke"

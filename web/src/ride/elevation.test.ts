@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parseBrouterGpx } from './gpx'
-import { elevationProfile } from './elevation'
+import { elevationComparison, elevationProfile } from './elevation'
 
 const fixture = (name: string) =>
   readFileSync(fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url)), 'utf8')
@@ -49,5 +49,40 @@ describe('elevationProfile', () => {
       '<gpx><trk><trkseg><trkpt lon="-3.19" lat="55.95"><ele>7</ele></trkpt></trkseg></trk></gpx>',
     )
     expect(elevationProfile(single)).toBeNull()
+  })
+})
+
+describe('elevationComparison', () => {
+  const short = parseBrouterGpx(fixture('urban-short.gpx'))
+  const long = parseBrouterGpx(fixture('london-brighton.gpx'))
+
+  it('returns null when there is nothing to compare', () => {
+    // One route is what the detail view already draws, and it draws it better — auto-scaled
+    // to itself rather than to a comparison of one.
+    expect(elevationComparison({})).toBeNull()
+    expect(elevationComparison({ trekking: short })).toBeNull()
+  })
+
+  it('shares one distance axis across every route', () => {
+    const comparison = elevationComparison({ trekking: short, gravel: long })!
+    const longest = elevationProfile(long)!.totalDistanceM
+    expect(comparison.maxDistanceM).toBeCloseTo(longest, 6)
+    // The shorter route must stop short of the axis rather than be stretched to fill it —
+    // that is the whole point of plotting them together.
+    expect(comparison.series.find((s) => s.id === 'trekking')!.points.at(-1)!.distanceM)
+      .toBeLessThan(comparison.maxDistanceM)
+  })
+
+  it('shares one height axis, spanning every route', () => {
+    const each = [elevationProfile(short)!, elevationProfile(long)!]
+    const comparison = elevationComparison({ trekking: short, gravel: long })!
+    expect(comparison.minElevM).toBe(Math.min(...each.map((p) => p.minElevM)))
+    expect(comparison.maxElevM).toBe(Math.max(...each.map((p) => p.maxElevM)))
+  })
+
+  it('drops a route with no plottable profile rather than skewing the axes', () => {
+    const degenerate = { ...short, coords: [short.coords[0]], elevations: [short.elevations[0]] }
+    const comparison = elevationComparison({ trekking: short, gravel: long, mtb: degenerate })!
+    expect(comparison.series.map((s) => s.id)).toEqual(['trekking', 'gravel'])
   })
 })

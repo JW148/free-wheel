@@ -4,13 +4,15 @@
  * ## Layout: two stacked layers
  *
  * The map fills the window edge to edge and the controls float above it on a separate layer.
- * `.ride` is `inset: 0`; `.ride-chrome` is `100svh` — the **small** viewport height, which
- * excludes Safari's collapsible toolbar, so a floating control can never land underneath it.
+ * Both are sized by `--app-height`, which is **not** the same unit in a browser tab as in a
+ * home-screen app. See the `--app-height` definition below; getting this wrong is what left a
+ * dead band along the bottom of the installed PWA.
  *
- * The reason the sheet used to hang off the bottom of the screen was not the unit. It was the
- * missing `box-sizing: border-box` (now in `index.css`): `height: 100svh` was setting the
- * *content* box and the safe-area padding was added on top, measured at 1354px against a
- * 1332px viewport. Every attempt to fix it by adjusting padding made it worse.
+ * Two other things had to be right before that mattered. `box-sizing: border-box` (now in
+ * `index.css`) — without it `height` set the *content* box and the safe-area padding was
+ * added on top, overflowing by exactly the padding. And the chrome layer is
+ * `pointer-events: none` with each panel opting back in, so the map stays draggable between
+ * the controls.
  *
  * ## Colour
  *
@@ -25,13 +27,83 @@
  * on the target device, whose tabular numerals are switched on explicitly.
  */
 
-.ride {
-  --panel: rgb(17 33 45 / 90%);
+/*
+ * The full height of the app's viewport.
+ *
+ * In a **browser tab** this is `100svh` — the *small* viewport height, which excludes
+ * Safari's collapsible bottom toolbar, so a floating control can never end up underneath it.
+ *
+ * In a **home-screen app** it has to be `100lvh` instead, and the difference is not cosmetic.
+ * Measured on an iPhone 17 Pro in standalone:
+ *
+ *     lvh 874 · svh/dvh/innerHeight/visualViewport 812 · safe-area-inset-top 62
+ *
+ * 812 = 874 − 62. iOS sizes the layout viewport to the screen *minus the status bar* while
+ * still anchoring it at `top: 0`, so `inset: 0` — and every viewport unit except `lvh` —
+ * stops 62px short of the bottom. That gap, plus the 34px home-indicator inset applied
+ * inside it, was the unused band along the bottom of the installed app. There is no toolbar
+ * in standalone, so `lvh` is safe there and only there.
+ */
+:root {
+  --app-height: 100svh;
+}
+
+/*
+ * The translucency of anything drawn over the map.
+ *
+ * Every floating surface is the same slate at reduced alpha over a blur, so the map reads as
+ * one continuous thing with the controls sitting *on* it rather than a stack of opaque cards
+ * pasted over the top. The blur is what makes it legible: 72% alone would let street labels
+ * show through the text.
+ *
+ * Two weights, and the difference is content density. `--panel` carries a few large numbers
+ * or one line of text and can afford to be thin. `--panel-strong` backs the bottom bar and the
+ * drawer, which carry paragraphs, a chart and a list — they need more behind them, and they
+ * cover more of the map, so there is less to see through anyway. `--panel-row` is for surfaces
+ * *inside* a panel, where the panel's own alpha already applies.
+ *
+ * Defined on `:root`, not on `.ride`: vaul portals the drawer to `<body>`, so it is outside
+ * the ride scope and would not see them there.
+ */
+:root {
+  --panel: rgb(17 33 45 / 72%);
+  --panel-strong: rgb(17 33 45 / 82%);
+  --panel-row: rgb(37 55 69 / 55%);
   --hairline: rgb(204 208 207 / 12%);
   --radius: 14px;
+}
 
+@media (display-mode: standalone) {
+  :root {
+    --app-height: 100lvh;
+  }
+
+  /*
+   * Sizing the fixed layers to `lvh` is necessary but not sufficient. WebKit rasterises only
+   * the document's own box, and a document made of nothing but fixed children is exactly
+   * one layout viewport tall — 812px — so anything positioned below that line was laid out
+   * correctly and then never painted: the action bar was cut in half and the strip below it
+   * showed the body colour. Measured by placing three markers across the line — absolute,
+   * fixed, and fixed-with-transform — and finding that all three painted once an in-flow
+   * box reached past it. So the body itself is made screen-high. `overflow: hidden` keeps the
+   * extra 62px from becoming a scrollable page under the map.
+   *
+   * Once the body is screen-high, iOS also reports `innerHeight`, `visualViewport` and `dvh`
+   * as the full 874 (only `svh` stays at 812), and the containing block for fixed elements
+   * grows with them — so the portalled drawer's `bottom: 0` lands on the true edge and needs
+   * no correction of its own.
+   */
+  html,
+  body {
+    min-height: 100lvh;
+    overflow: hidden;
+  }
+}
+
+.ride {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto;
+  height: var(--app-height);
   background: var(--slate-900);
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -48,7 +120,7 @@
 .ride-chrome {
   position: absolute;
   inset: 0 0 auto;
-  height: 100svh;
+  height: var(--app-height);
   display: flex;
   flex-direction: column;
   padding: max(env(safe-area-inset-top), 0.6rem) max(env(safe-area-inset-right), 0.7rem)
@@ -259,6 +331,7 @@
   align-items: stretch;
   gap: 0.55rem;
   padding: 0.55rem;
+  background: var(--panel-strong);
 }
 
 .sheet-toggle {
@@ -281,6 +354,9 @@
 }
 
 .sheet-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
   font-size: 0.98rem;
   font-weight: 600;
 }
@@ -323,9 +399,10 @@
    colours from the root tokens rather than the ride scope. */
 .drawer-overlay {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto;
+  height: var(--app-height);
   z-index: 30;
-  background: rgb(6 20 27 / 55%);
+  background: rgb(6 20 27 / 35%);
 }
 
 .drawer {
@@ -334,12 +411,18 @@
   inset: auto 0 0;
   display: flex;
   flex-direction: column;
-  max-height: 88svh;
+  max-height: calc(var(--app-height) * 0.88);
   margin-top: 6rem;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--hairline);
   border-bottom: none;
   border-radius: 18px 18px 0 0;
-  background: var(--slate-800);
+  background: var(--panel-strong);
+  /* Stronger than a panel's: this covers most of the screen, and a chart and a paragraph of
+     type over moving map detail need the backdrop pushed further away than three numbers do.
+     It is also the most expensive thing on the screen on iOS — a drawer-sized backdrop filter
+     over a live WebGL canvas. If it ever costs frames, this is the value to drop. */
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
   outline: none;
 }
 
@@ -369,6 +452,11 @@
 }
 
 .drawer-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
   margin: 0;
   font-size: 1.1rem;
   font-weight: 650;
@@ -380,7 +468,7 @@
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--slate-500);
   border-radius: 10px;
-  background: var(--slate-700);
+  background: var(--panel-row);
   color: var(--slate-100);
   font-size: 0.83rem;
   line-height: 1.5;
@@ -401,30 +489,49 @@
   border: none;
 }
 
-.profiles label {
+/*
+ * A comparison row does two separable things, so it has two targets.
+ *
+ * The text ticks the profile into or out of the comparison. The figures on the right *choose*
+ * it and open its detail. The old row was a single `<label>` with an `onClick`, so a tap
+ * meant as "show me this one" also flipped the checkbox under it — the two intents fought
+ * over one hit area and the checkbox always won.
+ */
+.profile-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 0.1rem 0.65rem;
+  column-gap: 0.65rem;
   min-height: 2.9rem;
   padding: 0.55rem 0.7rem;
   border: 1px solid transparent;
   border-radius: 11px;
-  background: var(--slate-700);
-  cursor: pointer;
+  background: var(--panel-row);
 }
 
-.profiles label[data-selected='yes'] {
-  border-color: var(--slate-300);
-  background: var(--slate-500);
+.profile-row[data-selected='yes'] {
+  border-color: var(--hairline);
+  background: rgb(74 92 106 / 55%);
 }
 
-.profiles input {
-  grid-row: span 2;
+/* The one committed to. A light border rather than another fill: a chosen row is also a
+   selected row, and two background states cannot stack. */
+.profile-row[data-chosen='yes'] {
+  border-color: var(--slate-100);
+}
+
+.profile-row input {
   accent-color: var(--slate-100);
   width: 1.05rem;
   height: 1.05rem;
   margin: 0;
+}
+
+.profile-text {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .profile-label {
@@ -436,34 +543,59 @@
 }
 
 .profile-note {
-  grid-column: 2;
   font-size: 0.76rem;
   color: var(--muted);
 }
 
-.profiles label[data-selected='yes'] .profile-note {
+.profile-row[data-selected='yes'] .profile-note {
   color: var(--slate-100);
   opacity: 0.75;
 }
 
-/* Only shown while comparing — see RouteSheet. */
-.profile-swatch {
+/* Ties a row, a heading or the bottom bar to its line on the map. Only rendered when there is
+   more than one line to tell apart — see RouteSheet. */
+.swatch {
   width: 10px;
   height: 10px;
   flex: none;
   border-radius: 3px;
 }
 
+/* Tapping the figures is how a route gets chosen, so they have to look like a way in rather
+   than like a readout that happens to be next to one. */
+.drawer-body button.profile-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.6rem;
+  padding: 0 0.15rem 0 0.5rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.profile-pick svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--muted);
+}
+
 .profile-figure {
-  grid-column: 3;
-  grid-row: span 2;
   text-align: right;
   font-size: 0.8rem;
   line-height: 1.35;
   color: var(--muted);
 }
 
-.profiles label[data-selected='yes'] .profile-figure {
+.profile-row[data-selected='yes'] .profile-figure {
   color: var(--slate-100);
 }
 
@@ -471,6 +603,61 @@
   display: block;
   color: var(--text);
   font-size: 0.95rem;
+}
+
+/* ── Route detail ───────────────────────────────────────────────────────────────────── */
+
+.drawer-body button.drawer-back {
+  display: grid;
+  place-items: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--panel-row);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.drawer-back svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The same three figures as the stats rail, because they are the same three questions. The
+   rail is gone behind the drawer while this is open. */
+.detail-stats {
+  display: flex;
+  gap: 1.3rem;
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 11px;
+  background: var(--panel-row);
+}
+
+.detail-stats div {
+  display: flex;
+  flex-direction: column-reverse; /* value above label, without reordering the markup */
+}
+
+.detail-stats dd {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.detail-stats dt {
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
 .waypoints {
@@ -488,7 +675,7 @@
   gap: 0.5rem;
   padding: 0.45rem 0.7rem;
   border-radius: 10px;
-  background: var(--slate-700);
+  background: var(--panel-row);
   font-size: 0.83rem;
 }
 
@@ -505,12 +692,12 @@
   gap: 0.5rem;
 }
 
-.drawer-body button:not(.primary) {
+.drawer-body button:not(.primary, .profile-pick, .drawer-back, .legend-item) {
   min-height: 2.8rem;
   padding: 0 0.9rem;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--hairline);
   border-radius: 10px;
-  background: var(--slate-700);
+  background: var(--panel-row);
   color: var(--text);
   font: inherit;
   font-size: 0.86rem;
@@ -535,6 +722,47 @@
   overflow: visible;
 }
 
+.elevation-compare {
+  padding: 0.6rem 0.7rem 0.5rem;
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: var(--panel-row);
+}
+
+/* Taller than the single-route chart: several lines crossing each other need the vertical
+   room to stay separable, and this one is doing the comparing. */
+.elevation-multi {
+  height: 104px;
+}
+
+.compare-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+/* A legend entry is also the shortest path from "that shape" to "that route", so it is a
+   button rather than a caption. */
+.drawer-body button.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.drawer-body button.legend-item[data-chosen='yes'] {
+  border-color: var(--slate-100);
+  color: var(--text);
+}
+
 .elevation-summary {
   display: flex;
   justify-content: space-between;
@@ -557,7 +785,7 @@
   position: fixed;
   z-index: 20;
   inset: 0 0 auto;
-  height: 100svh;
+  height: var(--app-height);
   overflow-y: auto;
   background: var(--slate-900);
   color: var(--text);
@@ -711,7 +939,7 @@
   position: fixed;
   z-index: 10;
   inset: 0 0 auto;
-  height: 100svh;
+  height: var(--app-height);
   overflow-y: auto;
   background: var(--bg);
   color: var(--text);
@@ -768,18 +996,17 @@
 /* ── MapLibre's own controls ────────────────────────────────────────────────────────── */
 
 /*
- * The attribution is required — it is the OSM licence — but it ships light-on-white and sits
- * in the bottom-right corner, where it landed on top of the action bar. It lives inside the
- * map container and knows nothing about our chrome, so it gets moved and repainted here.
+ * The attribution is required — it is the OSM licence — but it ships light-on-white in the
+ * bottom-right corner, where the control column and the action bar both live. Moving it up to
+ * clear the bar only landed it on the follow button instead. It is added to the bottom-*left*
+ * in `useMapLibre` and repainted here; that side is empty by design.
  */
-.maplibregl-ctrl-bottom-right {
-  /* Measured, not guessed: the action bar's top edge sits ~84px above the viewport bottom,
-     so anything less than this overlaps it. */
+.maplibregl-ctrl-bottom-left {
   bottom: calc(env(safe-area-inset-bottom) + 5.7rem);
-  right: max(env(safe-area-inset-right), 0.7rem);
+  left: max(env(safe-area-inset-left), 0.7rem);
 }
 
-.ride[data-riding='yes'] .maplibregl-ctrl-bottom-right {
+.ride[data-riding='yes'] .maplibregl-ctrl-bottom-left {
   /* Nothing but the status strip down there while riding, which is shorter. */
   bottom: calc(env(safe-area-inset-bottom) + 4.5rem);
 }
@@ -805,6 +1032,6 @@
   filter: invert(1) opacity(0.55);
 }
 
-.maplibregl-ctrl-bottom-left {
-  display: none; /* the scale control is not enabled, and the empty container still reserves space */
+.maplibregl-ctrl-bottom-right {
+  display: none; /* nothing is registered there now, and an empty container still takes space */
 }

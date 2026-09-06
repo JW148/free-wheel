@@ -258,6 +258,40 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   `timeS` is `null` there, not `0` — rendering "0 min" would be a lie.
 - **Use `100dvh`, not `inset: 0`, for full-screen chrome.** In Safari proper the bottom
   toolbar overlaps a viewport-height fixed element and buries the action bar.
+- **In a home-screen app the document must be screen-high, not just the fixed layers.** iOS 26
+  standalone gives a viewport 62px (the status bar) shorter than the screen, anchored at the
+  top, and WebKit rasterises only the document's own box — so a page made of nothing but
+  `position: fixed` children is laid out to the full `100lvh` and then never painted below
+  the viewport line. `ride.css` sets `html, body { min-height: 100lvh }` under
+  `(display-mode: standalone)` for this reason; once it does, `innerHeight` and `dvh` grow to
+  the full height too and fixed elements need no bottom offset. Measure with pixels, not
+  `getBoundingClientRect()`: the rects were right the whole time.
+- **`plan.chosen` is nullable, and that is the point.** After comparing profiles it is `null`
+  until the rider picks one — on a route line on the map, or on a row in the sheet. A run that
+  returns a single route commits to it automatically, because there is nothing to weigh it
+  against. Before this, `focused` was seeded with `'trekking'` and could never be empty, so the
+  elevation profile silently described one of six routes. Anything that reads "the route"
+  (`plan.route`, the stats rail, Start) must handle `null` rather than fall back to a default —
+  the fallback *was* the bug.
+- **A tap on a route line beats a tap on the map**, and does nothing while riding. Choosing is
+  the more specific intent, and dropping a waypoint on the line you were pointing at would
+  reroute the thing you were trying to select. Mid-ride the decision is already made, so
+  `routeAt` is skipped entirely — a bump in the road must not throw the drawer over the map.
+- **The `--panel*` translucency tokens live on `:root`, not `.ride`.** vaul portals the drawer
+  to `<body>`, so anything scoped to the ride screen is invisible to it.
+- **Route colours are chosen on chroma, not hue.** Every colour in both basemap palettes is
+  C ≤ 15, so a route line at C ≥ 45 cannot read as map furniture whatever its hue — that one
+  constraint is what separates a line from the map. The old muted palette failed it: `shortest`
+  was ΔE 7.5 from the light theme's boundary colour, and a lone route's near-white was ΔE 4.4
+  from its buildings. Note **no blue clears ΔE 20 against this basemap** (the best is 19.9),
+  because the slate theme spends blue-grey on water, roads and boundaries; CIEDE2000 compresses
+  the chroma difference that actually separates them, so treat it as a floor rather than the
+  decision. Six categorical colours cannot all separate under dichromacy — which is survivable
+  only because identity is never colour alone. Figures and method in
+  `docs/phase-4-progress.md`.
+- **Every route is drawn in its profile's colour, including a lone one.** The near-white
+  single-route colour was invisible on the daylight map, and keeping the rule uniform means the
+  map does not repaint when a second profile is ticked.
 - **Setup is an overlay over the ride screen, never a replacement.** Unmounting the map drops
   its OPFS handles and its whole tile cache; the map controller therefore lives in `App.tsx`.
 - **The iOS Simulator reaches the Mac's `localhost`, which is a secure context** — so it needs
