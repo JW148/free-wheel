@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
+import FirstRun from './setup/FirstRun'
 import { useMapLibre } from './ride/useMapLibre'
+import { sharedEngine } from './engine/engineClient'
 import './ride/ride.css'
 import './App.css'
 
@@ -18,6 +20,27 @@ export default function App() {
   const container = useRef<HTMLDivElement | null>(null)
   const basemap = useMapLibre(container)
   const [setupOpen, setSetupOpen] = useState(false)
+  /**
+   * `null` until we know whether there is anything installed, so the guided flow does not
+   * flash up for a moment on every launch before OPFS reports what is already there.
+   */
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [archives, tiles] = await Promise.all([
+          sharedEngine().installedBasemaps(),
+          sharedEngine().installedTiles(),
+        ])
+        setNeedsSetup(archives.length === 0 || tiles.length === 0)
+      } catch {
+        // If the engine cannot even be asked, the guided flow is the more useful screen —
+        // it is the one that explains what the app needs.
+        setNeedsSetup(true)
+      }
+    })()
+  }, [])
 
   return (
     <>
@@ -26,6 +49,9 @@ export default function App() {
         basemap={basemap}
         onOpenSetup={() => setSetupOpen(true)}
       />
+      {needsSetup === true && (
+        <FirstRun basemap={basemap} onDone={() => setNeedsSetup(false)} />
+      )}
       {setupOpen && <SetupView basemap={basemap} onClose={() => setSetupOpen(false)} />}
     </>
   )

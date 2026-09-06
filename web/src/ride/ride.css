@@ -1,46 +1,50 @@
 /*
  * The ride screen.
  *
- * Two ideas drive everything here.
+ * ## Layout: two stacked layers, not a bezel
  *
- * **The map is the content.** Chrome is a bezel around it, not a set of cards floating on
- * top of it. So the rail and the sheet are opaque, edge-to-edge and dark: they read as the
- * instrument surround of a bike computer, they cede every spare pixel to the map, and dark
- * slate is the one thing that never competes with a warm, light basemap.
+ * The map fills the window edge to edge, and the controls **float above it** on a separate
+ * layer. An earlier version framed the map in an opaque bar top and bottom; that wasted the
+ * screen and, on iOS, felt like a web page rather than an app.
  *
- * **It is read at a glance, at speed, in daylight.** Hence large tabular figures, high
- * contrast throughout, no grey-on-white anywhere, and touch targets sized for a gloved
- * thumb rather than a mouse.
+ * The two layers are sized differently on purpose:
  *
- * There is no webfont, deliberately. The app has to work with the network off, and shipping
- * a font family for chrome this sparse is not worth the bytes or the offline failure mode.
- * The system stack is SF Pro on the target device, which has genuinely good tabular
- * numerals — those are switched on rather than left to chance.
+ * - `.ride` is `inset: 0` — the map is happy to run under Safari's toolbar and the home
+ *   indicator, and looks better for it.
+ * - `.ride-chrome` is `100svh` — the **small** viewport height, which by definition excludes
+ *   Safari's collapsible toolbar. So a floating control can never end up underneath it.
+ *   `dvh` tracks the toolbar as it collapses and lands controls behind it mid-transition;
+ *   `lvh` (and a plain `inset: 0`) buries them outright. In a home-screen app all three are
+ *   equal, so this costs nothing where it matters most.
+ *
+ * Safe-area insets are then applied inside that, so panels clear the notch and the home
+ * indicator without leaving a dead band of chrome.
+ *
+ * ## Look
+ *
+ * Translucent panels over the map, blurred, with a hairline border — the map stays visible
+ * behind the controls, which is the point of a map app. Everything is read at a glance, at
+ * speed, so: large tabular figures, generous touch targets for a gloved thumb, and one
+ * primary action visible at a time.
+ *
+ * No webfont, deliberately: the app must work with the network off, and the system stack is
+ * SF Pro on the target device, whose tabular numerals are switched on explicitly below.
  */
 
 .ride {
-  --chrome: #14181c;
-  --chrome-raised: #1e252c;
-  --chrome-text: #f2f5f6;
-  --chrome-muted: #93a0a8;
-  --chrome-rule: rgb(255 255 255 / 12%);
-  /* Orange means "your route" and nothing else: the line on the map, the marker on the
-     stats rail, and the primary action are all this colour, so the connection is learnable
-     rather than decorative. */
   --route: #e8590c;
-  --rider: #1c7ed6;
+  --rider: #3b82f6;
+  --text: #f2f5f7;
+  --muted: #94a3b8;
+  --panel: rgb(13 17 22 / 92%);
+  --panel-solid: #0d1116;
+  --hairline: rgb(255 255 255 / 10%);
+  --radius: 14px;
 
   position: fixed;
-  inset: 0 0 auto;
-  /* `100dvh`, not `inset: 0`. In Safari proper the bottom toolbar overlaps a viewport-
-     height fixed element, which would bury the action bar — the one control that has to be
-     reachable. `dvh` tracks the chrome as it collapses. In a home-screen app the two are
-     identical, so this only helps and never hurts. */
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  background: var(--chrome);
-  color: var(--chrome-text);
+  inset: 0;
+  background: #0d1116;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
   overscroll-behavior: none;
 }
@@ -50,36 +54,49 @@
   inset: 0;
 }
 
+/* The floating layer. `pointer-events: none` so the map stays draggable everywhere the
+   chrome is merely transparent; each panel opts back in. */
+.ride-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 100svh;
+  display: flex;
+  flex-direction: column;
+  padding: max(env(safe-area-inset-top), 0.6rem) max(env(safe-area-inset-right), 0.7rem)
+    max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-left), 0.7rem);
+  pointer-events: none;
+}
+
+.ride-chrome > * {
+  pointer-events: auto;
+}
+
+.panel {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--panel);
+  /* Blur is what lets the panel be dark and still feel like it belongs to the map rather
+     than being pasted over it. Saturation compensates for the desaturating effect of blur. */
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 35%);
+}
+
 /* ── Stats rail ─────────────────────────────────────────────────────────────────────── */
 
 .rail {
-  position: relative;
-  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: max(env(safe-area-inset-top), 0.5rem) max(env(safe-area-inset-right), 0.75rem) 0.6rem
-    max(env(safe-area-inset-left), 0.75rem);
-  background: var(--chrome);
-  border-bottom: 1px solid var(--chrome-rule);
-}
-
-/* The rail carries the route's own colour along its edge once there is a route to carry.
-   It is the same orange as the line below it — the rail is *about* that line. */
-.rail[data-routed='yes']::after {
-  content: '';
-  position: absolute;
-  inset-inline: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--route);
+  gap: 0.5rem;
+  align-self: flex-start;
+  max-width: 100%;
 }
 
 .stats {
   display: flex;
-  flex: 1;
-  gap: 1.5rem;
+  gap: 1.1rem;
   margin: 0;
+  padding: 0.5rem 0.9rem;
 }
 
 .stats div {
@@ -89,54 +106,55 @@
 
 .stats dd {
   margin: 0;
-  font-size: 1.75rem;
+  font-size: 1.45rem;
   font-weight: 600;
-  line-height: 1.05;
+  line-height: 1.1;
   letter-spacing: -0.02em;
 }
 
 .stats dt {
-  font-size: 0.72rem;
-  color: var(--chrome-muted);
-  letter-spacing: 0.01em;
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
 .rail-hint {
-  flex: 1;
   margin: 0;
-  padding: 0.35rem 0;
-  font-size: 0.95rem;
-  color: var(--chrome-muted);
+  padding: 0.7rem 0.95rem;
+  font-size: 0.9rem;
+  color: var(--text);
 }
 
-/* ── Controls ───────────────────────────────────────────────────────────────────────── */
+/* ── Floating controls ──────────────────────────────────────────────────────────────── */
 
 .icon-button {
   display: grid;
   place-items: center;
-  width: 3rem;
-  height: 3rem;
+  width: 2.9rem;
+  height: 2.9rem;
   flex: none;
   padding: 0;
-  border: 1px solid var(--chrome-rule);
-  border-radius: 10px;
-  background: var(--chrome-raised);
-  color: var(--chrome-text);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--panel);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  color: var(--text);
   cursor: pointer;
 }
 
 .icon-button svg {
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .icon-button[data-active='yes'] {
   background: var(--rider);
-  border-color: var(--rider);
+  border-color: transparent;
   color: #fff;
 }
 
@@ -144,46 +162,47 @@
   fill: currentColor;
 }
 
+/* Sits between the rail and the sheet, pushed to the right and bottom of the gap. */
 .map-controls {
-  position: absolute;
-  z-index: 2;
-  right: max(env(safe-area-inset-right), 0.75rem);
-  /* Clear of the sheet, which is the tallest thing on this edge. */
-  bottom: calc(env(safe-area-inset-bottom) + 6.5rem);
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: 0.6rem;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  padding-bottom: 0.7rem;
+  /* The column itself is only a layout guide; only the buttons should catch touches. */
+  pointer-events: none;
 }
 
 .map-controls .icon-button {
-  box-shadow: 0 2px 10px rgb(0 0 0 / 30%);
+  pointer-events: auto;
 }
 
 .following-note {
-  position: absolute;
-  z-index: 2;
-  left: max(env(safe-area-inset-left), 0.75rem);
-  bottom: calc(env(safe-area-inset-bottom) + 6.5rem);
-  margin: 0;
+  align-self: flex-start;
+  margin: 0 0 0.55rem;
   padding: 0.4rem 0.7rem;
-  border-radius: 8px;
-  background: rgb(20 24 28 / 88%);
-  font-size: 0.8rem;
-  color: var(--chrome-text);
+  border-radius: 10px;
+  background: var(--panel);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--hairline);
+  font-size: 0.78rem;
+  pointer-events: auto;
 }
 
 .ride-error {
-  position: absolute;
-  z-index: 3;
-  inset-inline: max(env(safe-area-inset-left), 0.75rem) max(env(safe-area-inset-right), 0.75rem);
-  top: calc(env(safe-area-inset-top) + 4.5rem);
-  margin: 0;
+  margin: 0.55rem 0 0;
   padding: 0.7rem 0.85rem;
-  border-radius: 10px;
-  background: #7a1d1d;
-  color: #ffecec;
-  font-size: 0.85rem;
-  line-height: 1.4;
+  border: 1px solid rgb(248 113 113 / 35%);
+  border-radius: 12px;
+  background: rgb(69 10 10 / 90%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: #fecaca;
+  font-size: 0.83rem;
+  line-height: 1.45;
 }
 
 /* ── Empty state ────────────────────────────────────────────────────────────────────── */
@@ -196,49 +215,49 @@
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 0.75rem;
-  padding: 2rem 1.5rem;
-  background: var(--chrome);
+  gap: 0.8rem;
+  padding: 2rem 1.6rem;
+  background: #0d1116;
 }
 
 .curtain h2 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 1.45rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .curtain p {
   max-width: 34ch;
   margin: 0;
-  color: var(--chrome-muted);
-  line-height: 1.5;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 /* ── Waypoint pins ──────────────────────────────────────────────────────────────────── */
 
-/* A round pin with a white ring, sitting on the point rather than above it. The obvious
-   teardrop shape needs a 45deg rotation, which rotates the letter inside it too — and the
-   letter is the part that has to be readable. A ring reads as a map pin regardless. */
+/* A round pin with a white ring, centred on the point. The obvious teardrop needs a 45deg
+   rotation, which rotates the letter inside it too — and the letter is the readable part. */
 .pin {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: 3px solid #fff;
   border-radius: 50%;
-  background: var(--chrome);
+  background: #0d1116;
   color: #fff;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 55%);
   cursor: pointer;
 }
 
 .pin[data-role='start'] {
-  background: #2f9e44;
+  background: #22c55e;
 }
 
 .pin[data-role='finish'] {
@@ -246,19 +265,21 @@
 }
 
 .pin[data-role='via'] {
-  background: #495057;
+  background: #64748b;
 }
 
 /* ── Sheet ──────────────────────────────────────────────────────────────────────────── */
 
 .sheet {
-  position: relative;
-  z-index: 2;
-  margin-top: auto;
-  background: var(--chrome);
-  border-top: 1px solid var(--chrome-rule);
-  padding-bottom: env(safe-area-inset-bottom);
-  max-height: 70vh;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  /* The sheet is the one panel you read paragraphs in, so it is the most opaque of them.
+     A route line showing through a distance figure is not a nice effect, it is a bug. */
+  background: rgb(13 17 22 / 97%);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 45%);
+  max-height: 70svh;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -266,9 +287,8 @@
 .sheet-bar {
   display: flex;
   align-items: stretch;
-  gap: 0.75rem;
-  padding: 0.7rem max(env(safe-area-inset-right), 0.75rem) 0.7rem
-    max(env(safe-area-inset-left), 0.75rem);
+  gap: 0.55rem;
+  padding: 0.55rem;
 }
 
 .sheet-toggle {
@@ -278,123 +298,148 @@
   align-items: flex-start;
   justify-content: center;
   gap: 0.1rem;
-  min-height: 3.25rem;
+  min-height: 3rem;
   padding: 0 0.75rem;
-  border: 1px solid var(--chrome-rule);
+  border: none;
   border-radius: 10px;
-  background: var(--chrome-raised);
-  color: var(--chrome-text);
+  background: transparent;
+  color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .sheet-profile {
-  font-size: 1rem;
+  font-size: 0.98rem;
   font-weight: 600;
 }
 
 .sheet-count {
-  font-size: 0.78rem;
-  color: var(--chrome-muted);
+  font-size: 0.76rem;
+  color: var(--muted);
 }
 
 .primary {
-  min-width: 8.5rem;
-  min-height: 3.25rem;
+  min-width: 7.5rem;
+  min-height: 3rem;
   padding: 0 1.1rem;
   border: none;
   border-radius: 10px;
   background: var(--route);
   color: #fff;
   font: inherit;
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
 }
 
 .primary:disabled {
-  background: var(--chrome-raised);
-  color: var(--chrome-muted);
+  background: rgb(255 255 255 / 7%);
+  color: var(--muted);
   cursor: default;
 }
 
 .primary.busy {
-  background: #495057;
+  background: #475569;
 }
 
 .sheet-body {
   display: grid;
-  gap: 1.25rem;
-  padding: 0.25rem max(env(safe-area-inset-right), 0.75rem) 1rem
-    max(env(safe-area-inset-left), 0.75rem);
-  border-top: 1px solid var(--chrome-rule);
-  padding-top: 1rem;
+  gap: 1.1rem;
+  padding: 0.9rem 0.85rem 1rem;
+  border-top: 1px solid var(--hairline);
 }
 
 .warn {
   margin: 0;
   padding: 0.6rem 0.75rem;
-  border-radius: 8px;
-  background: #4a3410;
-  color: #ffe8bd;
-  font-size: 0.85rem;
-  line-height: 1.45;
+  border: 1px solid rgb(251 191 36 / 30%);
+  border-radius: 10px;
+  background: rgb(69 44 6 / 70%);
+  color: #fde68a;
+  font-size: 0.83rem;
+  line-height: 1.5;
+}
+
+.section-label {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
 }
 
 .profiles {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.35rem;
   margin: 0;
   padding: 0;
   border: none;
 }
 
-.profiles legend {
-  padding: 0 0 0.5rem;
-  font-size: 0.78rem;
-  color: var(--chrome-muted);
-}
-
 .profiles label {
   display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: baseline;
-  gap: 0.15rem 0.6rem;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.1rem 0.65rem;
   min-height: 2.9rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--chrome-rule);
-  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 4%);
   cursor: pointer;
 }
 
 .profiles label[data-selected='yes'] {
-  border-color: var(--route);
-  background: rgb(232 89 12 / 12%);
+  border-color: color-mix(in srgb, var(--route) 55%, transparent);
+  background: color-mix(in srgb, var(--route) 14%, transparent);
 }
 
 .profiles input {
   grid-row: span 2;
-  align-self: center;
   accent-color: var(--route);
-  width: 1.1rem;
-  height: 1.1rem;
+  width: 1.05rem;
+  height: 1.05rem;
   margin: 0;
 }
 
 .profile-label {
   font-weight: 600;
+  font-size: 0.92rem;
 }
 
 .profile-note {
   grid-column: 2;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+/* Per-profile result, shown once a comparison has run. */
+.profile-figure {
+  grid-column: 3;
+  grid-row: span 2;
+  text-align: right;
   font-size: 0.8rem;
-  color: var(--chrome-muted);
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.profile-figure strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.profile-swatch {
+  grid-column: 3;
+  grid-row: span 2;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
 }
 
 .waypoints {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.3rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -402,13 +447,13 @@
 
 .waypoints li {
   display: grid;
-  grid-template-columns: 5rem 1fr auto;
+  grid-template-columns: 4.5rem 1fr auto;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--chrome-rule);
+  gap: 0.5rem;
+  padding: 0.45rem 0.7rem;
   border-radius: 10px;
-  font-size: 0.85rem;
+  background: rgb(255 255 255 / 4%);
+  font-size: 0.83rem;
 }
 
 .waypoint-role {
@@ -416,29 +461,28 @@
 }
 
 .waypoint-coords {
-  color: var(--chrome-muted);
+  color: var(--muted);
 }
 
 .sheet-actions {
   display: flex;
-  gap: 0.6rem;
+  gap: 0.5rem;
 }
 
-.sheet-body button:not(.primary),
-.sheet-actions button {
-  min-height: 2.9rem;
-  padding: 0 1rem;
-  border: 1px solid var(--chrome-rule);
+.sheet-body button:not(.primary) {
+  min-height: 2.8rem;
+  padding: 0 0.9rem;
+  border: 1px solid var(--hairline);
   border-radius: 10px;
-  background: var(--chrome-raised);
-  color: var(--chrome-text);
+  background: rgb(255 255 255 / 5%);
+  color: var(--text);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.86rem;
   cursor: pointer;
 }
 
 .sheet-body button:disabled {
-  color: var(--chrome-muted);
+  color: var(--muted);
   cursor: default;
 }
 
@@ -446,7 +490,24 @@
   flex: 1;
 }
 
-/* ── Setup overlay ──────────────────────────────────────────────────────────────────── */
+/* ── Elevation ──────────────────────────────────────────────────────────────────────── */
+
+.elevation {
+  display: block;
+  width: 100%;
+  height: 96px;
+  overflow: visible;
+}
+
+.elevation-summary {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.35rem 0 0;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+/* ── Setup ──────────────────────────────────────────────────────────────────────────── */
 
 /* Setup sits above the ride screen rather than replacing it, so the map keeps its state —
    its tiles, its centre, and its OPFS handles — while tiles are imported behind it. */
@@ -454,10 +515,10 @@
   position: fixed;
   z-index: 10;
   inset: 0 0 auto;
-  height: 100dvh;
+  height: 100svh;
   overflow-y: auto;
-  background: var(--bg);
-  color: var(--text);
+  background: #0d1116;
+  color: #e6ebf0;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
 }
@@ -470,36 +531,197 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--bg);
-  border-bottom: 1px solid var(--rule);
+  padding: 0.8rem 1rem;
+  background: rgb(13 17 22 / 92%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
 }
 
 .setup-header h1 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
 }
 
 .setup-close {
-  min-height: 2.75rem;
+  min-height: 2.6rem;
   padding: 0 1.1rem;
-  border: 1px solid var(--rule);
+  border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
+  background: rgb(255 255 255 / 6%);
+  color: #e6ebf0;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }
 
-:where(button, input, a):focus-visible {
-  outline: 2px solid var(--route);
+:where(button, input, a, summary):focus-visible {
+  outline: 2px solid var(--route, #e8590c);
   outline-offset: 2px;
+}
+
+/* ── First run ──────────────────────────────────────────────────────────────────────── */
+
+/*
+ * Shown over everything until both files are in. Not a modal: there is nothing behind it
+ * worth seeing yet, and dimming a blank map to imply there is would be a lie.
+ */
+.firstrun {
+  position: fixed;
+  z-index: 20;
+  inset: 0 0 auto;
+  height: 100svh;
+  overflow-y: auto;
+  background: #0d1116;
+  color: #f2f5f7;
+  padding: max(env(safe-area-inset-top), 1rem) max(env(safe-area-inset-right), 1.1rem)
+    max(env(safe-area-inset-bottom), 1.5rem) max(env(safe-area-inset-left), 1.1rem);
+}
+
+.firstrun-inner {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 1.5rem 0 2rem;
+}
+
+.firstrun h1 {
+  margin: 0 0 0.6rem;
+  font-size: 1.65rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.firstrun-lede {
+  max-width: 42ch;
+  margin: 0 0 2rem;
+  color: #94a3b8;
+  line-height: 1.55;
+}
+
+.steps {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 3%);
+}
+
+/* A step you cannot act on yet says so by receding, rather than by looking broken. */
+.steps li[data-blocked='yes'] {
+  opacity: 0.55;
+}
+
+.steps li[data-done='yes'] {
+  border-color: rgb(34 197 94 / 40%);
+  background: rgb(34 197 94 / 8%);
+}
+
+.step-index {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 8%);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.steps li[data-done='yes'] .step-index {
+  background: #22c55e;
+  color: #052e16;
+}
+
+.steps h2 {
+  margin: 0.15rem 0 0.35rem;
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+
+.step-note {
+  margin: 0 0 0.8rem;
+  color: #94a3b8;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.step-note code {
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 8%);
+  font-size: 0.85em;
+}
+
+.step-note a {
+  color: #f97316;
+  overflow-wrap: anywhere;
+}
+
+/* A file input styled as a button — the native control cannot be styled directly. */
+.filebutton {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.8rem;
+  padding: 0 1.1rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 7%);
+  color: #f2f5f7;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filebutton[data-disabled='yes'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.filebutton input {
+  /* Not `display: none` — that makes the input unreachable by keyboard in some browsers. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.firstrun-progress {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 6%);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.firstrun-actions {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
+.firstrun-actions .step-note {
+  margin: 0;
 }

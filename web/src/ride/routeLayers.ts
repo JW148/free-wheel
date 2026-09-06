@@ -37,9 +37,19 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     source: ROUTE_SOURCE,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: {
-      'line-color': '#ffffff',
-      'line-opacity': 0.9,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 16, 12],
+      // A dark casing on a dark map: the route needs separating from the road under it, and
+      // a white halo would glare. This reads as a shadow rather than an outline.
+      'line-color': '#0d1116',
+      'line-opacity': 0.55,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10,
+        ['case', ['get', 'focused'], 7, 5],
+        16,
+        ['case', ['get', 'focused'], 13, 9],
+      ],
     },
   })
   map.addLayer({
@@ -48,8 +58,19 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     source: ROUTE_SOURCE,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: {
-      'line-color': '#e8590c',
-      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 7],
+      'line-color': ['get', 'colour'],
+      // An unfocused route is thinner and slightly translucent, so several can overlap
+      // without the map turning to soup while the focused one stays unambiguous.
+      'line-opacity': ['case', ['get', 'focused'], 1, 0.75],
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10,
+        ['case', ['get', 'focused'], 4, 2.5],
+        16,
+        ['case', ['get', 'focused'], 8, 5],
+      ],
     },
   })
 
@@ -60,8 +81,8 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     source: POSITION_SOURCE,
     paint: {
       'circle-radius': 18,
-      'circle-color': '#1c7ed6',
-      'circle-opacity': 0.18,
+      'circle-color': '#3b82f6',
+      'circle-opacity': 0.2,
     },
   })
   map.addLayer({
@@ -70,26 +91,47 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     source: POSITION_SOURCE,
     paint: {
       'circle-radius': 7,
-      'circle-color': '#1c7ed6',
+      'circle-color': '#3b82f6',
       'circle-stroke-width': 3,
       'circle-stroke-color': '#ffffff',
     },
   })
 }
 
-export function setRouteLine(map: MapLibreMap, coords: [number, number][] | null): void {
+export interface DrawnRoute {
+  id: string
+  coords: [number, number][]
+  colour: string
+  /** The one whose stats are on screen. Drawn thicker and on top. */
+  focused: boolean
+}
+
+/**
+ * Draws every computed route at once.
+ *
+ * One source with the colour carried as a feature property, rather than a layer per profile:
+ * comparing profiles means the set changes as you tick boxes, and adding and removing layers
+ * on a live map is both slower and much easier to get wrong than replacing the data.
+ *
+ * The focused route is appended last. Within a layer MapLibre draws in feature order, so
+ * that puts the route you are actually reading on top of the ones you are comparing it
+ * against.
+ */
+export function setRoutes(map: MapLibreMap, routes: DrawnRoute[]): void {
   const source = map.getSource<GeoJSONSource>(ROUTE_SOURCE)
   if (!source) return
-  source.setData(
-    coords && coords.length > 1
-      ? {
-          type: 'FeatureCollection',
-          features: [
-            { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } },
-          ],
-        }
-      : EMPTY,
-  )
+
+  const ordered = [...routes].sort((a, b) => Number(a.focused) - Number(b.focused))
+  source.setData({
+    type: 'FeatureCollection',
+    features: ordered
+      .filter((route) => route.coords.length > 1)
+      .map((route) => ({
+        type: 'Feature',
+        properties: { colour: route.colour, focused: route.focused },
+        geometry: { type: 'LineString', coordinates: route.coords },
+      })),
+  })
 }
 
 export function setPosition(map: MapLibreMap, lon: number, lat: number): void {

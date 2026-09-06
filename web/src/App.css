@@ -196,26 +196,9 @@ input:not([type]) {
 }
 
 /* A file input styled as a button; the native control is unusable on iOS. */
-.filebutton {
-  font-size: 0.875rem;
-  padding: 0.55rem 1.1rem;
-  border-radius: 8px;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-  cursor: pointer;
-  display: inline-block;
-}
-
-.filebutton input {
-  display: none;
-}
-
-.map {
-  width: 100%;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  overflow: hidden;
-}
+/* `.filebutton` lives in ride.css, which is the only definition. There used to be a second
+   one here using the light-theme `--surface`, and because App.css is imported last it won —
+   rendering a white button with white text on the dark first-run screen. */
 
 /* ── Setup tabs ─────────────────────────────────────────────────────────────────────── */
 

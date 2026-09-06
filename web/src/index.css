@@ -1,32 +1,26 @@
 :root {
-  --bg: #ffffff;
-  --surface: #f7f7f8;
-  --text: #17171a;
-  --muted: #6b6b76;
-  --rule: #e4e4e8;
-  --good: #17803d;
-  --bad: #c02626;
+  /* One set of tokens, dark. The app's chrome is dark in both map themes: the light basemap
+     exists for sunlight glare on the *map*, and flipping the surrounding UI with it would
+     mean every panel needed two designs and two contrast checks. These match the ride
+     screen's palette so the two never drift apart. */
+  --bg: #0d1116;
+  --surface: #171d24;
+  --text: #e6ebf0;
+  --muted: #94a3b8;
+  --rule: #262f3a;
+  --good: #22c55e;
+  --bad: #f87171;
 
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 17px;
   line-height: 1.5;
-  color-scheme: light dark;
+  /* `dark` only: the UI does not follow the system, so telling the browser otherwise would
+     make it style form controls and scrollbars for the wrong background. */
+  color-scheme: dark;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17181d;
-    --surface: #1f2027;
-    --text: #f1f1f4;
-    --muted: #9b9baa;
-    --rule: #2e2f38;
-    --good: #4ade80;
-    --bad: #f87171;
-  }
 }
 
 body {

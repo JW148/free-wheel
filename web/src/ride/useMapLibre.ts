@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Map as MapLibreMap } from 'maplibre-gl'
 import { mountBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
 import { checkMapLibreWorker, configureMapLibreWorker } from '../map/maplibreWorker'
-import { basemapStyle } from '../map/style'
+import { basemapStyle, type MapTheme } from '../map/style'
 import { sharedEngine } from '../engine/engineClient'
 import { ensureRouteLayers } from './routeLayers'
 
@@ -15,6 +15,15 @@ export const workerUrl = configureMapLibreWorker()
 
 /** Remembered so the app opens on the archive you were last using, not an arbitrary one. */
 const LAST_BASEMAP_KEY = 'free-wheel.basemap.v1'
+const THEME_KEY = 'free-wheel.theme.v1'
+
+function storedTheme(): MapTheme {
+  try {
+    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
 
 export interface BasemapInfo {
   name: string
@@ -37,11 +46,17 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   const map = useRef<MapLibreMap | null>(null)
   const [archives, setArchives] = useState<{ name: string; bytes: number }[]>([])
   const [active, setActive] = useState<BasemapInfo | null>(null)
+  const activeRef = useRef<BasemapInfo | null>(null)
   const [status, setStatus] = useState<Status>('loading')
   const [error, setError] = useState<string | null>(null)
   const [workerProblem, setWorkerProblem] = useState<string | null>(null)
   /** Flipped once the style has loaded, so callers know it is safe to touch layers. */
   const [styleReady, setStyleReady] = useState(false)
+  const [theme, setThemeState] = useState<MapTheme>(storedTheme)
+  // `show` needs the current theme but must not be rebuilt when it changes, or every theme
+  // switch would tear the map down and remount the archive.
+  const themeRef = useRef(theme)
+  themeRef.current = theme
 
   // A dead MapLibre worker produces no error event and no failed request — the map simply
   // never draws. Asking directly is the only cheap way to tell that apart from an empty
@@ -60,7 +75,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         map.current?.remove()
         const created = new MapLibreMap({
           container: container.current!,
-          style: basemapStyle(name),
+          style: basemapStyle(name, themeRef.current),
           center: header.center,
           zoom: 12,
           // Past the archive's own max zoom, not at it: MapLibre overzooms vector tiles by
@@ -82,13 +97,15 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         })
 
         map.current = created
-        setActive({
+        const info: BasemapInfo = {
           name,
           bytes: header.bytes,
           minZoom: header.minZoom,
           maxZoom: header.maxZoom,
           center: header.center,
-        })
+        }
+        activeRef.current = info
+        setActive(info)
         setStatus('ready')
         try {
           localStorage.setItem(LAST_BASEMAP_KEY, name)
@@ -102,6 +119,31 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     },
     [container],
   )
+
+  /**
+   * Swaps the palette without touching the archive.
+   *
+   * `setStyle` replaces every layer, which includes the route line and position dot, so they
+   * have to be re-added afterwards — `styledata` fires once the new style is in place. The
+   * caller re-supplies the route data, since this hook has no idea what is drawn on it.
+   */
+  const setTheme = useCallback((next: MapTheme) => {
+    setThemeState(next)
+    try {
+      localStorage.setItem(THEME_KEY, next)
+    } catch {
+      // Not remembering the palette is a small annoyance, not a failure.
+    }
+    const instance = map.current
+    const name = activeRef.current?.name
+    if (!instance || !name) return
+    setStyleReady(false)
+    instance.setStyle(basemapStyle(name, next))
+    instance.once('styledata', () => {
+      ensureRouteLayers(instance)
+      setStyleReady(true)
+    })
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -141,5 +183,18 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     [],
   )
 
-  return { map, archives, active, status, error, styleReady, workerProblem, show, refresh, setError }
+  return {
+    map,
+    archives,
+    active,
+    status,
+    error,
+    styleReady,
+    workerProblem,
+    theme,
+    setTheme,
+    show,
+    refresh,
+    setError,
+  }
 }

@@ -27,22 +27,75 @@ import type { FilterSpecification, StyleSpecification } from 'maplibre-gl'
  * boundaries, buildings, earth, landcover, landuse, places, pois, roads, water.
  */
 
-const COLOURS = {
-  earth: '#f6f4f0',
-  water: '#a8c8e8',
-  green: '#dfe9d8',
-  building: '#e6e2dc',
-  road: '#ffffff',
-  roadCasing: '#d8d2c8',
-  major: '#fdf3d8',
-  path: '#cbbfa8',
-  boundary: '#b0a8a0',
-  label: '#41403c',
-  labelMuted: '#6b6862',
-  labelWater: '#3f6d99',
-  // Labels sit directly on top of map geometry, so every one of them gets a halo in the
-  // background colour. Without it, street names disappear wherever they cross a park.
-  halo: '#f6f4f0',
+export type MapTheme = 'dark' | 'light'
+
+interface Palette {
+  earth: string
+  water: string
+  green: string
+  building: string
+  road: string
+  roadCasing: string
+  major: string
+  path: string
+  boundary: string
+  label: string
+  labelMuted: string
+  labelWater: string
+  /**
+   * Labels sit directly on top of map geometry, so every one gets a halo in the background
+   * colour. Without it, a street name disappears wherever it crosses a park.
+   */
+  halo: string
+}
+
+/**
+ * Two palettes, because a bike is ridden in both conditions.
+ *
+ * **Dark** is the default: it recedes behind the route line, it is what a phone clamped to a
+ * handlebar at dusk wants, and on an OLED screen it costs noticeably less battery on a long
+ * ride.
+ *
+ * **Light** exists because a dark map in direct sunlight is genuinely worse — glare wins and
+ * the contrast collapses. That is a real trade-off rather than a matter of taste, so it is
+ * one tap away rather than a rebuild.
+ *
+ * Neither uses pure black or pure white. Pure black crushes the road hierarchy into a single
+ * smear when read at speed, and pure white blows out next to the orange route line.
+ */
+const PALETTES: Record<MapTheme, Palette> = {
+  dark: {
+    earth: '#12161c',
+    water: '#16293d',
+    green: '#17251d',
+    building: '#1a2029',
+    road: '#39434f',
+    roadCasing: '#11151a',
+    major: '#55606e',
+    // Paths and tracks read warm against the cool greys, so a traffic-free route is
+    // distinguishable from tarmac at a glance rather than on inspection.
+    path: '#5c4f3c',
+    boundary: '#333d49',
+    label: '#dae1e9',
+    labelMuted: '#93a0af',
+    labelWater: '#6b93bd',
+    halo: '#0d1116',
+  },
+  light: {
+    earth: '#f6f4f0',
+    water: '#a8c8e8',
+    green: '#dfe9d8',
+    building: '#e6e2dc',
+    road: '#ffffff',
+    roadCasing: '#d8d2c8',
+    major: '#fdf3d8',
+    path: '#cbbfa8',
+    boundary: '#b0a8a0',
+    label: '#41403c',
+    labelMuted: '#6b6862',
+    labelWater: '#3f6d99',
+    halo: '#f6f4f0',
+  },
 }
 
 /** Font stacks, named exactly as the directories under `public/fonts/`. */
@@ -75,8 +128,9 @@ function assetsBase(): string {
  */
 const POLYGONS_ONLY: FilterSpecification = ['==', ['geometry-type'], 'Polygon']
 
-export function basemapStyle(archive: string): StyleSpecification {
+export function basemapStyle(archive: string, theme: MapTheme = 'dark'): StyleSpecification {
   const ASSETS = assetsBase()
+  const COLOURS = PALETTES[theme]
   return {
     version: 8,
     glyphs: `${ASSETS}fonts/{fontstack}/{range}.pbf`,

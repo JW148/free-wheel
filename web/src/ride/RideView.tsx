@@ -2,20 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Marker } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
-import { useRoute } from './useRoute'
+import { profileById, useRoute } from './useRoute'
 import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
-import { boundsOf, setPosition, setRouteLine } from './routeLayers'
+import { boundsOf, setPosition, setRoutes, type DrawnRoute } from './routeLayers'
 import { formatDistance, formatDuration } from './gpx'
 import RouteSheet from './RouteSheet'
 
 /**
- * The ride screen: a full-bleed map with a stats rail above it and an action bar below.
+ * The ride screen: a full-bleed map with controls floating over it.
  *
- * Everything here is sized for the actual use — a phone clamped to a handlebar, read in a
- * glance, operated with one gloved thumb. That is why the chrome is dark against the light
- * basemap, why the figures are large and tabular, and why there is exactly one primary
- * action visible at a time.
+ * Everything is sized for the real use — a phone clamped to a handlebar, read at a glance,
+ * operated with one gloved thumb. Hence large tabular figures, generous targets, and exactly
+ * one primary action visible at a time.
  */
 export default function RideView({
   container,
@@ -26,19 +25,21 @@ export default function RideView({
   basemap: ReturnType<typeof useMapLibre>
   onOpenSetup: () => void
 }) {
-  const { map, status, error: mapError, styleReady, workerProblem } = basemap
+  const { map, status, error: mapError, styleReady, workerProblem, theme, setTheme } = basemap
   const plan = useRoute()
   const [following, setFollowing] = useState(false)
   const { fix, status: fixStatus, error: fixError, locateOnce } = useGeolocation(following)
   const wakeLock = useWakeLock(following)
 
   const markers = useRef(new Map<string, Marker>())
-  // The click handler is registered once but needs the latest `addWaypoint`; a ref avoids
-  // tearing down and rebinding the listener on every render.
+  // The click handler is registered once but needs the latest callbacks; refs avoid tearing
+  // down and rebinding the listener on every render.
   const addWaypoint = useRef(plan.addWaypoint)
   addWaypoint.current = plan.addWaypoint
   const moveWaypoint = useRef(plan.moveWaypoint)
   moveWaypoint.current = plan.moveWaypoint
+  const removeWaypoint = useRef(plan.removeWaypoint)
+  removeWaypoint.current = plan.removeWaypoint
 
   // ── Tap to place a waypoint ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -54,7 +55,8 @@ export default function RideView({
 
   // ── Waypoint pins ─────────────────────────────────────────────────────────────────────
   // DOM markers rather than a symbol layer: they need to be individually draggable and
-  // tappable, which is fiddly with a layer and free with a Marker.
+  // tappable, which is fiddly with a layer and free with a Marker. They also survive a
+  // `setStyle` for the theme swap, which layers do not.
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
@@ -77,11 +79,13 @@ export default function RideView({
         const element = document.createElement('button')
         element.type = 'button'
         element.className = 'pin'
-        // Tapping a pin removes it — the fastest way to fix a misplaced tap, which is the
-        // most common thing that goes wrong when placing points on a moving bus.
+        // Tapping a pin removes it — the fastest way to undo a misplaced tap, which is the
+        // most common thing that goes wrong when placing points one-handed.
+        // Through a ref, like the other two: this listener is attached once per marker and
+        // would otherwise capture the first render's callback for the marker's whole life.
         element.addEventListener('click', (event) => {
           event.stopPropagation()
-          plan.removeWaypoint(waypoint.id)
+          removeWaypoint.current(waypoint.id)
         })
         marker = new Marker({ element, draggable: true, anchor: 'center' })
           .setLngLat([waypoint.lon, waypoint.lat])
@@ -100,35 +104,42 @@ export default function RideView({
       element.textContent = label
       element.setAttribute('aria-label', `${role} point ${label}. Tap to remove.`)
     })
-  }, [map, styleReady, plan.waypoints, plan.removeWaypoint])
+  }, [map, styleReady, plan.waypoints])
 
-  // ── The route line ────────────────────────────────────────────────────────────────────
-  const lastDrawn = useRef<string | null>(null)
+  // ── The routes ────────────────────────────────────────────────────────────────────────
+  const lastFitted = useRef<string | null>(null)
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
-    setRouteLine(instance, plan.route?.coords ?? null)
 
-    // Fit only when the route actually changes, not on every render — otherwise panning
-    // away from a route snaps you back, which is maddening.
-    if (plan.route && plan.gpx !== lastDrawn.current) {
-      lastDrawn.current = plan.gpx
-      const bounds = boundsOf(plan.route.coords)
+    const drawn: DrawnRoute[] = Object.entries(plan.routes).map(([id, route]) => ({
+      id,
+      coords: route.coords,
+      colour: profileById(id).colour,
+      focused: id === plan.focused,
+    }))
+    setRoutes(instance, drawn)
+
+    // Fit only when the *set* of routes changes, not on every render and not when the focus
+    // moves between them — otherwise panning away snaps you back, which is maddening, and
+    // tapping a profile to compare would yank the map about.
+    const signature = Object.keys(plan.routes).sort().join(',') + '|' + plan.waypoints.length
+    if (drawn.length > 0 && signature !== lastFitted.current) {
+      lastFitted.current = signature
+      const bounds = boundsOf(drawn.flatMap((r) => r.coords))
       if (bounds) {
-        instance.fitBounds(bounds, { padding: { top: 90, bottom: 220, left: 40, right: 40 } })
+        instance.fitBounds(bounds, { padding: { top: 110, bottom: 190, left: 45, right: 45 } })
       }
     }
-    if (!plan.route) lastDrawn.current = null
-  }, [map, styleReady, plan.route, plan.gpx])
+    if (drawn.length === 0) lastFitted.current = null
+  }, [map, styleReady, plan.routes, plan.focused, plan.waypoints.length])
 
   // ── The rider ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady || !fix) return
     setPosition(instance, fix.lon, fix.lat)
-    if (following) {
-      instance.easeTo({ center: [fix.lon, fix.lat], duration: 700 })
-    }
+    if (following) instance.easeTo({ center: [fix.lon, fix.lat], duration: 700 })
   }, [map, styleReady, fix, following])
 
   const centreOnMe = useCallback(async () => {
@@ -139,110 +150,116 @@ export default function RideView({
   }, [locateOnce, map])
 
   const problem = plan.error ?? mapError ?? fixError ?? workerProblem
+  const route = plan.route
 
   return (
     <div className="ride">
       <div ref={container} className="ride-map" />
 
-      <div className="rail" data-routed={plan.route ? 'yes' : 'no'}>
-        {plan.route ? (
-          <dl className="stats">
-            <div>
-              <dd>{formatDistance(plan.route.distanceM)}</dd>
-              <dt>distance</dt>
-            </div>
-            <div>
-              <dd>{formatDuration(plan.route.timeS)}</dd>
-              <dt>moving</dt>
-            </div>
-            <div>
-              <dd>{Math.round(plan.route.ascendM)} m</dd>
-              <dt>climbing</dt>
-            </div>
-          </dl>
-        ) : (
-          <p className="rail-hint">
-            {status === 'no-basemap'
-              ? 'No map imported yet.'
-              : plan.waypoints.length === 0
-                ? 'Tap the map to set your start.'
-                : plan.waypoints.length === 1
-                  ? 'Now tap where you are heading.'
-                  : 'Ready when you are.'}
+      <div className="ride-chrome">
+        <div className="rail">
+          {route ? (
+            <dl className="stats panel">
+              <div>
+                <dd>{formatDistance(route.distanceM)}</dd>
+                <dt>distance</dt>
+              </div>
+              <div>
+                <dd>{formatDuration(route.timeS)}</dd>
+                <dt>moving</dt>
+              </div>
+              <div>
+                <dd>{Math.round(route.ascendM)} m</dd>
+                <dt>climbing</dt>
+              </div>
+            </dl>
+          ) : (
+            <p className="rail-hint panel">
+              {status === 'no-basemap'
+                ? 'No map imported yet.'
+                : plan.waypoints.length === 0
+                  ? 'Tap the map to set your start.'
+                  : plan.waypoints.length === 1
+                    ? 'Now tap where you are heading.'
+                    : 'Ready when you are.'}
+            </p>
+          )}
+        </div>
+
+        {problem && (
+          <p className="ride-error" role="alert">
+            {problem}
           </p>
         )}
-        <button type="button" className="icon-button" onClick={onOpenSetup} aria-label="Setup">
-          <GearIcon />
-        </button>
-      </div>
 
-      {status === 'no-basemap' && (
-        <div className="curtain">
-          <h2>Import a map to begin</h2>
-          <p>
-            free-wheel works entirely offline, so it needs the map and the routing data on the
-            phone before you ride. Both are files you import once.
-          </p>
-          <button type="button" className="primary" onClick={onOpenSetup}>
-            Open setup
+        <div className="map-controls">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            aria-label={theme === 'dark' ? 'Switch to the daylight map' : 'Switch to the dark map'}
+          >
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+          </button>
+          <button type="button" className="icon-button" onClick={onOpenSetup} aria-label="Setup">
+            <SettingsIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={centreOnMe}
+            aria-label="Centre on my location"
+          >
+            <TargetIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            data-active={following ? 'yes' : 'no'}
+            onClick={() => setFollowing((f) => !f)}
+            aria-pressed={following}
+            aria-label={following ? 'Stop following' : 'Follow my position'}
+          >
+            <NavigationIcon />
           </button>
         </div>
-      )}
 
-      <div className="map-controls">
-        <button
-          type="button"
-          className="icon-button"
-          onClick={centreOnMe}
-          aria-label="Centre on my location"
-        >
-          <TargetIcon />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          data-active={following ? 'yes' : 'no'}
-          onClick={() => setFollowing((f) => !f)}
-          aria-pressed={following}
-          aria-label={following ? 'Stop following' : 'Follow my position'}
-        >
-          <NavigationIcon />
-        </button>
+        {following && (
+          <p className="following-note">
+            {fixStatus === 'locating' && 'Getting a fix…'}
+            {fixStatus === 'tracking' &&
+              fix &&
+              `Following · ±${Math.round(fix.accuracy)} m${
+                fix.speed !== null ? ` · ${(fix.speed * 3.6).toFixed(1)} km/h` : ''
+              }`}
+            {/* Said plainly rather than letting the screen blank mid-descent unexplained. */}
+            {!wakeLock.held && wakeLock.supported && fixStatus === 'tracking' && ' · screen may sleep'}
+            {!wakeLock.supported && ' · screen will sleep — add to Home Screen to prevent it'}
+          </p>
+        )}
+
+        <RouteSheet plan={plan} />
       </div>
-
-      {following && (
-        <p className="following-note">
-          {fixStatus === 'locating' && 'Getting a fix…'}
-          {fixStatus === 'tracking' &&
-            fix &&
-            `Following · ±${Math.round(fix.accuracy)} m${
-              fix.speed !== null ? ` · ${(fix.speed * 3.6).toFixed(1)} km/h` : ''
-            }`}
-          {/* Say it plainly rather than letting the screen blank mid-descent unexplained. */}
-          {!wakeLock.held && wakeLock.supported && fixStatus === 'tracking' && ' · screen may sleep'}
-          {!wakeLock.supported && ' · screen will sleep — this needs the home-screen app'}
-        </p>
-      )}
-
-      {problem && (
-        <p className="ride-error" role="alert">
-          {problem}
-        </p>
-      )}
-
-      <RouteSheet plan={plan} />
     </div>
   )
 }
 
-/* Icons are inline SVG rather than sprite lookups: there are three of them, and a missing
-   sprite entry would be one more thing that can silently fail offline. */
+/* Inline SVG rather than sprite lookups: there are five, and a missing sprite entry would be
+   one more thing that can fail silently offline. */
 
-function GearIcon() {
+/**
+ * Sliders, not a cog.
+ *
+ * The obvious cog — a circle with eight spokes — is visually identical to the sun used for
+ * the daylight toggle, and the two buttons sit one above the other. Two controls that look
+ * the same and do unrelated things is worse than a slightly less conventional icon.
+ */
+function SettingsIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M12 2.6v3M12 18.4v3M21.4 12h-3M5.6 12h-3M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1M18.6 18.6l-2.1-2.1M7.5 7.5 5.4 5.4" />
+      <path d="M4 7h6M14 7h6M4 17h10M18 17h2" />
+      <circle cx="12" cy="7" r="2.2" />
+      <circle cx="16" cy="17" r="2.2" />
     </svg>
   )
 }
@@ -260,7 +277,24 @@ function TargetIcon() {
 function NavigationIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 2.5 20 21l-8-4.4L4 21z" strokeLinejoin="round" />
+      <path d="M12 2.5 20 21l-8-4.4L4 21z" />
+    </svg>
+  )
+}
+
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 1.8v2.6M12 19.6v2.6M22.2 12h-2.6M4.4 12H1.8M19.2 4.8l-1.9 1.9M6.7 17.3l-1.9 1.9M19.2 19.2l-1.9-1.9M6.7 6.7 4.8 4.8" />
+    </svg>
+  )
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z" />
     </svg>
   )
 }
