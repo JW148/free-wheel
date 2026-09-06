@@ -13,38 +13,46 @@ export interface Waypoint {
 /**
  * The profiles shipped in `public/profiles2`, in the order a cyclist is likely to want them.
  *
- * Each carries the colour it is drawn in when several are compared at once. The palette is
- * fixed and assigned by profile, never by rank — so adding a fourth profile to a comparison
- * must not repaint the three already on screen, which would make the map unreadable at
- * exactly the moment you are trying to read it.
+ * Each carries the colour used **when several are compared at once**. A lone route is drawn
+ * near-white instead (see {@link SOLO_ROUTE_COLOUR}) — the chrome is deliberately free of hue,
+ * and a single line does not need one to be unambiguous.
  *
- * The three leading colours were checked with a CVD validator against a dark map surface:
- * worst adjacent pair ΔE 11.5 (deuteranopia), 24.4 normal vision — comfortably separable.
- * Rows are also labelled and swatched, so identity is never carried by colour alone.
+ * Hue only appears where it earns its place. Three fully neutral colours are not separable:
+ * checked against a dark surface, the best neutral trio managed ΔE 12.7 for normal vision
+ * against a floor of 15 — unreadable as categories. These three (amber, slate blue, sage) pass
+ * all six checks: worst adjacent pair ΔE 17.3 deuteranopia, 18.0 normal. They are muted enough
+ * to sit with the slate palette and none of them is the orange that started this.
+ *
+ * Assigned by profile and never cycled, so ticking a fourth profile cannot repaint the three
+ * already on screen — which would make the map unreadable exactly when you are reading it.
+ * Rows carry a label and a swatch as well, so identity is never colour alone.
  */
 export const PROFILES = [
   {
     id: 'trekking',
     label: 'Trekking',
     note: 'The sane default — quiet roads and decent surfaces',
-    colour: '#ea580c',
+    colour: '#b8873c',
   },
-  { id: 'fastbike', label: 'Fast', note: 'Road bike; prefers speed over quiet', colour: '#0891b2' },
-  { id: 'gravel', label: 'Gravel', note: 'Happy on unsurfaced tracks', colour: '#a855f7' },
+  { id: 'fastbike', label: 'Fast', note: 'Road bike; prefers speed over quiet', colour: '#4a86c4' },
+  { id: 'gravel', label: 'Gravel', note: 'Happy on unsurfaced tracks', colour: '#5a9e63' },
   {
     id: 'fastbike-verylowtraffic',
     label: 'Fast, quiet',
     note: 'Road bike, traffic-averse',
-    colour: '#65a30d',
+    colour: '#9d7fa8',
   },
-  { id: 'mtb', label: 'MTB', note: 'Off-road', colour: '#db2777' },
+  { id: 'mtb', label: 'MTB', note: 'Off-road', colour: '#c4707a' },
   {
     id: 'shortest',
     label: 'Shortest',
     note: 'Distance only, ignores surface and traffic',
-    colour: '#94a3b8',
+    colour: '#7f9aa8',
   },
 ] as const
+
+/** What a single route is drawn in: the lightest slate, maximum contrast, no hue. */
+export const SOLO_ROUTE_COLOUR = '#ccd0cf'
 
 export type ProfileId = (typeof PROFILES)[number]['id']
 

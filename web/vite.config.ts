@@ -21,12 +21,26 @@ export default defineConfig({
         short_name: 'free-wheel',
         description: 'Offline cycle route planner — routing and maps entirely on the phone',
         display: 'standalone',
-        // Matches the ride screen's chrome, so the status bar area does not flash a
+        start_url: '/',
+        scope: '/',
+        // Matches the ride screen's deepest slate, so the status bar area does not flash a
         // different colour on launch.
-        background_color: '#14181c',
-        theme_color: '#14181c',
+        background_color: '#06141b',
+        theme_color: '#06141b',
         orientation: 'portrait',
-        icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+        categories: ['navigation', 'sports', 'travel'],
+        icons: [
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          // A separate maskable entry: Android crops `any` icons to an arbitrary shape and
+          // would take a bite out of a wheel.
+          {
+            src: 'icons/icon-maskable-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
       },
       workbox: {
         // The engine artifacts live in public/ and must be available offline.

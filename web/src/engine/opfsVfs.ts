@@ -151,6 +151,39 @@ async function directoryFor(path: string): Promise<FileSystemDirectoryHandle> {
  */
 const opening = new Map<string, Promise<SyncAccessHandle>>()
 
+/**
+ * Opens a sync access handle, retrying briefly if one is still held elsewhere.
+ *
+ * A page reload overlaps: the outgoing page's Worker is torn down asynchronously and its
+ * handles can outlive it by a few tens of milliseconds, so the incoming page's first attempt
+ * loses with `InvalidStateError`. That is transient and clears itself, and refusing to start
+ * because of it turns an ordinary refresh into a broken app.
+ *
+ * It does **not** paper over the real conflict: a second tab holds its handles indefinitely,
+ * so the retries run out and the error surfaces, which is the honest outcome — nothing the
+ * app can do about that one but say so.
+ */
+async function openWithRetry(
+  fileHandle: FileHandleWithSync,
+  path: string,
+): Promise<SyncAccessHandle> {
+  const delays = [0, 60, 120, 240, 400]
+  let last: unknown
+  for (const delay of delays) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+    try {
+      return await fileHandle.createSyncAccessHandle()
+    } catch (error) {
+      last = error
+      if (!(error instanceof DOMException) || error.name !== 'InvalidStateError') throw error
+    }
+  }
+  throw new Error(
+    `${path} is already open elsewhere — free-wheel can only run in one tab at a time. ` +
+      `Close the others and reload. (${last instanceof Error ? last.message : String(last)})`,
+  )
+}
+
 export function openHandle(path: string): Promise<SyncAccessHandle> {
   assertOpfsAvailable()
   const key = normalise(path)
@@ -165,7 +198,7 @@ export function openHandle(path: string): Promise<SyncAccessHandle> {
     const dir = await directoryFor(key)
     const name = key.slice(key.lastIndexOf('/') + 1)
     const fileHandle = (await dir.getFileHandle(name, { create: true })) as FileHandleWithSync
-    const handle = await fileHandle.createSyncAccessHandle()
+    const handle = await openWithRetry(fileHandle, key)
 
     files.set(key, { handle, size: handle.getSize() })
     registerDirectories(key)

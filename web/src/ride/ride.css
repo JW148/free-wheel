@@ -1,49 +1,38 @@
 /*
  * The ride screen.
  *
- * ## Layout: two stacked layers, not a bezel
+ * ## Layout: two stacked layers
  *
- * The map fills the window edge to edge, and the controls **float above it** on a separate
- * layer. An earlier version framed the map in an opaque bar top and bottom; that wasted the
- * screen and, on iOS, felt like a web page rather than an app.
+ * The map fills the window edge to edge and the controls float above it on a separate layer.
+ * `.ride` is `inset: 0`; `.ride-chrome` is `100svh` — the **small** viewport height, which
+ * excludes Safari's collapsible toolbar, so a floating control can never land underneath it.
  *
- * The two layers are sized differently on purpose:
+ * The reason the sheet used to hang off the bottom of the screen was not the unit. It was the
+ * missing `box-sizing: border-box` (now in `index.css`): `height: 100svh` was setting the
+ * *content* box and the safe-area padding was added on top, measured at 1354px against a
+ * 1332px viewport. Every attempt to fix it by adjusting padding made it worse.
  *
- * - `.ride` is `inset: 0` — the map is happy to run under Safari's toolbar and the home
- *   indicator, and looks better for it.
- * - `.ride-chrome` is `100svh` — the **small** viewport height, which by definition excludes
- *   Safari's collapsible toolbar. So a floating control can never end up underneath it.
- *   `dvh` tracks the toolbar as it collapses and lands controls behind it mid-transition;
- *   `lvh` (and a plain `inset: 0`) buries them outright. In a home-screen app all three are
- *   equal, so this costs nothing where it matters most.
+ * ## Colour
  *
- * Safe-area insets are then applied inside that, so panels clear the notch and the home
- * indicator without leaving a dead band of chrome.
+ * One neutral slate ramp for everything — `--slate-900` through `--slate-100`, defined in
+ * `index.css`. The chrome carries no hue at all. That is what lets the route line be the only
+ * thing on screen with a colour, and it is why a single route is drawn near-white rather than
+ * in a brand accent: with nothing competing, it does not need one.
  *
- * ## Look
+ * ## Type
  *
- * Translucent panels over the map, blurred, with a hairline border — the map stays visible
- * behind the controls, which is the point of a map app. Everything is read at a glance, at
- * speed, so: large tabular figures, generous touch targets for a gloved thumb, and one
- * primary action visible at a time.
- *
- * No webfont, deliberately: the app must work with the network off, and the system stack is
- * SF Pro on the target device, whose tabular numerals are switched on explicitly below.
+ * No webfont, deliberately: the app must work with the network off. The system stack is SF Pro
+ * on the target device, whose tabular numerals are switched on explicitly.
  */
 
 .ride {
-  --route: #e8590c;
-  --rider: #3b82f6;
-  --text: #f2f5f7;
-  --muted: #94a3b8;
-  --panel: rgb(13 17 22 / 92%);
-  --panel-solid: #0d1116;
-  --hairline: rgb(255 255 255 / 10%);
+  --panel: rgb(17 33 45 / 90%);
+  --hairline: rgb(204 208 207 / 12%);
   --radius: 14px;
 
   position: fixed;
   inset: 0;
-  background: #0d1116;
+  background: var(--slate-900);
   color: var(--text);
   font-variant-numeric: tabular-nums;
   overscroll-behavior: none;
@@ -75,11 +64,11 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
   background: var(--panel);
-  /* Blur is what lets the panel be dark and still feel like it belongs to the map rather
-     than being pasted over it. Saturation compensates for the desaturating effect of blur. */
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 35%);
+  /* Blur lets a panel be dark and still feel part of the map rather than pasted over it.
+     Saturation compensates for the desaturating effect of the blur itself. */
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: 0 6px 24px rgb(6 20 27 / 45%);
 }
 
 /* ── Stats rail ─────────────────────────────────────────────────────────────────────── */
@@ -136,8 +125,8 @@
   border: 1px solid var(--hairline);
   border-radius: 12px;
   background: var(--panel);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
   color: var(--text);
   cursor: pointer;
 }
@@ -152,26 +141,24 @@
   stroke-linejoin: round;
 }
 
+/* An engaged toggle inverts rather than tinting: with no accent hue in the system, contrast
+   is the only honest way to say "this is on". */
 .icon-button[data-active='yes'] {
-  background: var(--rider);
-  border-color: transparent;
-  color: #fff;
+  background: var(--slate-100);
+  border-color: var(--slate-100);
+  color: var(--slate-900);
 }
 
-.icon-button[data-active='yes'] svg path {
-  fill: currentColor;
-}
-
-/* Sits between the rail and the sheet, pushed to the right and bottom of the gap. */
 .map-controls {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-end;
   gap: 0.55rem;
   padding-bottom: 0.7rem;
-  /* The column itself is only a layout guide; only the buttons should catch touches. */
+  /* The column is a layout guide; only the buttons should catch touches. */
   pointer-events: none;
 }
 
@@ -179,64 +166,54 @@
   pointer-events: auto;
 }
 
-.following-note {
-  align-self: flex-start;
-  margin: 0 0 0.55rem;
-  padding: 0.4rem 0.7rem;
-  border-radius: 10px;
-  background: var(--panel);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--hairline);
-  font-size: 0.78rem;
-  pointer-events: auto;
-}
-
 .ride-error {
   margin: 0.55rem 0 0;
   padding: 0.7rem 0.85rem;
-  border: 1px solid rgb(248 113 113 / 35%);
+  border: 1px solid rgb(196 112 122 / 40%);
   border-radius: 12px;
-  background: rgb(69 10 10 / 90%);
+  background: rgb(58 22 26 / 92%);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  color: #fecaca;
+  color: #f0cdd1;
   font-size: 0.83rem;
   line-height: 1.45;
 }
 
-/* ── Empty state ────────────────────────────────────────────────────────────────────── */
+/* ── Riding ─────────────────────────────────────────────────────────────────────────── */
 
-.curtain {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
+.ride-status {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 0.8rem;
-  padding: 2rem 1.6rem;
-  background: #0d1116;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.65rem 0.6rem 0.9rem;
 }
 
-.curtain h2 {
-  margin: 0;
-  font-size: 1.45rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.curtain p {
-  max-width: 34ch;
-  margin: 0;
+.ride-status-text {
+  font-size: 0.8rem;
   color: var(--muted);
-  line-height: 1.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ghost {
+  flex: none;
+  min-height: 2.6rem;
+  padding: 0 1rem;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: rgb(204 208 207 / 8%);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ── Waypoint pins ──────────────────────────────────────────────────────────────────── */
 
-/* A round pin with a white ring, centred on the point. The obvious teardrop needs a 45deg
+/* A round pin with a light ring, centred on the point. The obvious teardrop needs a 45deg
    rotation, which rotates the letter inside it too — and the letter is the readable part. */
 .pin {
   display: grid;
@@ -244,45 +221,38 @@
   width: 30px;
   height: 30px;
   padding: 0;
-  border: 3px solid #fff;
+  border: 3px solid var(--slate-100);
   border-radius: 50%;
-  background: #0d1116;
-  color: #fff;
+  background: var(--slate-900);
+  color: var(--slate-900);
   font: inherit;
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 55%);
+  box-shadow: 0 2px 10px rgb(6 20 27 / 60%);
   cursor: pointer;
 }
 
 .pin[data-role='start'] {
-  background: #22c55e;
+  background: var(--slate-100);
 }
 
 .pin[data-role='finish'] {
-  background: var(--route);
+  background: var(--slate-300);
 }
 
 .pin[data-role='via'] {
-  background: #64748b;
+  background: var(--slate-500);
+  color: var(--slate-100);
 }
 
-/* ── Sheet ──────────────────────────────────────────────────────────────────────────── */
-
-.sheet {
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  /* The sheet is the one panel you read paragraphs in, so it is the most opaque of them.
-     A route line showing through a distance figure is not a nice effect, it is a bug. */
-  background: rgb(13 17 22 / 97%);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  box-shadow: 0 8px 32px rgb(0 0 0 / 45%);
-  max-height: 70svh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+/* Locked pins say so: no pointer, dimmer, and not a tap target. */
+.pin[data-editable='no'] {
+  opacity: 0.75;
+  cursor: default;
 }
+
+/* ── Bottom bar ─────────────────────────────────────────────────────────────────────── */
 
 .sheet-bar {
   display: flex;
@@ -294,6 +264,7 @@
 .sheet-toggle {
   display: flex;
   flex: 1;
+  min-width: 0;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
@@ -319,14 +290,16 @@
   color: var(--muted);
 }
 
+/* The one filled control in the app. Light on dark rather than a coloured accent — with a
+   neutral system, inverting is what reads as primary. */
 .primary {
-  min-width: 7.5rem;
+  min-width: 7rem;
   min-height: 3rem;
   padding: 0 1.1rem;
   border: none;
   border-radius: 10px;
-  background: var(--route);
-  color: #fff;
+  background: var(--slate-100);
+  color: var(--slate-900);
   font: inherit;
   font-size: 0.95rem;
   font-weight: 600;
@@ -334,29 +307,81 @@
 }
 
 .primary:disabled {
-  background: rgb(255 255 255 / 7%);
-  color: var(--muted);
+  background: rgb(204 208 207 / 10%);
+  color: var(--slate-500);
   cursor: default;
 }
 
 .primary.busy {
-  background: #475569;
+  background: var(--slate-500);
+  color: var(--slate-100);
 }
 
-.sheet-body {
+/* ── Drawer ─────────────────────────────────────────────────────────────────────────── */
+
+/* vaul portals these to <body>, so they are deliberately outside `.ride` and take their
+   colours from the root tokens rather than the ride scope. */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgb(6 20 27 / 55%);
+}
+
+.drawer {
+  position: fixed;
+  z-index: 31;
+  inset: auto 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 88svh;
+  margin-top: 6rem;
+  border: 1px solid var(--rule);
+  border-bottom: none;
+  border-radius: 18px 18px 0 0;
+  background: var(--slate-800);
+  outline: none;
+}
+
+.drawer-handle {
+  flex: none;
+  width: 2.5rem !important;
+  height: 5px !important;
+  margin: 0.6rem auto 0.2rem !important;
+  border-radius: 999px;
+  background: var(--slate-500) !important;
+}
+
+.drawer-body {
   display: grid;
   gap: 1.1rem;
-  padding: 0.9rem 0.85rem 1rem;
-  border-top: 1px solid var(--hairline);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.6rem 0.9rem calc(env(safe-area-inset-bottom) + 1.1rem);
+  -webkit-overflow-scrolling: touch;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .warn {
   margin: 0;
   padding: 0.6rem 0.75rem;
-  border: 1px solid rgb(251 191 36 / 30%);
+  border: 1px solid var(--slate-500);
   border-radius: 10px;
-  background: rgb(69 44 6 / 70%);
-  color: #fde68a;
+  background: var(--slate-700);
+  color: var(--slate-100);
   font-size: 0.83rem;
   line-height: 1.5;
 }
@@ -382,27 +407,30 @@
   align-items: center;
   gap: 0.1rem 0.65rem;
   min-height: 2.9rem;
-  padding: 0.5rem 0.7rem;
+  padding: 0.55rem 0.7rem;
   border: 1px solid transparent;
   border-radius: 11px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--slate-700);
   cursor: pointer;
 }
 
 .profiles label[data-selected='yes'] {
-  border-color: color-mix(in srgb, var(--route) 55%, transparent);
-  background: color-mix(in srgb, var(--route) 14%, transparent);
+  border-color: var(--slate-300);
+  background: var(--slate-500);
 }
 
 .profiles input {
   grid-row: span 2;
-  accent-color: var(--route);
+  accent-color: var(--slate-100);
   width: 1.05rem;
   height: 1.05rem;
   margin: 0;
 }
 
 .profile-label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   font-weight: 600;
   font-size: 0.92rem;
 }
@@ -413,7 +441,19 @@
   color: var(--muted);
 }
 
-/* Per-profile result, shown once a comparison has run. */
+.profiles label[data-selected='yes'] .profile-note {
+  color: var(--slate-100);
+  opacity: 0.75;
+}
+
+/* Only shown while comparing — see RouteSheet. */
+.profile-swatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 3px;
+}
+
 .profile-figure {
   grid-column: 3;
   grid-row: span 2;
@@ -423,18 +463,14 @@
   color: var(--muted);
 }
 
+.profiles label[data-selected='yes'] .profile-figure {
+  color: var(--slate-100);
+}
+
 .profile-figure strong {
   display: block;
   color: var(--text);
   font-size: 0.95rem;
-}
-
-.profile-swatch {
-  grid-column: 3;
-  grid-row: span 2;
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
 }
 
 .waypoints {
@@ -452,7 +488,7 @@
   gap: 0.5rem;
   padding: 0.45rem 0.7rem;
   border-radius: 10px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--slate-700);
   font-size: 0.83rem;
 }
 
@@ -469,20 +505,20 @@
   gap: 0.5rem;
 }
 
-.sheet-body button:not(.primary) {
+.drawer-body button:not(.primary) {
   min-height: 2.8rem;
   padding: 0 0.9rem;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--rule);
   border-radius: 10px;
-  background: rgb(255 255 255 / 5%);
+  background: var(--slate-700);
   color: var(--text);
   font: inherit;
   font-size: 0.86rem;
   cursor: pointer;
 }
 
-.sheet-body button:disabled {
-  color: var(--muted);
+.drawer-body button:disabled {
+  color: var(--slate-500);
   cursor: default;
 }
 
@@ -507,66 +543,8 @@
   color: var(--muted);
 }
 
-/* ── Setup ──────────────────────────────────────────────────────────────────────────── */
-
-/* Setup sits above the ride screen rather than replacing it, so the map keeps its state —
-   its tiles, its centre, and its OPFS handles — while tiles are imported behind it. */
-.setup {
-  position: fixed;
-  z-index: 10;
-  inset: 0 0 auto;
-  height: 100svh;
-  overflow-y: auto;
-  background: #0d1116;
-  color: #e6ebf0;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-    env(safe-area-inset-left);
-}
-
-.setup-header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.8rem 1rem;
-  background: rgb(13 17 22 / 92%);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgb(255 255 255 / 10%);
-}
-
-.setup-header h1 {
-  margin: 0;
-  font-size: 1.05rem;
-}
-
-.setup-close {
-  min-height: 2.6rem;
-  padding: 0 1.1rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 10px;
-  background: rgb(255 255 255 / 6%);
-  color: #e6ebf0;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-:where(button, input, a, summary):focus-visible {
-  outline: 2px solid var(--route, #e8590c);
-  outline-offset: 2px;
+.elevation-readout {
+  color: var(--text);
 }
 
 /* ── First run ──────────────────────────────────────────────────────────────────────── */
@@ -581,8 +559,8 @@
   inset: 0 0 auto;
   height: 100svh;
   overflow-y: auto;
-  background: #0d1116;
-  color: #f2f5f7;
+  background: var(--slate-900);
+  color: var(--text);
   padding: max(env(safe-area-inset-top), 1rem) max(env(safe-area-inset-right), 1.1rem)
     max(env(safe-area-inset-bottom), 1.5rem) max(env(safe-area-inset-left), 1.1rem);
 }
@@ -604,7 +582,7 @@
 .firstrun-lede {
   max-width: 42ch;
   margin: 0 0 2rem;
-  color: #94a3b8;
+  color: var(--muted);
   line-height: 1.55;
 }
 
@@ -614,7 +592,6 @@
   margin: 0 0 1.5rem;
   padding: 0;
   list-style: none;
-  counter-reset: step;
 }
 
 .steps li {
@@ -622,9 +599,9 @@
   grid-template-columns: 2rem 1fr;
   gap: 0.9rem;
   padding: 1rem;
-  border: 1px solid rgb(255 255 255 / 10%);
+  border: 1px solid var(--rule);
   border-radius: 14px;
-  background: rgb(255 255 255 / 3%);
+  background: var(--surface);
 }
 
 /* A step you cannot act on yet says so by receding, rather than by looking broken. */
@@ -633,8 +610,8 @@
 }
 
 .steps li[data-done='yes'] {
-  border-color: rgb(34 197 94 / 40%);
-  background: rgb(34 197 94 / 8%);
+  border-color: var(--slate-500);
+  background: var(--slate-700);
 }
 
 .step-index {
@@ -643,14 +620,14 @@
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: rgb(255 255 255 / 8%);
+  background: var(--slate-700);
   font-size: 0.9rem;
   font-weight: 700;
 }
 
 .steps li[data-done='yes'] .step-index {
-  background: #22c55e;
-  color: #052e16;
+  background: var(--slate-100);
+  color: var(--slate-900);
 }
 
 .steps h2 {
@@ -661,7 +638,7 @@
 
 .step-note {
   margin: 0 0 0.8rem;
-  color: #94a3b8;
+  color: var(--muted);
   font-size: 0.88rem;
   line-height: 1.55;
 }
@@ -669,12 +646,12 @@
 .step-note code {
   padding: 0.05rem 0.3rem;
   border-radius: 4px;
-  background: rgb(255 255 255 / 8%);
+  background: rgb(204 208 207 / 10%);
   font-size: 0.85em;
 }
 
 .step-note a {
-  color: #f97316;
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
@@ -684,10 +661,10 @@
   align-items: center;
   min-height: 2.8rem;
   padding: 0 1.1rem;
-  border: 1px solid rgb(255 255 255 / 14%);
+  border: 1px solid var(--rule);
   border-radius: 10px;
-  background: rgb(255 255 255 / 7%);
-  color: #f2f5f7;
+  background: var(--slate-700);
+  color: var(--text);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -711,7 +688,7 @@
   margin: 0 0 1rem;
   padding: 0.7rem 0.9rem;
   border-radius: 10px;
-  background: rgb(255 255 255 / 6%);
+  background: var(--surface);
   font-size: 0.88rem;
   font-variant-numeric: tabular-nums;
 }
@@ -724,4 +701,110 @@
 
 .firstrun-actions .step-note {
   margin: 0;
+}
+
+/* ── Setup ──────────────────────────────────────────────────────────────────────────── */
+
+/* Setup sits above the ride screen rather than replacing it, so the map keeps its state —
+   its tiles, its centre, and its OPFS handles — while data is imported behind it. */
+.setup {
+  position: fixed;
+  z-index: 10;
+  inset: 0 0 auto;
+  height: 100svh;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.setup-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  background: rgb(6 20 27 / 92%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.setup-header h1 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.setup-close {
+  min-height: 2.6rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--slate-700);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:where(button, input, a, summary):focus-visible {
+  outline: 2px solid var(--slate-100);
+  outline-offset: 2px;
+}
+
+/* ── MapLibre's own controls ────────────────────────────────────────────────────────── */
+
+/*
+ * The attribution is required — it is the OSM licence — but it ships light-on-white and sits
+ * in the bottom-right corner, where it landed on top of the action bar. It lives inside the
+ * map container and knows nothing about our chrome, so it gets moved and repainted here.
+ */
+.maplibregl-ctrl-bottom-right {
+  /* Measured, not guessed: the action bar's top edge sits ~84px above the viewport bottom,
+     so anything less than this overlaps it. */
+  bottom: calc(env(safe-area-inset-bottom) + 5.7rem);
+  right: max(env(safe-area-inset-right), 0.7rem);
+}
+
+.ride[data-riding='yes'] .maplibregl-ctrl-bottom-right {
+  /* Nothing but the status strip down there while riding, which is shorter. */
+  bottom: calc(env(safe-area-inset-bottom) + 4.5rem);
+}
+
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  min-height: 0;
+  border-radius: 8px;
+  background: rgb(6 20 27 / 72%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--slate-300);
+  font-size: 0.66rem;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--slate-300);
+}
+
+/* The compact toggle is a white circle with a dark "i" by default. */
+.maplibregl-ctrl-attrib-button {
+  background-color: transparent;
+  filter: invert(1) opacity(0.55);
+}
+
+.maplibregl-ctrl-bottom-left {
+  display: none; /* the scale control is not enabled, and the empty container still reserves space */
 }

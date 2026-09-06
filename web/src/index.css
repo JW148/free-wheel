@@ -1,15 +1,38 @@
+/*
+ * `border-box` everywhere, and it is load-bearing.
+ *
+ * Vite's template ships no reset, so the default `content-box` was in force. That meant
+ * `height: 100svh` on the chrome layer set the *content* height and its safe-area padding was
+ * added on top — measured at 1332 + 22.1 = 1354.09px against a 1332px viewport. The bottom
+ * sheet was pushed 22px below the fold and clipped mid-word. Two previous attempts to fix the
+ * safe area by adjusting padding made it steadily worse, because padding was the thing
+ * overflowing.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 :root {
-  /* One set of tokens, dark. The app's chrome is dark in both map themes: the light basemap
-     exists for sunlight glare on the *map*, and flipping the surrounding UI with it would
-     mean every panel needed two designs and two contrast checks. These match the ride
-     screen's palette so the two never drift apart. */
-  --bg: #0d1116;
-  --surface: #171d24;
-  --text: #e6ebf0;
-  --muted: #94a3b8;
-  --rule: #262f3a;
-  --good: #22c55e;
-  --bad: #f87171;
+  /* A single neutral slate ramp, darkest to lightest. Everything in the UI is drawn from
+     these six; nothing else is a surface or a text colour. Keeping the chrome free of hue is
+     what lets the route line — the only thing that needs to shout — actually shout. */
+  --slate-900: #06141b;
+  --slate-800: #11212d;
+  --slate-700: #253745;
+  --slate-500: #4a5c6a;
+  --slate-300: #9ba8ab;
+  --slate-100: #ccd0cf;
+
+  --bg: var(--slate-900);
+  --surface: var(--slate-800);
+  --raised: var(--slate-700);
+  --text: var(--slate-100);
+  --muted: var(--slate-300);
+  --rule: var(--slate-700);
+  --good: #5a9e63;
+  --bad: #c4707a;
 
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 17px;
@@ -27,7 +50,7 @@ body {
   margin: 0;
   background: var(--bg);
   /* Stops a downward swipe on the map turning into a pull-to-refresh, which in Safari
-     would reload the app mid-ride. The safe-area insets are applied by the ride screen
-     and the setup overlay themselves, since both are position:fixed. */
+     would reload the app mid-ride. Safe-area insets are applied by the ride screen and the
+     setup overlay themselves, since both are position:fixed. */
   overscroll-behavior: none;
 }

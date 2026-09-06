@@ -39,7 +39,7 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     paint: {
       // A dark casing on a dark map: the route needs separating from the road under it, and
       // a white halo would glare. This reads as a shadow rather than an outline.
-      'line-color': '#0d1116',
+      'line-color': '#06141b',
       'line-opacity': 0.55,
       'line-width': [
         'interpolate',
@@ -81,8 +81,8 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     source: POSITION_SOURCE,
     paint: {
       'circle-radius': 18,
-      'circle-color': '#3b82f6',
-      'circle-opacity': 0.2,
+      'circle-color': '#9ba8ab',
+      'circle-opacity': 0.22,
     },
   })
   map.addLayer({
@@ -91,9 +91,9 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     source: POSITION_SOURCE,
     paint: {
       'circle-radius': 7,
-      'circle-color': '#3b82f6',
+      'circle-color': '#4a86c4',
       'circle-stroke-width': 3,
-      'circle-stroke-color': '#ffffff',
+      'circle-stroke-color': '#ccd0cf',
     },
   })
 }

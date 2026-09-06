@@ -86,8 +86,8 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
       >
         <defs>
           <linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#e8590c" stopOpacity="0.45" />
-            <stop offset="100%" stopColor="#e8590c" stopOpacity="0.02" />
+            <stop offset="0%" stopColor="#9ba8ab" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="#9ba8ab" stopOpacity="0.02" />
           </linearGradient>
         </defs>
 
@@ -111,7 +111,7 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
         <path
           d={`M${line}`}
           fill="none"
-          stroke="#e8590c"
+          stroke="#ccd0cf"
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -136,8 +136,8 @@ export default function ElevationProfile({ route }: { route: ParsedRoute }) {
               cx={x(at.distanceM)}
               cy={y(at.elevM)}
               r="4"
-              fill="#e8590c"
-              stroke="#0d1116"
+              fill="#ccd0cf"
+              stroke="#11212d"
               strokeWidth="2"
               vectorEffect="non-scaling-stroke"
             />

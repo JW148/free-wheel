@@ -2,19 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Marker } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
-import { profileById, useRoute } from './useRoute'
+import { profileById, SOLO_ROUTE_COLOUR, useRoute } from './useRoute'
 import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
 import { boundsOf, setPosition, setRoutes, type DrawnRoute } from './routeLayers'
 import { formatDistance, formatDuration } from './gpx'
 import RouteSheet from './RouteSheet'
 
+/** How close the map sits to the rider once a ride starts. Street-level, not overview. */
+const RIDING_ZOOM = 16.5
+
 /**
  * The ride screen: a full-bleed map with controls floating over it.
  *
- * Everything is sized for the real use — a phone clamped to a handlebar, read at a glance,
- * operated with one gloved thumb. Hence large tabular figures, generous targets, and exactly
- * one primary action visible at a time.
+ * It has two modes, and they want opposite things:
+ *
+ * - **Planning** — tap to place points, compare styles, read an elevation profile. Chrome is
+ *   welcome; you are sitting still and looking at the screen.
+ * - **Riding** — one glance, at speed, one-handed. Everything not needed for the next
+ *   junction gets out of the way, the camera locks to the rider, and tapping the map no
+ *   longer places a waypoint — a bump in the road should not edit the route.
  */
 export default function RideView({
   container,
@@ -25,28 +32,43 @@ export default function RideView({
   basemap: ReturnType<typeof useMapLibre>
   onOpenSetup: () => void
 }) {
-  const { map, status, error: mapError, styleReady, workerProblem, theme, setTheme } = basemap
+  const { map, error: mapError, styleReady, workerProblem, theme, setTheme } = basemap
   const plan = useRoute()
-  const [following, setFollowing] = useState(false)
+  const [riding, setRiding] = useState(false)
+  /**
+   * Whether a tap on the map drops a waypoint.
+   *
+   * Switched off when a ride starts, and toggleable by hand the rest of the time: once a
+   * route is planned the map becomes something you read and pan, and a stray tap silently
+   * adding a seventh waypoint is worse than an extra button.
+   */
+  const [placing, setPlacing] = useState(true)
+  const [follow, setFollow] = useState(false)
+
+  // Riding implies following, and implies not editing.
+  const following = riding || follow
   const { fix, status: fixStatus, error: fixError, locateOnce } = useGeolocation(following)
-  const wakeLock = useWakeLock(following)
+  const wakeLock = useWakeLock(riding)
 
   const markers = useRef(new Map<string, Marker>())
-  // The click handler is registered once but needs the latest callbacks; refs avoid tearing
-  // down and rebinding the listener on every render.
   const addWaypoint = useRef(plan.addWaypoint)
   addWaypoint.current = plan.addWaypoint
   const moveWaypoint = useRef(plan.moveWaypoint)
   moveWaypoint.current = plan.moveWaypoint
   const removeWaypoint = useRef(plan.removeWaypoint)
   removeWaypoint.current = plan.removeWaypoint
+  const editable = placing && !riding
+  const canPlace = useRef(editable)
+  canPlace.current = editable
 
   // ── Tap to place a waypoint ────────────────────────────────────────────────────────────
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
-    const onClick = (e: { lngLat: { lng: number; lat: number } }) =>
+    const onClick = (e: { lngLat: { lng: number; lat: number } }) => {
+      if (!canPlace.current) return
       addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
+    }
     instance.on('click', onClick)
     return () => {
       instance.off('click', onClick)
@@ -79,13 +101,11 @@ export default function RideView({
         const element = document.createElement('button')
         element.type = 'button'
         element.className = 'pin'
-        // Tapping a pin removes it — the fastest way to undo a misplaced tap, which is the
-        // most common thing that goes wrong when placing points one-handed.
-        // Through a ref, like the other two: this listener is attached once per marker and
+        // Through a ref, like the others: this listener is attached once per marker and
         // would otherwise capture the first render's callback for the marker's whole life.
         element.addEventListener('click', (event) => {
           event.stopPropagation()
-          removeWaypoint.current(waypoint.id)
+          if (canPlace.current) removeWaypoint.current(waypoint.id)
         })
         marker = new Marker({ element, draggable: true, anchor: 'center' })
           .setLngLat([waypoint.lon, waypoint.lat])
@@ -99,12 +119,18 @@ export default function RideView({
         marker.setLngLat([waypoint.lon, waypoint.lat])
       }
 
+      // Dragging a pin off course mid-ride would be an accident, never an intention.
+      marker.setDraggable(editable)
       const element = marker.getElement()
       element.dataset.role = role
+      element.dataset.editable = editable ? 'yes' : 'no'
       element.textContent = label
-      element.setAttribute('aria-label', `${role} point ${label}. Tap to remove.`)
+      element.setAttribute(
+        'aria-label',
+        editable ? `${role} point ${label}. Tap to remove.` : `${role} point ${label}`,
+      )
     })
-  }, [map, styleReady, plan.waypoints])
+  }, [map, styleReady, plan.waypoints, editable])
 
   // ── The routes ────────────────────────────────────────────────────────────────────────
   const lastFitted = useRef<string | null>(null)
@@ -112,19 +138,22 @@ export default function RideView({
     const instance = map.current
     if (!instance || !styleReady) return
 
+    // One route needs no hue to be unambiguous, so it gets the neutral near-white. Colours
+    // appear only once there is something to tell apart.
+    const ids = Object.keys(plan.routes)
     const drawn: DrawnRoute[] = Object.entries(plan.routes).map(([id, route]) => ({
       id,
       coords: route.coords,
-      colour: profileById(id).colour,
+      colour: ids.length > 1 ? profileById(id).colour : SOLO_ROUTE_COLOUR,
       focused: id === plan.focused,
     }))
     setRoutes(instance, drawn)
 
-    // Fit only when the *set* of routes changes, not on every render and not when the focus
-    // moves between them — otherwise panning away snaps you back, which is maddening, and
-    // tapping a profile to compare would yank the map about.
-    const signature = Object.keys(plan.routes).sort().join(',') + '|' + plan.waypoints.length
-    if (drawn.length > 0 && signature !== lastFitted.current) {
+    // Fit only when the *set* of routes changes, and never while riding — the camera belongs
+    // to the rider then, and being yanked out to an overview mid-junction is the opposite of
+    // helpful.
+    const signature = [...ids].sort().join(',') + '|' + plan.waypoints.length
+    if (!riding && drawn.length > 0 && signature !== lastFitted.current) {
       lastFitted.current = signature
       const bounds = boundsOf(drawn.flatMap((r) => r.coords))
       if (bounds) {
@@ -132,7 +161,7 @@ export default function RideView({
       }
     }
     if (drawn.length === 0) lastFitted.current = null
-  }, [map, styleReady, plan.routes, plan.focused, plan.waypoints.length])
+  }, [map, styleReady, plan.routes, plan.focused, plan.waypoints.length, riding])
 
   // ── The rider ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -149,8 +178,78 @@ export default function RideView({
     }
   }, [locateOnce, map])
 
+  const startRiding = useCallback(async () => {
+    setRiding(true)
+    setPlacing(false)
+    const here = await locateOnce()
+    if (!map.current) return
+    map.current.easeTo({
+      center: here ? [here.lon, here.lat] : map.current.getCenter(),
+      zoom: RIDING_ZOOM,
+      duration: 900,
+    })
+  }, [locateOnce, map])
+
   const problem = plan.error ?? mapError ?? fixError ?? workerProblem
   const route = plan.route
+
+  if (riding) {
+    return (
+      <div className="ride" data-riding="yes">
+        <div ref={container} className="ride-map" />
+        <div className="ride-chrome">
+          <div className="rail">
+            {route && (
+              <dl className="stats panel">
+                <div>
+                  <dd>{formatDistance(route.distanceM)}</dd>
+                  <dt>route</dt>
+                </div>
+                <div>
+                  <dd>{fix?.speed != null ? (fix.speed * 3.6).toFixed(1) : '—'}</dd>
+                  <dt>km/h</dt>
+                </div>
+                <div>
+                  <dd>{formatDuration(route.timeS)}</dd>
+                  <dt>est.</dt>
+                </div>
+              </dl>
+            )}
+          </div>
+
+          {problem && (
+            <p className="ride-error" role="alert">
+              {problem}
+            </p>
+          )}
+
+          <div className="map-controls">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={centreOnMe}
+              aria-label="Recentre on me"
+            >
+              <TargetIcon />
+            </button>
+          </div>
+
+          <div className="ride-status panel">
+            <span className="ride-status-text">
+              {fixStatus === 'locating' && 'Getting a fix…'}
+              {fixStatus === 'tracking' && fix && `Following · ±${Math.round(fix.accuracy)} m`}
+              {fixStatus === 'denied' && 'No location permission'}
+              {fixStatus === 'error' && 'No fix'}
+              {!wakeLock.supported && ' · add to Home Screen to keep the screen on'}
+            </span>
+            <button type="button" className="ghost" onClick={() => setRiding(false)}>
+              End ride
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="ride">
@@ -175,13 +274,13 @@ export default function RideView({
             </dl>
           ) : (
             <p className="rail-hint panel">
-              {status === 'no-basemap'
-                ? 'No map imported yet.'
-                : plan.waypoints.length === 0
+              {plan.waypoints.length === 0
+                ? placing
                   ? 'Tap the map to set your start.'
-                  : plan.waypoints.length === 1
-                    ? 'Now tap where you are heading.'
-                    : 'Ready when you are.'}
+                  : 'Turn on point editing to plan a route.'
+                : plan.waypoints.length === 1
+                  ? 'Now tap where you are heading.'
+                  : 'Ready when you are.'}
             </p>
           )}
         </div>
@@ -193,6 +292,16 @@ export default function RideView({
         )}
 
         <div className="map-controls">
+          <button
+            type="button"
+            className="icon-button"
+            data-active={placing ? 'yes' : 'no'}
+            onClick={() => setPlacing((p) => !p)}
+            aria-pressed={placing}
+            aria-label={placing ? 'Stop adding points on tap' : 'Add points by tapping the map'}
+          >
+            <PinIcon />
+          </button>
           <button
             type="button"
             className="icon-button"
@@ -215,44 +324,27 @@ export default function RideView({
           <button
             type="button"
             className="icon-button"
-            data-active={following ? 'yes' : 'no'}
-            onClick={() => setFollowing((f) => !f)}
-            aria-pressed={following}
-            aria-label={following ? 'Stop following' : 'Follow my position'}
+            data-active={follow ? 'yes' : 'no'}
+            onClick={() => setFollow((f) => !f)}
+            aria-pressed={follow}
+            aria-label={follow ? 'Stop following' : 'Follow my position'}
           >
             <NavigationIcon />
           </button>
         </div>
 
-        {following && (
-          <p className="following-note">
-            {fixStatus === 'locating' && 'Getting a fix…'}
-            {fixStatus === 'tracking' &&
-              fix &&
-              `Following · ±${Math.round(fix.accuracy)} m${
-                fix.speed !== null ? ` · ${(fix.speed * 3.6).toFixed(1)} km/h` : ''
-              }`}
-            {/* Said plainly rather than letting the screen blank mid-descent unexplained. */}
-            {!wakeLock.held && wakeLock.supported && fixStatus === 'tracking' && ' · screen may sleep'}
-            {!wakeLock.supported && ' · screen will sleep — add to Home Screen to prevent it'}
-          </p>
-        )}
-
-        <RouteSheet plan={plan} />
+        <RouteSheet plan={plan} onStart={() => void startRiding()} />
       </div>
     </div>
   )
 }
 
-/* Inline SVG rather than sprite lookups: there are five, and a missing sprite entry would be
-   one more thing that can fail silently offline. */
+/* Inline SVG rather than sprite lookups: a missing sprite entry would be one more thing that
+   can fail silently offline. */
 
 /**
- * Sliders, not a cog.
- *
- * The obvious cog — a circle with eight spokes — is visually identical to the sun used for
- * the daylight toggle, and the two buttons sit one above the other. Two controls that look
- * the same and do unrelated things is worse than a slightly less conventional icon.
+ * Sliders, not a cog. The obvious cog — a circle with eight spokes — is visually identical to
+ * the sun used for the daylight toggle, and the two buttons sit near each other.
  */
 function SettingsIcon() {
   return (
@@ -260,6 +352,15 @@ function SettingsIcon() {
       <path d="M4 7h6M14 7h6M4 17h10M18 17h2" />
       <circle cx="12" cy="7" r="2.2" />
       <circle cx="16" cy="17" r="2.2" />
+    </svg>
+  )
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" />
+      <circle cx="12" cy="10.4" r="2.4" />
     </svg>
   )
 }

@@ -221,7 +221,7 @@ input:not([type]) {
 }
 
 .setup-tabs button[data-selected='yes'] {
-  border-color: #e8590c;
+  border-color: var(--slate-300);
   color: var(--text);
   font-weight: 600;
 }
