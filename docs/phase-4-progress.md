@@ -353,3 +353,61 @@ checked against the light theme.
 Every route now takes its profile's colour, including a lone one. This removes a state rather
 than adding one, and the map no longer repaints the moment a second profile is ticked.
 `SOLO_ROUTE_COLOUR` is gone.
+
+## Paths on the basemap
+
+The single `path` colour covered everything Protomaps files under `kind: 'path'`, drawn at
+road width with a road casing. Decoding one z14 tile over central Edinburgh
+(`pmtiles tile edinburgh.pmtiles 14 8046 5105`) shows why that read as clutter:
+
+| kind_detail | count | | kind_detail | count |
+|---|---:|---|---|---:|
+| footway | 65 | | sidewalk | 2 |
+| steps | 28 | | crossing | 2 |
+| pedestrian | 22 | | corridor | 2 |
+| cycleway | 6 | | path | 1 |
+
+Six cycleways against 115 ways you cannot ride. Out in the Pentlands the same query returns
+`track` and `path` and almost nothing else, which is the opposite problem: there the paths
+*are* the network.
+
+**Most of the visual weight was the casing, not the line.** `roads-casing` carried no filter,
+so every footway got the same dark casing as a dual carriageway — up to 8px at z16. Excluding
+paths from it does more than any width change.
+
+### The chroma ceiling is set by the path colour itself
+
+The plan was a brighter cycleway. Measured in CIELCh — the same instrument as the route
+palette above — that is not available:
+
+| | hex | L\* | C | h |
+|---|---|---:|---:|---:|
+| dark `pathCycle` | `#8a7a63` | 52.0 | 15.0 | 81 |
+| dark `pathTrack` (unchanged) | `#6b5c46` | 40.0 | **15.1** | 81 |
+| dark `pathFoot` | `#4e4436` | 29.5 | 10.5 | 80 |
+| light `pathCycle` | `#9a8972` | 58.0 | 15.0 | 80 |
+| light `pathTrack` | `#baa990` | 70.0 | 15.0 | 84 |
+| light `pathFoot` | `#cfc2b0` | 78.9 | 11.0 | 86 |
+
+The old `path` colour *is* the C ≤ 15.1 ceiling this document records for the whole basemap —
+it is the colour that set it. A cycleway brightened by saturation measured C 20.7 and would
+have broken the one constraint that keeps a route line from reading as map furniture. So the
+three tones separate on **lightness at held chroma**, and the separation between path *kinds*
+is carried by dash pattern instead. On the daylight map the order inverts: the darkest tone is
+the most prominent, because these sit against a near-white earth.
+
+### Notes
+
+- **`line-dasharray` is data-driven in MapLibre 6** (`cross-faded-data-driven`), so one layer
+  with a `match` on `kind_detail` does the whole job. It is *not* interpolatable — `step` and
+  `match` only. Dash units are multiples of line width, so the patterns are tuned for the ~2px
+  widths and would look quite different at the old 6px.
+- **`[1, 0]` is solid.** `LineAtlas.addRegularDash` splices zero-length ranges out and wraps
+  the single remaining range, so the cycleway gets an unbroken line without a layer of its own.
+- **The filter is an allowlist.** `sidewalk`, `crossing`, `corridor` and `pier` are never drawn
+  in any mode, and a `kind_detail` added by a future schema version cannot quietly appear.
+- **`validateStyleMin` does not validate expressions.** It returns no errors for a style with
+  a zoom curve nested inside a `match`. `style.test.ts` compiles every expression with
+  `createPropertyExpression` as well — note its argument order is
+  `(expression, rootKey, spec)`, and passing the spec second makes every data-driven property
+  report "data expressions not supported".

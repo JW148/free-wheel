@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttributionControl, Map as MapLibreMap } from 'maplibre-gl'
 import { mountBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
 import { checkMapLibreWorker, configureMapLibreWorker } from '../map/maplibreWorker'
-import { basemapStyle, type MapTheme } from '../map/style'
+import { basemapStyle, pathFilter, type MapTheme, type PathMode } from '../map/style'
 import { sharedEngine } from '../engine/engineClient'
 import { ensureRouteLayers } from './routeLayers'
 
@@ -16,12 +16,22 @@ export const workerUrl = configureMapLibreWorker()
 /** Remembered so the app opens on the archive you were last using, not an arbitrary one. */
 const LAST_BASEMAP_KEY = 'free-wheel.basemap.v1'
 const THEME_KEY = 'free-wheel.theme.v1'
+const PATHS_KEY = 'free-wheel.paths.v1'
 
 function storedTheme(): MapTheme {
   try {
     return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'
   } catch {
     return 'dark'
+  }
+}
+
+function storedPathMode(): PathMode {
+  try {
+    const stored = localStorage.getItem(PATHS_KEY)
+    return stored === 'all' || stored === 'none' ? stored : 'rideable'
+  } catch {
+    return 'rideable'
   }
 }
 
@@ -57,6 +67,11 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   // switch would tear the map down and remount the archive.
   const themeRef = useRef(theme)
   themeRef.current = theme
+  const [pathMode, setPathModeState] = useState<PathMode>(storedPathMode)
+  // Same reasoning as `themeRef`: `show` needs the current value without being rebuilt when it
+  // changes, or every path toggle would tear the map down and remount the archive.
+  const pathModeRef = useRef(pathMode)
+  pathModeRef.current = pathMode
 
   // A dead MapLibre worker produces no error event and no failed request — the map simply
   // never draws. Asking directly is the only cheap way to tell that apart from an empty
@@ -75,7 +90,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         map.current?.remove()
         const created = new MapLibreMap({
           container: container.current!,
-          style: basemapStyle(name, themeRef.current),
+          style: basemapStyle(name, themeRef.current, pathModeRef.current),
           center: header.center,
           zoom: 12,
           // Past the archive's own max zoom, not at it: MapLibre overzooms vector tiles by
@@ -141,11 +156,32 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     const name = activeRef.current?.name
     if (!instance || !name) return
     setStyleReady(false)
-    instance.setStyle(basemapStyle(name, next))
+    instance.setStyle(basemapStyle(name, next, pathModeRef.current))
     instance.once('styledata', () => {
       ensureRouteLayers(instance)
       setStyleReady(true)
     })
+  }, [])
+
+  /**
+   * Shows or hides path kinds, by swapping the `paths` layer's filter.
+   *
+   * Deliberately **not** `setStyle`, which is what the theme swap has to use. `setStyle`
+   * replaces every layer, so it takes the route line and position dot with it and they have to
+   * be rebuilt — acceptable for a palette change, wasteful for a button a rider might tap three
+   * times in a row to cycle the modes. `setFilter` touches one layer and leaves the route alone.
+   */
+  const setPathMode = useCallback((next: PathMode) => {
+    setPathModeState(next)
+    try {
+      localStorage.setItem(PATHS_KEY, next)
+    } catch {
+      // Not remembering the path mode is a small annoyance, not a failure.
+    }
+    // Guarded because the layer only exists once the style has loaded; a tap during the first
+    // load would otherwise throw. The style is built with the current mode anyway, so there is
+    // nothing to catch up on.
+    if (map.current?.getLayer('paths')) map.current.setFilter('paths', pathFilter(next))
   }, [])
 
   const refresh = useCallback(async () => {
@@ -196,6 +232,8 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     workerProblem,
     theme,
     setTheme,
+    pathMode,
+    setPathMode,
     show,
     refresh,
     setError,

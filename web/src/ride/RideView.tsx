@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Marker, type MapMouseEvent } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
+import { nextPathMode, type PathMode } from '../map/style'
 import { useRoute } from './useRoute'
 import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
@@ -33,7 +34,8 @@ export default function RideView({
   basemap: ReturnType<typeof useMapLibre>
   onOpenSetup: () => void
 }) {
-  const { map, error: mapError, styleReady, workerProblem, theme, setTheme } = basemap
+  const { map, error: mapError, styleReady, workerProblem, theme, setTheme, pathMode, setPathMode } =
+    basemap
   const plan = useRoute()
   const sheet = useRouteSheet(plan)
   const [riding, setRiding] = useState(false)
@@ -340,6 +342,15 @@ export default function RideView({
           >
             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
+          <button
+            type="button"
+            className="icon-button"
+            data-active={pathMode === 'none' ? 'no' : 'yes'}
+            onClick={() => setPathMode(nextPathMode(pathMode))}
+            aria-label={PATH_MODE_LABEL[pathMode]}
+          >
+            <PathIcon />
+          </button>
           <button type="button" className="icon-button" onClick={onOpenSetup} aria-label="Setup">
             <SettingsIcon />
           </button>
@@ -384,6 +395,28 @@ function SettingsIcon() {
       <circle cx="16" cy="17" r="2.2" />
     </svg>
   )
+}
+
+/**
+ * A forking dashed track. Deliberately not the pixel bike, which already means ride mode, and
+ * not a footprint, which would name the state the button is *least* often in.
+ */
+function PathIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 22v-6a4 4 0 0 1 4-4h4a4 4 0 0 0 4-4V2" strokeDasharray="3.5 2.6" />
+      <circle cx="6" cy="22" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="18" cy="2" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+/** Names the state the button is *in*, not the one it moves to — the map already shows the
+ *  change, so a label describing the next tap reads as a contradiction of what you can see. */
+const PATH_MODE_LABEL: Record<PathMode, string> = {
+  rideable: 'Paths: cycleways, tracks and bridleways. Tap to add footpaths',
+  all: 'Paths: all, including footpaths and steps. Tap to hide',
+  none: 'Paths hidden. Tap to show cycleways and tracks',
 }
 
 function PinIcon() {

@@ -178,6 +178,31 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **`zoom` must be the input to a top-level `interpolate` or `step`.** Nesting it inside a
   `match` is a style validation error, and MapLibre reports that as an `error` *event* rather
   than throwing — so the map silently never loads.
+- **Paths are their own layer, and `roads-casing` must exclude them.** Protomaps files
+  footways, steps, sidewalks, crossings and indoor corridors under `kind: 'path'` alongside
+  cycleways and tracks — 115 unrideable ways against 6 cycleways in one central Edinburgh
+  tile. The `paths` layer allowlists `kind_detail`, so a kind added by a future schema
+  version cannot quietly appear. Most of the old visual weight was the **casing**, not the
+  line: an unfiltered `roads-casing` gave a footway the same 8px dark casing as a dual
+  carriageway.
+- **The path colour set the basemap's chroma ceiling.** `#6b5c46` measures CIELCh C 15.1,
+  which *is* the "C ≤ 15.1" figure in `docs/phase-4-progress.md`. A cycleway brightened by
+  saturation measures C 20.7 and breaks the rule that keeps a route line from reading as map
+  furniture — so the three path tones separate on lightness at held chroma, and path *kinds*
+  separate by dash pattern. On the light theme the order inverts: darkest is most prominent.
+- **`line-dasharray` is data-driven but not interpolatable.** MapLibre 6 types it
+  `cross-faded-data-driven`, so one layer with a `match` on `kind_detail` covers every dash
+  pattern — but `interpolate` is rejected, and dash units are multiples of line width rather
+  than pixels. `[1, 0]` renders solid: `LineAtlas.addRegularDash` splices zero-length ranges
+  out and wraps the remainder.
+- **`validateStyleMin` does not check expressions.** It returns zero errors for a style with a
+  zoom curve nested inside a `match` — exactly the bug that "cost the whole of Phase 3" class
+  of silent failure. `style.test.ts` also compiles every paint and layout expression with
+  `createPropertyExpression`, whose argument order is `(expression, rootKey, spec)`; passing
+  the spec second makes every data-driven property report "data expressions not supported".
+- **Toggle map layers with `setFilter`, not `setStyle`.** `setStyle` replaces every layer and
+  takes the route line and position dot with it, so they have to be rebuilt — acceptable for
+  the theme swap, wasteful for a button tapped three times to cycle modes.
 - **Don't cap the map at the archive's max zoom.** MapLibre overzooms vector tiles by scaling
   the deepest tile it has; `maxZoom: header.maxZoom` throws away usable detail and puts
   street-level layers permanently out of reach.
