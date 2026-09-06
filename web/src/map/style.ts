@@ -1,4 +1,4 @@
-import type { StyleSpecification } from 'maplibre-gl'
+import type { FilterSpecification, StyleSpecification } from 'maplibre-gl'
 
 /**
  * A minimal basemap style for the Protomaps v4 schema, with everything it needs served from
@@ -53,11 +53,30 @@ const MEDIUM = ['Noto Sans Medium']
  * Absolute origin for style assets.
  *
  * `import.meta.env.BASE_URL` rather than a hardcoded `/`, so the app survives being served
- * from a subpath. Built once at module load: the worker cannot compute this itself.
+ * from a subpath. Absolute because **glyph requests are issued from MapLibre's worker**,
+ * where a relative URL resolves against `/assets/` and quietly 404s.
+ *
+ * Resolved per call rather than at module load: reading `location` while the module
+ * initialises makes the style impossible to unit test, and buys nothing — `basemapStyle`
+ * only ever runs on the main thread.
  */
-const ASSETS = new URL(import.meta.env.BASE_URL, location.href).href
+function assetsBase(): string {
+  return new URL(import.meta.env.BASE_URL, location.href).href
+}
+
+/**
+ * Only fill polygons.
+ *
+ * Protomaps ships linear water — canals, streams, rivers — as LineStrings in the *same*
+ * source-layer as lakes and reservoirs, and MapLibre's fill bucket closes a LineString into
+ * a ring and fills it. Without this guard the Union Canal is painted as a lake-sized slab
+ * straight across the tile, which reads as the map being torn. `landuse` and `landcover`
+ * carry linear features in other regions, so every fill layer gets it, not just water.
+ */
+const POLYGONS_ONLY: FilterSpecification = ['==', ['geometry-type'], 'Polygon']
 
 export function basemapStyle(archive: string): StyleSpecification {
+  const ASSETS = assetsBase()
   return {
     version: 8,
     glyphs: `${ASSETS}fonts/{fontstack}/{range}.pbf`,
@@ -77,6 +96,7 @@ export function basemapStyle(archive: string): StyleSpecification {
         type: 'fill',
         source: 'basemap',
         'source-layer': 'earth',
+        filter: POLYGONS_ONLY,
         paint: { 'fill-color': COLOURS.earth },
       },
       {
@@ -84,6 +104,7 @@ export function basemapStyle(archive: string): StyleSpecification {
         type: 'fill',
         source: 'basemap',
         'source-layer': 'landcover',
+        filter: POLYGONS_ONLY,
         paint: { 'fill-color': COLOURS.green, 'fill-opacity': 0.6 },
       },
       {
@@ -91,6 +112,7 @@ export function basemapStyle(archive: string): StyleSpecification {
         type: 'fill',
         source: 'basemap',
         'source-layer': 'landuse',
+        filter: POLYGONS_ONLY,
         paint: { 'fill-color': COLOURS.green, 'fill-opacity': 0.5 },
       },
       {
@@ -98,13 +120,40 @@ export function basemapStyle(archive: string): StyleSpecification {
         type: 'fill',
         source: 'basemap',
         'source-layer': 'water',
+        filter: POLYGONS_ONLY,
         paint: { 'fill-color': COLOURS.water },
+      },
+      // Linear water, drawn properly. Filtering the fill layer above would otherwise discard
+      // every canal, stream and narrow river outright — and a canal towpath is one of the
+      // better things to be riding on, so losing them would be a real loss rather than a
+      // cosmetic one.
+      {
+        id: 'water-lines',
+        type: 'line',
+        source: 'basemap',
+        'source-layer': 'water',
+        filter: ['==', ['geometry-type'], 'LineString'],
+        paint: {
+          'line-color': COLOURS.water,
+          // A stream is not a canal is not a river; width by kind keeps a burn from reading
+          // as something you cannot cross.
+          'line-width': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10,
+            ['match', ['get', 'kind'], 'river', 1.6, 'canal', 1.2, 0.6],
+            16,
+            ['match', ['get', 'kind'], 'river', 7, 'canal', 5, 2.5],
+          ],
+        },
       },
       {
         id: 'buildings',
         type: 'fill',
         source: 'basemap',
         'source-layer': 'buildings',
+        filter: POLYGONS_ONLY,
         minzoom: 13,
         paint: { 'fill-color': COLOURS.building },
       },
