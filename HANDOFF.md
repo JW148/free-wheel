@@ -14,11 +14,13 @@ this for where the work actually stands.
 | **Phase 1** — Wasm engine + OPFS VFS | ✅ Passed, verified on a physical iPhone |
 | **Phase 2** — worker harness, tiles | ✅ Complete, import verified on device |
 | **Phase 3** — React/MapLibre PWA | ✅ Basemap renders with labels, offline |
-| **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. Not yet ridden |
+| **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. **Ridden 2026-09-06** |
+| **Phase 5** — basemap legibility | 🟡 Land cover, water and rail restyled after the ride. Tests green, not yet ridden |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
-`docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`. Each
+`docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
+`docs/phase-5-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -33,9 +35,16 @@ wrong.
 
 ## Where to pick up
 
-**The next action is a ride.** Everything below the acceptance test has been verified
-somewhere; none of it has been verified on a physical iPhone, which per `CLAUDE.md` is the
-only verification that counts.
+**The next action is a ride, in daylight.** The first ride (2026-09-06) worked but produced one
+dominant complaint: the map was too monochromatic to orient by. Phase 5 fixed that — the
+archive already carried 43 distinct land kinds and the style was painting all of them one
+colour, at ΔE 2.4 from the earth beneath them. Land cover, water and railways are now
+restyled and every palette rule is asserted in `style.test.ts` rather than written down.
+
+What needs riding: **the light theme in direct sunlight.** That is the condition the light
+palette exists for and the one a desk and a Simulator cannot reproduce. Two things the rider
+asked for were deliberately *not* done — building footprints (2.6× archive size, declined) and
+an OpenCycleMap-style cycle network (impossible from this data — see below).
 
 The acceptance test, unchanged: airplane mode, cold launch from the Home Screen, plan a route,
 follow it.
@@ -193,13 +202,19 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
 
 ## Suggested order from here
 
-1. **Ride with it.** Everything else is speculation until then.
-2. Re-derive elapsed time on resume — iOS suspends timers when backgrounded, so any
+1. **Ride with it, in daylight.** Everything else is speculation until then. Phase 5 changed
+   what the map looks like and nothing else; the acceptance test is unchanged.
+2. **If cycle infrastructure still reads as the gap**, that is a data problem, not a styling
+   one. Protomaps carries no `route=bicycle` relations and stamps `min_zoom: 14` on cycleways,
+   so nothing exists below z14 and NCN numbers exist nowhere. It needs a planetiler pipeline
+   producing a cycle-only PMTiles overlay — a new subsystem, scoped out of phase 5 on purpose.
+   Details in `docs/phase-5-progress.md`.
+3. Re-derive elapsed time on resume — iOS suspends timers when backgrounded, so any
    ride-duration display computed by accumulating ticks will drift. Nothing currently shows
    elapsed time, which is why this has not bitten yet.
-3. Turn-by-turn, if the ride shows it is wanted. BRouter already computes voice hints;
+4. Turn-by-turn, if the ride shows it is wanted. BRouter already computes voice hints;
    `FormatGpx` emits them under several `turnInstructionMode` values.
-4. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
+5. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
    which reduces but does not eliminate the risk: WebKit also evicts under overall system
    storage pressure, not only quota exhaustion.
 

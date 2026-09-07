@@ -58,3 +58,6 @@ pnpm-debug.log*
 
 # Local dev TLS material — the CA private key must never be committed
 /web/certs/
+
+# Brainstorming visual companion (session scratch)
+.superpowers/

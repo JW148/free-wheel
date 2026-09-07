@@ -1,4 +1,10 @@
-import type { FilterSpecification, StyleSpecification } from 'maplibre-gl'
+import type {
+  ExpressionSpecification,
+  FillLayerSpecification,
+  FilterSpecification,
+  StyleSpecification,
+} from 'maplibre-gl'
+import { LAND_TIERS, LANDCOVER_KINDS, type LandClass, type LandTier, kindsFor } from './landcover'
 
 /**
  * A minimal basemap style for the Protomaps v4 schema, with everything it needs served from
@@ -29,30 +35,53 @@ import type { FilterSpecification, StyleSpecification } from 'maplibre-gl'
 
 export type MapTheme = 'dark' | 'light'
 
-interface Palette {
+/** One colour per land surface. Keyed by `LandClass` so the compiler enforces completeness. */
+export type PaletteLand = Record<LandClass, string>
+
+export interface Palette {
+  /**
+   * The base ground, and the halo behind every label. Everything else is painted on top of
+   * this, so it is the colour the whole map is judged against.
+   */
   earth: string
+  /** A fill, so exempt from the stroke chroma ceiling. Also used for canals and streams. */
   water: string
-  green: string
   building: string
-  road: string
-  roadCasing: string
-  major: string
+  /** Land-cover fills. **Allowed above the stroke ceiling** — see `line` below. */
+  land: PaletteLand
   /**
-   * Three tones of one warm hue, not three hues. See the `paths` layer for why the separation
-   * is carried by dash pattern instead.
+   * Every stroke in the basemap, and the one group the chroma ceiling applies to.
+   *
+   * The ceiling exists so that a route line cannot be mistaken for a line belonging to the
+   * map. That is an argument about *lines*: a 5px vivid stroke against a 3px muted stroke is
+   * a genuine confusion, while a 5px stroke against a park-sized area of pale green is not.
+   * Which is why `land.park` may sit at C 23.6 and `line.pathTrack` may not.
    */
-  pathCycle: string
-  pathTrack: string
-  pathFoot: string
-  boundary: string
-  label: string
-  labelMuted: string
-  labelWater: string
-  /**
-   * Labels sit directly on top of map geometry, so every one gets a halo in the background
-   * colour. Without it, a street name disappears wherever it crosses a park.
-   */
-  halo: string
+  line: {
+    road: string
+    roadCasing: string
+    major: string
+    rail: string
+    /**
+     * Three tones of one warm hue, not three hues. Separation between them is lightness at
+     * held chroma; separation between path *kinds* is dash pattern. See the `paths` layer.
+     */
+    pathCycle: string
+    pathTrack: string
+    pathFoot: string
+    boundary: string
+  }
+  text: {
+    label: string
+    labelMuted: string
+    labelWater: string
+    /**
+     * Labels sit directly on top of map geometry, so every one gets a halo in the background
+     * colour. Without it, a street name disappears wherever it crosses a park — and now that
+     * parks are actually green, it would disappear more visibly than before.
+     */
+    halo: string
+  }
 }
 
 /**
@@ -68,52 +97,127 @@ interface Palette {
  *
  * Neither uses pure black or pure white. Pure black crushes the road hierarchy into a single
  * smear when read at speed, and pure white blows out next to the orange route line.
+ *
+ * ## Why the land is coloured at all
+ *
+ * It was not, and that was the bug. Every one of Protomaps' 43 `landuse` kinds was painted a
+ * single grey-green at 50% opacity, which measured **ΔE 2.8** against the light theme's
+ * building colour — below the just-noticeable difference. Farmland, forest, a school playing
+ * field and an industrial estate all arrived as the same wash, and the map became genuinely
+ * hard to orient by on a ride. The data to fix it was already on the phone, unrendered.
+ *
+ * Every value below is chosen in CIELCh, so lightness and chroma are set independently, and
+ * every constraint is asserted in `style.test.ts` rather than merely recorded here:
+ *
+ * - strokes stay at or under **C 15.4** (the ceiling is `pathTrack`: C 15.13 dark, 15.30
+ *   light — `docs/phase-4-progress.md` quotes 15.1, which is the dark figure only);
+ * - land fills go above it, up to **C 24.9**, which is the entire point;
+ * - every route colour keeps **ΔE ≥ 16** from every colour here. Measured worst case is 17.15
+ *   light and 17.81 dark, both `fastbike` against blue — better than the palette that
+ *   shipped, whose true worst was 15.5.
+ *
+ * ## The warm earth is load-bearing
+ *
+ * Light `earth` moved from `#eef0ef` (a cool near-neutral) to `#f4f2ed`. That is not a taste
+ * change: against the old cool base, blue water could reach only ΔE 15.7 before colliding
+ * with the `fastbike` route line, and the whole map read faintly green once the land was
+ * coloured. A warm base gives every cool and green surface room to separate — with it, water
+ * clears ΔE 17.2 from both earth and the route.
  */
-const PALETTES: Record<MapTheme, Palette> = {
+export const PALETTES: Record<MapTheme, Palette> = {
   dark: {
     earth: '#06141b',
-    water: '#12293a',
-    green: '#0f2219',
+    water: '#0f3f59', //     L* 24.9  C 20.8  h 254
     building: '#11212d',
-    road: '#46596a',
-    roadCasing: '#06141b',
-    major: '#6a8090',
-    // Paths read warm against the cool slate, so a traffic-free way is distinguishable from
-    // tarmac at a glance rather than on inspection. It is the only warmth anywhere in the
-    // basemap, which is what makes it legible — and why all three tones share one hue.
-    //
-    // The separation between them is lightness at held chroma, never more saturation:
-    // `pathTrack` sits at CIELCh C 15.1, which *is* the ceiling `docs/phase-4-progress.md`
-    // records for the whole basemap. A brighter cycleway by saturation would have measured
-    // C 20.7 and broken the one constraint that keeps a route line from reading as map
-    // furniture. L* 52 / 40 / 29.5 at h 81.
-    pathCycle: '#8a7a63',
-    pathTrack: '#6b5c46',
-    pathFoot: '#4e4436',
-    boundary: '#253745',
-    label: '#ccd0cf',
-    labelMuted: '#9ba8ab',
-    labelWater: '#7590a3',
-    halo: '#06141b',
+    land: {
+      // Built and neutral. These climb *up* from earth rather than down from white, because
+      // at L* 5.6 there is nowhere below to go.
+      residential: '#1a2025', // L* 11.9  C  4.5  h 254
+      industrial: '#2c242e', //  L* 15.5  C  8.0  h 320
+      institution: '#2f231c', // L* 14.9  C  8.2  h  57
+      pedestrian: '#24211c', //  L* 12.9  C  3.9  h  85
+      military: '#29261a', //    L* 15.1  C  8.5  h  97
+      aeroway: '#1a1e21', //     L* 11.0  C  2.9  h 249
+      other: '#201e1b', //       L* 11.4  C  2.4  h  84
+      // Open ground that is not green.
+      farm: '#292616', //        L* 15.0  C 11.3  h  99
+      bare: '#2b251d', //        L* 15.1  C  6.5  h  79
+      glacier: '#41484a', //     L* 30.0  C  3.2  h 223
+      scrub: '#282c1c', //       L* 17.2  C 11.1  h 118
+      wetland: '#212f25', //     L* 17.9  C  9.6  h 152
+      // Private green: present and leafy, never a landmark.
+      garden: '#22291d', //      L* 15.6  C  9.1  h 131
+      // Green.
+      wood: '#142818', //        L* 14.0  C 14.9  h 147
+      grass: '#273721', //       L* 21.1  C 16.6  h 135
+      cemetery: '#1f2821', //    L* 15.1  C  6.6  h 150
+      // Green you can use. The brightest thing on the map that is not a route.
+      park: '#293e25', //        L* 23.8  C 19.1  h 138
+      sport: '#2a3321', //       L* 19.9  C 12.9  h 128
+    },
+    line: {
+      road: '#46596a',
+      roadCasing: '#06141b',
+      major: '#6a8090',
+      rail: '#2d363d',
+      pathCycle: '#8a7a63',
+      pathTrack: '#6b5c46',
+      pathFoot: '#4e4436',
+      boundary: '#253745',
+    },
+    text: {
+      label: '#ccd0cf',
+      labelMuted: '#9ba8ab',
+      // Lifted from `#7590a3`, which sat ΔE 15.5 from the `fastbike` route colour and was the
+      // worst approach anywhere in the shipped palette — labels included, which is the part
+      // the figure in `profiles.ts` had missed.
+      labelWater: '#8d9aa6', //  L* 62.9  C  8.1  h 255
+      halo: '#06141b',
+    },
   },
   light: {
-    earth: '#eef0ef',
-    water: '#c3d0d8',
-    green: '#dde3dd',
+    // Warm, not cool. See "The warm earth is load-bearing" above.
+    earth: '#f4f2ed', //         L* 95.5  C  2.6  h  94
+    water: '#b5ddf6', //         L* 86.1  C 18.1  h 245
     building: '#dfe3e2',
-    road: '#ffffff',
-    roadCasing: '#c8ccca',
-    major: '#f0ede4',
-    // Inverted on the daylight map: the *darkest* tone is the most prominent, because these
-    // sit against a near-white earth. L* 58 / 70 / 79 at h 81, all C <= 15.
-    pathCycle: '#9a8972',
-    pathTrack: '#baa990',
-    pathFoot: '#cfc2b0',
-    boundary: '#9ba8ab',
-    label: '#11212d',
-    labelMuted: '#4a5c6a',
-    labelWater: '#4a6b80',
-    halo: '#eef0ef',
+    land: {
+      residential: '#ede9e3', // L* 92.5  C  3.4  h  85
+      industrial: '#dfdbe6', //  L* 88.0  C  5.9  h 304
+      institution: '#fae4d5', // L* 92.0  C 11.3  h  63
+      pedestrian: '#f1ece5', //  L* 93.6  C  4.0  h  83
+      military: '#e4dcc8', //    L* 87.9  C 10.8  h  93
+      aeroway: '#e0e4e8', //     L* 90.4  C  2.5  h 256
+      other: '#eae8e4', //       L* 92.0  C  2.2  h  91
+      farm: '#f0e9c7', //        L* 92.1  C 17.7  h 100
+      bare: '#ecddce', //        L* 88.9  C  9.6  h  74
+      glacier: '#eef5f6', //     L* 96.1  C  2.5  h 211
+      scrub: '#d4dabc', //       L* 85.9  C 15.8  h 117
+      wetland: '#cadfd0', //     L* 86.9  C 11.0  h 153
+      garden: '#dee9d3', //      L* 91.0  C 12.1  h 129
+      wood: '#a0c8a3', //        L* 76.9  C 24.9  h 145
+      grass: '#cbe4c0', //       L* 88.0  C 20.9  h 135
+      cemetery: '#d5e3d8', //    L* 88.9  C  7.7  h 151
+      park: '#c1e1ba', //        L* 86.4  C 23.6  h 139
+      sport: '#c4d2b5', //       L* 82.5  C 16.2  h 128
+    },
+    line: {
+      road: '#ffffff',
+      roadCasing: '#c8ccca',
+      major: '#f0ede4',
+      rail: '#c2c7cb',
+      // Inverted on the daylight map: the *darkest* tone is the most prominent, because these
+      // sit against a near-white earth.
+      pathCycle: '#9a8972',
+      pathTrack: '#baa990',
+      pathFoot: '#cfc2b0',
+      boundary: '#9ba8ab',
+    },
+    text: {
+      label: '#11212d',
+      labelMuted: '#4a5c6a',
+      labelWater: '#4a6b80',
+      halo: '#f4f2ed',
+    },
   },
 }
 
@@ -145,7 +249,7 @@ function assetsBase(): string {
  * straight across the tile, which reads as the map being torn. `landuse` and `landcover`
  * carry linear features in other regions, so every fill layer gets it, not just water.
  */
-const POLYGONS_ONLY: FilterSpecification = ['==', ['geometry-type'], 'Polygon']
+const POLYGONS_ONLY: ExpressionSpecification = ['==', ['geometry-type'], 'Polygon']
 
 /**
  * How much of the path network to draw.
@@ -197,8 +301,85 @@ export function pathFilter(mode: PathMode): FilterSpecification {
  * `roads-casing` is the reason they used to read so heavily: it paints a dark casing up to
  * 8px wide under *everything* it matches, so a footway arrived with the same visual weight as
  * a dual carriageway. Excluding paths from the casing is most of the fix on its own.
+ *
+ * `rail` is excluded for a different reason: it was being drawn as a road, so a railway line
+ * looked like a street you could ride down. It gets its own thin dashed layer instead.
  */
-const NOT_PATHS: FilterSpecification = ['!=', ['get', 'kind'], 'path']
+const NOT_PATHS_OR_RAIL: FilterSpecification = [
+  'all',
+  ['!=', ['get', 'kind'], 'path'],
+  ['!=', ['get', 'kind'], 'rail'],
+]
+
+/**
+ * One fill layer for one tier of land classes.
+ *
+ * The colour is a `match` on `kind` rather than one layer per kind, because a tier holds
+ * several classes and each class holds several kinds — 43 kinds would otherwise be 43 layers.
+ * The filter restricts the layer to exactly the kinds the `match` knows, so the fallback is
+ * unreachable; it exists because `match` requires one.
+ *
+ * `sourceLayer` is either `landuse` (live from z7 up) or `landcover` (z3-z7 only, six coarse
+ * kinds). Both are drawn, because between them they cover every zoom, and they share the
+ * class taxonomy so the two views agree about what green means where they meet.
+ */
+function landLayer(
+  tier: LandTier,
+  colours: Palette,
+  sourceLayer: string,
+  idSuffix: string,
+  vocabulary?: readonly string[],
+): FillLayerSpecification {
+  // Restricted to what the source-layer can actually produce, so a `landcover` layer does not
+  // filter for `garden` — a kind that source-layer has never heard of.
+  const inVocabulary = (kind: string): boolean => !vocabulary || vocabulary.includes(kind)
+  const kinds = tier.classes.flatMap(kindsFor).filter(inVocabulary)
+
+  // A single-class tier needs no expression at all, and a constant reads better in the
+  // devtools style inspector than a one-branch `match`.
+  // `match` takes alternating label/output pairs, where a label may itself be an array of
+  // values sharing one output — which is what lets `wood` and `forest` collapse to one branch.
+  // Do not `.flat()` this: it splices those label arrays open and MapLibre then reads a kind
+  // name where it expects a colour ("Could not parse color from value 'farmland'").
+  const branches = tier.classes
+    .map((cls) => [kindsFor(cls).filter(inVocabulary), colours.land[cls]] as const)
+    .filter(([labels]) => labels.length > 0)
+
+  const fillColour: string | ExpressionSpecification =
+    branches.length === 1
+      ? branches[0][1]
+      : ([
+          'match',
+          ['get', 'kind'],
+          ...branches.flatMap(([labels, colour]) => [labels, colour]),
+          branches[0][1],
+        ] as unknown as ExpressionSpecification)
+
+  return {
+    id: `${tier.id}${idSuffix}`,
+    type: 'fill',
+    source: 'basemap',
+    'source-layer': sourceLayer,
+    filter: ['all', POLYGONS_ONLY, ['in', ['get', 'kind'], ['literal', kinds]]],
+    // Opaque, deliberately. See `landcover.ts` for why translucency was the old workaround
+    // and why tiers replace it.
+    paint: { 'fill-color': fillColour },
+  }
+}
+
+/**
+ * Every land fill, bottom to top: the coarse `landcover` tiers first, then the detailed
+ * `landuse` tiers over them.
+ */
+function landLayers(colours: Palette): FillLayerSpecification[] {
+  const coarse = LAND_TIERS.filter((tier) =>
+    tier.classes.some((cls) => kindsFor(cls).some((kind) => LANDCOVER_KINDS.includes(kind))),
+  )
+  return [
+    ...coarse.map((tier) => landLayer(tier, colours, 'landcover', '-low', LANDCOVER_KINDS)),
+    ...LAND_TIERS.map((tier) => landLayer(tier, colours, 'landuse', '')),
+  ]
+}
 
 export function basemapStyle(
   archive: string,
@@ -229,22 +410,12 @@ export function basemapStyle(
         filter: POLYGONS_ONLY,
         paint: { 'fill-color': COLOURS.earth },
       },
-      {
-        id: 'landcover',
-        type: 'fill',
-        source: 'basemap',
-        'source-layer': 'landcover',
-        filter: POLYGONS_ONLY,
-        paint: { 'fill-color': COLOURS.green, 'fill-opacity': 0.6 },
-      },
-      {
-        id: 'landuse',
-        type: 'fill',
-        source: 'basemap',
-        'source-layer': 'landuse',
-        filter: POLYGONS_ONLY,
-        paint: { 'fill-color': COLOURS.green, 'fill-opacity': 0.5 },
-      },
+
+      // ── Land cover ──────────────────────────────────────────────────────────────────────
+      // The whole point of this revision. Ten layers rather than two, because overlapping
+      // landuse polygons carry no draw order of their own.
+      ...landLayers(COLOURS),
+
       {
         id: 'water',
         type: 'fill',
@@ -257,6 +428,12 @@ export function basemapStyle(
       // every canal, stream and narrow river outright — and a canal towpath is one of the
       // better things to be riding on, so losing them would be a real loss rather than a
       // cosmetic one.
+      //
+      // These reuse the water *fill* colour rather than a darker stroke of their own. A
+      // dedicated colour was tried and abandoned: at any chroma that made a canal read
+      // clearly it landed ΔE 9.4 from the `fastbike` route line, which is the exact failure
+      // the stroke ceiling exists to prevent. The fill colour still gives a canal ΔE 17.2
+      // against earth — nearly double the 9.4 the shipped style managed.
       {
         id: 'water-lines',
         type: 'line',
@@ -293,9 +470,9 @@ export function basemapStyle(
         type: 'line',
         source: 'basemap',
         'source-layer': 'roads',
-        filter: NOT_PATHS,
+        filter: NOT_PATHS_OR_RAIL,
         paint: {
-          'line-color': COLOURS.roadCasing,
+          'line-color': COLOURS.line.roadCasing,
           'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.2, 16, 8],
         },
       },
@@ -304,18 +481,34 @@ export function basemapStyle(
         type: 'line',
         source: 'basemap',
         'source-layer': 'roads',
-        filter: NOT_PATHS,
+        filter: NOT_PATHS_OR_RAIL,
         paint: {
           'line-color': [
             'match',
             ['get', 'kind'],
             'highway',
-            COLOURS.major,
+            COLOURS.line.major,
             'major_road',
-            COLOURS.major,
-            COLOURS.road,
+            COLOURS.line.major,
+            COLOURS.line.road,
           ],
           'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.6, 16, 6],
+        },
+      },
+      // Railways, which used to be drawn as roads — so a main line looked like a street you
+      // could ride down. Thin and dashed: a railway is a landmark and a barrier, never a way
+      // through.
+      {
+        id: 'rail',
+        type: 'line',
+        source: 'basemap',
+        'source-layer': 'roads',
+        filter: ['==', ['get', 'kind'], 'rail'],
+        minzoom: 11,
+        paint: {
+          'line-color': COLOURS.line.rail,
+          'line-dasharray': [3, 2],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 1.6],
         },
       },
       // Above the roads, so a cycleway running beside a street is not buried under it, and
@@ -334,7 +527,8 @@ export function basemapStyle(
         'source-layer': 'roads',
         filter: pathFilter(paths),
         // Below z12 a path is a smear rather than information, and the network is dense
-        // enough that drawing it there costs legibility for nothing.
+        // enough that drawing it there costs legibility for nothing. In practice Protomaps
+        // stamps `min_zoom: 14` on cycleways anyway, so almost nothing exists before z14.
         minzoom: 12,
         layout: { 'line-cap': 'round' },
         paint: {
@@ -342,10 +536,10 @@ export function basemapStyle(
             'match',
             ['get', 'kind_detail'],
             'cycleway',
-            COLOURS.pathCycle,
+            COLOURS.line.pathCycle,
             ['track', 'path', 'bridleway'],
-            COLOURS.pathTrack,
-            COLOURS.pathFoot,
+            COLOURS.line.pathTrack,
+            COLOURS.line.pathFoot,
           ],
           // Roughly a third of the old width. A path is context for the route line, not a
           // competitor to it.
@@ -383,7 +577,11 @@ export function basemapStyle(
         type: 'line',
         source: 'basemap',
         'source-layer': 'boundaries',
-        paint: { 'line-color': COLOURS.boundary, 'line-dasharray': [2, 2], 'line-width': 1 },
+        paint: {
+          'line-color': COLOURS.line.boundary,
+          'line-dasharray': [2, 2],
+          'line-width': 1,
+        },
       },
 
       // ── Labels and icons ────────────────────────────────────────────────────────────────
@@ -406,8 +604,8 @@ export function basemapStyle(
           'symbol-placement': 'line',
         },
         paint: {
-          'text-color': COLOURS.labelWater,
-          'text-halo-color': COLOURS.halo,
+          'text-color': COLOURS.text.labelWater,
+          'text-halo-color': COLOURS.text.halo,
           'text-halo-width': 1.2,
         },
       },
@@ -429,8 +627,8 @@ export function basemapStyle(
           'symbol-spacing': 300,
         },
         paint: {
-          'text-color': COLOURS.labelMuted,
-          'text-halo-color': COLOURS.halo,
+          'text-color': COLOURS.text.labelMuted,
+          'text-halo-color': COLOURS.text.halo,
           'text-halo-width': 1.5,
         },
       },
@@ -473,8 +671,8 @@ export function basemapStyle(
           'text-optional': true,
         },
         paint: {
-          'text-color': COLOURS.labelMuted,
-          'text-halo-color': COLOURS.halo,
+          'text-color': COLOURS.text.labelMuted,
+          'text-halo-color': COLOURS.text.halo,
           'text-halo-width': 1.2,
         },
       },
@@ -507,8 +705,8 @@ export function basemapStyle(
           'text-max-width': 8,
         },
         paint: {
-          'text-color': COLOURS.label,
-          'text-halo-color': COLOURS.halo,
+          'text-color': COLOURS.text.label,
+          'text-halo-color': COLOURS.text.halo,
           'text-halo-width': 1.5,
         },
       },

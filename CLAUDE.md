@@ -178,6 +178,35 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **`zoom` must be the input to a top-level `interpolate` or `step`.** Nesting it inside a
   `match` is a style validation error, and MapLibre reports that as an `error` *event* rather
   than throwing — so the map silently never loads.
+- **Land cover is five opaque tiers, never one data-driven layer.** Protomaps stamps
+  `sort_rank: 189` on *every* `landuse` feature, so a tile carries no draw order at all — and
+  landuse polygons overlap constantly (a pitch inside a park inside a residential block). One
+  layer with a `match` on `kind` would paint a park *under* the block containing it at random.
+  `fill-opacity: 0.5` used to hide this by making order stop mattering, which is most of why
+  the map read as washed out. Draw order lives in the layer list; see `src/map/landcover.ts`.
+- **`landcover` is live at z3–z7 only, and `landuse` from z7 up.** `landcover` has zero
+  features at z8+, so styling it for street zoom does nothing. It is worth drawing anyway:
+  `urban_area` is the only built-up signal at continent zoom. Both share the class taxonomy.
+- **`garden` is the most common land kind, and it is not a park.** 1,914 polygons in one 2×2
+  block at z13 against 64 real parks, median area 17px². These are back gardens; painting them
+  as parkland makes tenement streets read as green space. Its own tone, in a tier below the
+  real greenery.
+- **A `match` label may be an array, so never `.flat()` the expression.** Flattening splices
+  the label arrays open and MapLibre then reads a kind name where a colour belongs — "Could not
+  parse color from value 'farmland'". `style.test.ts` catches it.
+- **Buildings barely exist in the archive**: 22–35 per z14 tile in central Edinburgh, because
+  Protomaps only ships footprints at z15 (1,568 in the equivalent z15 tile). The `buildings`
+  layer is therefore near-empty at our `--maxzoom=14`. Going deeper costs 2.6× (34 MB → ~88 MB
+  for Edinburgh) and was declined. **`--maxzoom=16` returns a byte-identical archive to 15** —
+  z15 is the upstream ceiling.
+- **NCN route numbers are not in this data.** `roads.network` only ever holds road shields
+  (`UK A Road Network`, `GB:trunk`) — no `ncn`/`rcn`/`lcn` in a 137-tile scan; Protomaps carries
+  no `route=bicycle` relations. Cycleways also carry `min_zoom: 14`, so they are absent from
+  z12–z13 entirely. An OpenCycleMap-style view needs a separate planetiler pipeline, not a
+  style change. Do not go looking for it in the archive again.
+- **Railways are not roads.** `roads` carries `kind: 'rail'`, and a filter that excludes only
+  `path` gives a main line the road colour and the full 8px casing — it looks like a street you
+  could ride down. `NOT_PATHS_OR_RAIL` excludes both.
 - **Paths are their own layer, and `roads-casing` must exclude them.** Protomaps files
   footways, steps, sidewalks, crossings and indoor corridors under `kind: 'path'` alongside
   cycleways and tracks — 115 unrideable ways against 6 cycleways in one central Edinburgh
@@ -185,11 +214,15 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   version cannot quietly appear. Most of the old visual weight was the **casing**, not the
   line: an unfiltered `roads-casing` gave a footway the same 8px dark casing as a dual
   carriageway.
-- **The path colour set the basemap's chroma ceiling.** `#6b5c46` measures CIELCh C 15.1,
-  which *is* the "C ≤ 15.1" figure in `docs/phase-4-progress.md`. A cycleway brightened by
-  saturation measures C 20.7 and breaks the rule that keeps a route line from reading as map
-  furniture — so the three path tones separate on lightness at held chroma, and path *kinds*
-  separate by dash pattern. On the light theme the order inverts: darkest is most prominent.
+- **The chroma ceiling applies to strokes, not fills.** `pathTrack` measures CIELCh C 15.13
+  on dark and C 15.30 on light, and *is* the "C ≤ 15.1" figure in
+  `docs/phase-4-progress.md` — which quotes the dark value only. The rule it enforces is that
+  a route *line* must not be confused with a line belonging to the map, so it binds on
+  strokes: the three path tones separate on lightness at held chroma, and path *kinds*
+  separate by dash pattern. **Land fills are deliberately above it** (`park` is C 23.6),
+  because a 5px stroke cannot be confused with a park-sized area. `style.test.ts` asserts
+  both halves, including a test that fails if the fills are pulled back under the line
+  ceiling. On the light theme the path order inverts: darkest is most prominent.
 - **`line-dasharray` is data-driven but not interpolatable.** MapLibre 6 types it
   `cross-faded-data-driven`, so one layer with a `match` on `kind_detail` covers every dash
   pattern — but `interpolate` is rejected, and dash units are multiples of line width rather
@@ -304,16 +337,17 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   `routeAt` is skipped entirely — a bump in the road must not throw the drawer over the map.
 - **The `--panel*` translucency tokens live on `:root`, not `.ride`.** vaul portals the drawer
   to `<body>`, so anything scoped to the ride screen is invisible to it.
-- **Route colours are chosen on chroma, not hue.** Every colour in both basemap palettes is
-  C ≤ 15, so a route line at C ≥ 45 cannot read as map furniture whatever its hue — that one
+- **Route colours are chosen on chroma, not hue.** Every *stroke* in both basemap palettes is
+  C ≤ 15.4, so a route line at C ≥ 45 cannot read as map furniture whatever its hue — that one
   constraint is what separates a line from the map. The old muted palette failed it: `shortest`
   was ΔE 7.5 from the light theme's boundary colour, and a lone route's near-white was ΔE 4.4
-  from its buildings. Note **no blue clears ΔE 20 against this basemap** (the best is 19.9),
-  because the slate theme spends blue-grey on water, roads and boundaries; CIEDE2000 compresses
-  the chroma difference that actually separates them, so treat it as a floor rather than the
-  decision. Six categorical colours cannot all separate under dichromacy — which is survivable
-  only because identity is never colour alone. Figures and method in
-  `docs/phase-4-progress.md`.
+  from its buildings. **Blue is the binding case**: the basemap spends blue-grey on water,
+  roads and boundaries, so `fastbike` is the worst approach in both themes at ΔE 17.15 — and
+  the ΔE 18.0 once quoted in `profiles.ts` was wrong, measured without the label colours while
+  `fastbike` sat 15.5 from the dark water label. `style.test.ts` now asserts a floor of 16 over
+  **every** palette colour, labels included. Six categorical colours cannot all separate under
+  dichromacy — survivable only because identity is never colour alone. Figures and method in
+  `docs/phase-4-progress.md` and `docs/phase-5-progress.md`.
 - **Every route is drawn in its profile's colour, including a lone one.** The near-white
   single-route colour was invisible on the daylight map, and keeping the rule uniform means the
   map does not repaint when a second profile is ticked.

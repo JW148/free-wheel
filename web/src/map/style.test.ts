@@ -8,6 +8,11 @@ import {
 } from '@maplibre/maplibre-gl-style-spec'
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl'
 import { basemapStyle, nextPathMode } from './style'
+import type { MapTheme, Palette, PaletteLand } from './style'
+import { PALETTES } from './style'
+import { LAND_TIERS, type LandClass } from './landcover'
+import { chroma, deltaE2000 } from './colour'
+import { PROFILES } from '../ride/profiles'
 
 // `basemapStyle` resolves glyph and sprite URLs against the document origin, because they are
 // fetched from MapLibre's worker where a relative URL would resolve against `/assets/`. Under
@@ -207,5 +212,202 @@ describe('nextPathMode', () => {
     expect(nextPathMode('rideable')).toBe('all')
     expect(nextPathMode('all')).toBe('none')
     expect(nextPathMode('none')).toBe('rideable')
+  })
+})
+
+/**
+ * The palette rules, as assertions rather than prose.
+ *
+ * `docs/phase-4-progress.md` records these constraints as measured figures in a document. A
+ * document does not fail a build, and the palette they describe has now been edited twice.
+ * Everything below is a rule that was previously only written down.
+ */
+describe('palette', () => {
+  const THEMES: MapTheme[] = ['dark', 'light']
+
+  /**
+   * The chroma ceiling, and what it does and does not cover.
+   *
+   * The figure comes from `pathTrack`, the most colourful *stroke* in the basemap: C 15.13 on
+   * dark, C 15.30 on light. (`docs/phase-4-progress.md` quotes 15.1, which is the dark value —
+   * the light theme has always been a shade over it.)
+   *
+   * It applies to **strokes only**. The argument behind it is that a route line must not be
+   * mistaken for a line belonging to the map, and that is a statement about lines. A large
+   * area fill is not a candidate for being mistaken for a 5px route stroke, so land fills are
+   * deliberately allowed above it — which is the entire point of this change, and why the
+   * `park` fill can sit at C 23.6 while `pathTrack` may not.
+   */
+  const LINE_CHROMA_CEILING = 15.4
+
+  /**
+   * How close a route colour is allowed to get to anything in the basemap.
+   *
+   * Measured worst case is 17.15 on light (`fastbike` against water) and 17.81 on dark
+   * (`fastbike` against the water label). Blue is the binding case in both, exactly as
+   * `docs/phase-4-progress.md` predicted: the basemap spends blue-grey on water, roads and
+   * boundaries, so there is nowhere for a blue line to go.
+   *
+   * The floor sits at 16 to leave a little room, and it is *higher* than what shipped —
+   * the previous palette's true worst was 15.5, not the 18.0 quoted in `profiles.ts`, which
+   * was measured over a subset that left the label colours out.
+   */
+  const ROUTE_CLEARANCE_FLOOR = 16
+
+  function every(palette: Palette): [string, string][] {
+    return [
+      ['earth', palette.earth],
+      ['water', palette.water],
+      ['building', palette.building],
+      ...Object.entries(palette.land).map(([k, v]): [string, string] => [`land.${k}`, v]),
+      ...Object.entries(palette.line).map(([k, v]): [string, string] => [`line.${k}`, v]),
+      ...Object.entries(palette.text).map(([k, v]): [string, string] => [`text.${k}`, v]),
+    ]
+  }
+
+  it('gives every land class a colour in both themes', () => {
+    const classes = LAND_TIERS.flatMap((tier) => tier.classes)
+    for (const theme of THEMES) {
+      for (const cls of classes) {
+        expect(PALETTES[theme].land[cls], `${theme}.land.${cls}`).toMatch(/^#[0-9a-f]{6}$/)
+      }
+    }
+  })
+
+  it('keeps every stroke colour under the chroma ceiling', () => {
+    for (const theme of THEMES) {
+      for (const [name, colour] of Object.entries(PALETTES[theme].line)) {
+        expect(chroma(colour), `${theme}.line.${name} (${colour})`).toBeLessThanOrEqual(
+          LINE_CHROMA_CEILING,
+        )
+      }
+    }
+  })
+
+  it('allows land fills above the stroke ceiling, because that is the point', () => {
+    // A guard against someone "restoring consistency" by pulling the fills back under the
+    // line ceiling, which would undo this change and reinstate a map measured at ΔE 2.8
+    // between a park and a building.
+    const greens = THEMES.map((theme) => chroma(PALETTES[theme].land.park))
+    expect(Math.max(...greens)).toBeGreaterThan(LINE_CHROMA_CEILING)
+  })
+
+  it('keeps every route colour clear of every basemap colour', () => {
+    for (const theme of THEMES) {
+      for (const profile of PROFILES) {
+        for (const [name, colour] of every(PALETTES[theme])) {
+          expect(
+            deltaE2000(profile.colour, colour),
+            `${profile.id} (${profile.colour}) vs ${theme}.${name} (${colour})`,
+          ).toBeGreaterThanOrEqual(ROUTE_CLEARANCE_FLOOR)
+        }
+      }
+    }
+  })
+
+  it('separates the surfaces a rider orients by', () => {
+    // The whole complaint, in numbers. Every one of these pairs was between ΔE 2.8 and 4.6 in
+    // the palette that shipped, because all 43 land kinds were painted one colour.
+    const FLOORS: [keyof PaletteLand | 'earth' | 'water', keyof PaletteLand | 'earth' | 'water', number][] = [
+      ['park', 'earth', 15],
+      ['park', 'residential', 15],
+      ['water', 'earth', 15],
+      ['garden', 'earth', 8],
+      ['park', 'garden', 6],
+      ['farm', 'grass', 8],
+      ['wood', 'park', 6],
+      ['park', 'sport', 5],
+      ['residential', 'industrial', 4.5],
+    ]
+    const resolve = (palette: Palette, key: string): string =>
+      key === 'earth' ? palette.earth : key === 'water' ? palette.water : palette.land[key as LandClass]
+
+    for (const theme of THEMES) {
+      for (const [a, b, floor] of FLOORS) {
+        const palette = PALETTES[theme]
+        expect(
+          deltaE2000(resolve(palette, a), resolve(palette, b)),
+          `${theme}: ${a} vs ${b}`,
+        ).toBeGreaterThanOrEqual(floor)
+      }
+    }
+  })
+
+  it('halos labels in the earth colour so a street name survives crossing a park', () => {
+    for (const theme of THEMES) {
+      expect(PALETTES[theme].text.halo).toBe(PALETTES[theme].earth)
+    }
+  })
+})
+
+describe('land-cover layers', () => {
+  const style = basemapStyle('edinburgh.pmtiles')
+
+  it('draws every tier against the landuse source-layer', () => {
+    for (const tier of LAND_TIERS) {
+      expect(style.layers.find((l) => l.id === tier.id), `missing layer "${tier.id}"`).toBeDefined()
+    }
+  })
+
+  it('draws a low-zoom layer only for tiers that landcover can actually fill', () => {
+    // `landcover` is live at z3-z7 where `landuse` is nearly empty, so it needs its own
+    // layers — but its vocabulary is six kinds, not 43. A `-low` layer for a tier holding
+    // none of them filters for kinds that source-layer never contains and can never draw
+    // anything: dead weight, and a style that claims to do something it cannot.
+    const lowIds = style.layers.filter((l) => l.id.endsWith('-low')).map((l) => l.id)
+
+    // urban_area -> residential, farmland/barren/glacier -> land-open, forest/grassland -> land-green
+    expect(lowIds).toEqual(['land-built-low', 'land-open-low', 'land-green-low'])
+  })
+
+  it('paints land fills opaquely', () => {
+    // The old style used `fill-opacity: 0.5` to hide the fact that overlapping landuse
+    // polygons have no defined draw order — Protomaps stamps `sort_rank` 189 on every one of
+    // them. Blending made the ordering not matter, at the cost of a washed-out map and a
+    // colour at every overlap that nobody chose. Tiers fix the ordering properly, so the
+    // opacity crutch must not come back.
+    const land = style.layers.filter((l) => l.id.startsWith('land-'))
+    expect(land.length).toBeGreaterThan(0)
+    for (const layer of land) {
+      const opacity = (layer as { paint?: Record<string, unknown> }).paint?.['fill-opacity']
+      expect(opacity, `${layer.id} must not be translucent`).toBeUndefined()
+    }
+  })
+
+  it('keeps all land below the roads and above the background', () => {
+    const ids = style.layers.map((l) => l.id)
+    for (const tier of LAND_TIERS) {
+      expect(ids.indexOf(tier.id), tier.id).toBeGreaterThan(ids.indexOf('background'))
+      expect(ids.indexOf(tier.id), tier.id).toBeLessThan(ids.indexOf('roads'))
+    }
+  })
+
+  it('draws water above the land but below the roads', () => {
+    const ids = style.layers.map((l) => l.id)
+    expect(ids.indexOf('water')).toBeGreaterThan(ids.indexOf('land-park'))
+    expect(ids.indexOf('water')).toBeLessThan(ids.indexOf('roads'))
+  })
+})
+
+describe('railways', () => {
+  const style = basemapStyle('edinburgh.pmtiles')
+
+  it('does not draw a railway as a road', () => {
+    // `roads` carries `kind: 'rail'` — 265 features in a 137-tile scan of the Edinburgh
+    // archive — and the old filter excluded only paths, so every railway was painted with the
+    // road colour and the full 8px road casing. A main line looked like a street you could
+    // ride down, which is the opposite of what a railway means to a cyclist.
+    for (const id of ['roads', 'roads-casing']) {
+      expect(accepts(layer(style, id), 'rail', 'rail'), `${id} must not draw rail`).toBe(false)
+      expect(
+        accepts(layer(style, id), 'minor_road', 'residential'),
+        `${id} must still draw roads`,
+      ).toBe(true)
+    }
+  })
+
+  it('draws railways in their own layer', () => {
+    expect(accepts(layer(style, 'rail'), 'rail', 'rail')).toBe(true)
+    expect(accepts(layer(style, 'rail'), 'minor_road', 'residential')).toBe(false)
   })
 })

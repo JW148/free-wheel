@@ -17,18 +17,28 @@
  * boundary colour and 9.1 from the dark theme's main roads. It was not a low-contrast road
  * colour; it was a road colour.
  *
- * The fix is chroma, not hue. Every colour in both basemap palettes is C ≤ 15 — the map is
- * essentially neutral by construction — so a line at C ≥ 45 cannot read as map furniture
- * whatever its hue. That single constraint does more work than any amount of hue-picking,
- * and it is why these are vivid where the surrounding chrome is not: the chrome sits on a
- * panel we control, and the line sits on terrain we do not.
+ * The fix is chroma, not hue. Every **stroke** in both basemap palettes is C ≤ 15.4 — the
+ * map's linework is essentially neutral by construction — so a line at C ≥ 45 cannot read as
+ * map furniture whatever its hue. That single constraint does more work than any amount of
+ * hue-picking, and it is why these are vivid where the surrounding chrome is not: the chrome
+ * sits on a panel we control, and the line sits on terrain we do not.
+ *
+ * Land **fills** are deliberately above that ceiling — up to C 24.9 — because the argument
+ * only ever applied to lines. See `PALETTES` in `src/map/style.ts`.
  *
  * Lightness is floored at L* 56 so nothing disappears into the dark basemap, and each line
  * carries a dark casing so nothing disappears into the light one.
  *
  * Measured over both palettes and simulated deuteranopia, protanopia and tritanopia: worst
- * adjacent pair ΔE 26.4 for normal vision (was 13.9), closest approach to any basemap colour
- * ΔE 18.0 (was 7.5).
+ * adjacent pair ΔE 26.4 for normal vision (was 13.9).
+ *
+ * The closest approach to any basemap colour is **ΔE 17.15**, `fastbike` against the light
+ * theme's water. An earlier version of this comment claimed ΔE 18.0, which was wrong: that
+ * figure was measured over the basemap's fills and strokes but *not* its label colours, and
+ * `fastbike` sat ΔE 15.5 from the dark theme's water label the whole time. The label was
+ * lifted when the land-cover palette landed, so 17.15 is both correct and an improvement on
+ * what shipped. `style.test.ts` now asserts a floor of 16 over every colour in the palette,
+ * labels included, so the figure cannot drift again unnoticed.
  *
  * ## What this palette does not do
  *
