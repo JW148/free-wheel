@@ -238,6 +238,68 @@
   pointer-events: auto;
 }
 
+/* ── Minimising the rail ────────────────────────────────────────────────────────────────
+   The rail is anchored to the bottom, so the chevron holds its place whatever the stack
+   above it does. That means collapsing can be pure transform and opacity: each button slides
+   the exact distance down to the chevron (`--i` steps, counted from the bottom) and shrinks
+   into it. Nothing reflows, so nothing judders behind the backdrop filter.
+
+   `--i` and `--n` come from the JSX so the numbers cannot drift from the button order. */
+
+.control-stack {
+  --step: 3.45rem; /* one button plus the gap: how far apart two slots are */
+  --stagger: 26ms;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.control-stack .icon-button {
+  /* Default centre origin: translated by its distance to the chevron, a shrinking button
+     converges on the chevron's centre rather than its bottom edge. */
+  transition:
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease-out;
+  /* Expanding: the button nearest the chevron leads, the rest unfurl above it. */
+  transition-delay: calc((var(--i) - 1) * var(--stagger));
+}
+
+.map-controls[data-collapsed='yes'] .control-stack .icon-button {
+  opacity: 0;
+  transform: translateY(calc(var(--i) * var(--step))) scale(0.55);
+  /* Beats `.map-controls .icon-button`: a half-faded button must not still take a tap. */
+  pointer-events: none;
+  /* Collapsing runs the other way: the furthest button leaves first, so they arrive together. */
+  transition-delay: calc((var(--n) - var(--i)) * var(--stagger));
+}
+
+/* Hidden only once the last button has landed — this is what takes the collapsed rail out of
+   the tab order and the accessibility tree, so it needs no `inert`. */
+.map-controls[data-collapsed='yes'] .control-stack {
+  visibility: hidden;
+  /* Comfortably past the last button's landing (stagger + 300ms); it is already invisible by
+     then, so erring long costs nothing. */
+  transition: visibility 0s linear 520ms;
+}
+
+.controls-toggle svg {
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.map-controls[data-collapsed='yes'] .controls-toggle svg {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control-stack .icon-button,
+  .map-controls[data-collapsed='yes'] .control-stack .icon-button,
+  .controls-toggle svg {
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
+}
+
 .ride-error {
   margin: 0.55rem 0 0;
   padding: 0.7rem 0.85rem;

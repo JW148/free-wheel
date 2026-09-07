@@ -14,6 +14,18 @@ import { useRouteSheet } from './useRouteSheet'
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
 
+const CONTROLS_KEY = 'free-wheel.controls.v1'
+
+/** One button on the floating rail. `pressed` is set only where the state is truly binary. */
+type RailControl = {
+  key: string
+  icon: React.ReactNode
+  label: string
+  active?: boolean
+  pressed?: boolean
+  onClick: () => void
+}
+
 /**
  * The ride screen: a full-bleed map with controls floating over it.
  *
@@ -48,6 +60,25 @@ export default function RideView({
    */
   const [placing, setPlacing] = useState(true)
   const [follow, setFollow] = useState(false)
+  /**
+   * Whether the control rail is expanded. Remembered, like the theme and the path mode: a
+   * rider who put the buttons away wants them away next time too, and the chevron that
+   * brings them back never leaves the screen.
+   */
+  const [controlsOpen, setControlsOpen] = useState(() => {
+    try {
+      return localStorage.getItem(CONTROLS_KEY) !== 'closed'
+    } catch {
+      return true
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem(CONTROLS_KEY, controlsOpen ? 'open' : 'closed')
+    } catch {
+      /* Private mode. The rail just opens expanded next launch. */
+    }
+  }, [controlsOpen])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -216,6 +247,50 @@ export default function RideView({
     })
   }, [locateOnce, map])
 
+  /**
+   * The rail, in visual order top to bottom. An array rather than six hand-written buttons so
+   * the collapse animation can index off it — the travel and stagger are both functions of a
+   * button's position in the stack, and hand-numbering them would rot the first time one moved.
+   */
+  const controls: RailControl[] = [
+    {
+      key: 'place',
+      icon: <PinIcon />,
+      label: placing ? 'Stop adding points on tap' : 'Add points by tapping the map',
+      active: placing,
+      pressed: placing,
+      onClick: () => setPlacing((p) => !p),
+    },
+    {
+      key: 'theme',
+      icon: theme === 'dark' ? <SunIcon /> : <MoonIcon />,
+      label: theme === 'dark' ? 'Switch to the daylight map' : 'Switch to the dark map',
+      onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+    },
+    {
+      key: 'paths',
+      icon: <PathIcon />,
+      label: PATH_MODE_LABEL[pathMode],
+      active: pathMode !== 'none',
+      onClick: () => setPathMode(nextPathMode(pathMode)),
+    },
+    { key: 'setup', icon: <SettingsIcon />, label: 'Setup', onClick: onOpenSetup },
+    {
+      key: 'locate',
+      icon: <TargetIcon />,
+      label: 'Centre on my location',
+      onClick: centreOnMe,
+    },
+    {
+      key: 'follow',
+      icon: <NavigationIcon />,
+      label: follow ? 'Stop following' : 'Follow my position',
+      active: follow,
+      pressed: follow,
+      onClick: () => setFollow((f) => !f),
+    },
+  ]
+
   const problem = plan.error ?? mapError ?? fixError ?? workerProblem
   const route = plan.route
   /** How many routes are on the map. More than one, with none chosen, is the decision state. */
@@ -323,54 +398,36 @@ export default function RideView({
           </p>
         )}
 
-        <div className="map-controls">
+        {/* Bottom-anchored, so collapsing needs no layout change: the buttons slide down into
+            the chevron and the chevron never moves. Transform and opacity only — a height or
+            max-height animation on a backdrop-filtered stack judders on iOS. */}
+        <div className="map-controls" data-collapsed={controlsOpen ? 'no' : 'yes'}>
+          {/* `--i` counts from the bottom: a button's travel to the chevron is its distance
+              from it, and the stagger runs off the same number. */}
+          <div className="control-stack" style={{ '--n': controls.length } as React.CSSProperties}>
+            {controls.map((control, index) => (
+              <button
+                key={control.key}
+                type="button"
+                className="icon-button"
+                style={{ '--i': controls.length - index } as React.CSSProperties}
+                data-active={control.active ? 'yes' : 'no'}
+                aria-pressed={control.pressed}
+                aria-label={control.label}
+                onClick={control.onClick}
+              >
+                {control.icon}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
-            className="icon-button"
-            data-active={placing ? 'yes' : 'no'}
-            onClick={() => setPlacing((p) => !p)}
-            aria-pressed={placing}
-            aria-label={placing ? 'Stop adding points on tap' : 'Add points by tapping the map'}
+            className="icon-button controls-toggle"
+            onClick={() => setControlsOpen((open) => !open)}
+            aria-expanded={controlsOpen}
+            aria-label={controlsOpen ? 'Hide map controls' : 'Show map controls'}
           >
-            <PinIcon />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            aria-label={theme === 'dark' ? 'Switch to the daylight map' : 'Switch to the dark map'}
-          >
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            data-active={pathMode === 'none' ? 'no' : 'yes'}
-            onClick={() => setPathMode(nextPathMode(pathMode))}
-            aria-label={PATH_MODE_LABEL[pathMode]}
-          >
-            <PathIcon />
-          </button>
-          <button type="button" className="icon-button" onClick={onOpenSetup} aria-label="Setup">
-            <SettingsIcon />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={centreOnMe}
-            aria-label="Centre on my location"
-          >
-            <TargetIcon />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            data-active={follow ? 'yes' : 'no'}
-            onClick={() => setFollow((f) => !f)}
-            aria-pressed={follow}
-            aria-label={follow ? 'Stop following' : 'Follow my position'}
-          >
-            <NavigationIcon />
+            <ChevronIcon />
           </button>
         </div>
 
@@ -442,6 +499,18 @@ function NavigationIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 2.5 20 21l-8-4.4L4 21z" />
+    </svg>
+  )
+}
+
+/**
+ * A single chevron, pointing the way the stack will move: down to put it away, up to bring it
+ * back. Rotated by CSS so the glyph itself animates with the rail rather than swapping.
+ */
+function ChevronIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6 9.5 6 6 6-6" />
     </svg>
   )
 }
