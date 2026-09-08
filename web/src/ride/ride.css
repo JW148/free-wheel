@@ -892,6 +892,55 @@
   flex: 1;
 }
 
+/* ── Climbs on the planned route ────────────────────────────────────────────────────────
+   Same colours as the riding profile's bars and the same `gradients()` behind them, so a
+   climb read at the kitchen table and the same climb called out on the road look alike. */
+
+.climb-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.climb-list li {
+  display: grid;
+  grid-template-columns: 4px 4.5rem 1fr;
+  align-items: center;
+  column-gap: 0.6rem;
+  padding: 0.45rem 0.7rem 0.45rem 0.55rem;
+  border-radius: 10px;
+  background: var(--panel-row);
+}
+
+/* The severity, as a bar rather than a word. It is read before the numbers are, and a row of
+   them down the list shows at a glance whether the ride is one hard climb or six easy ones. */
+.climb-bar {
+  align-self: stretch;
+  min-height: 1.9rem;
+  border-radius: 2px;
+}
+
+.climb-where {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.climb-figures {
+  display: grid;
+  gap: 0.05rem;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.climb-figures strong {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
 /* ── The library ────────────────────────────────────────────────────────────────────────
    Saved routes and finished rides, one list. The thumbnail is a shape rather than a map: at
    44px a map is mud, and the proportion of a route — loop, out-and-back, point-to-point — is

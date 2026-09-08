@@ -48,6 +48,12 @@ describe('formatAway', () => {
     expect(formatAway(1240)).toBe('1.2 km')
     expect(formatAway(23_400)).toBe('23 km')
   })
+
+  it('does not round 999 m up into "1000 m"', () => {
+    expect(formatAway(999)).toBe('1.0 km')
+    expect(formatAway(975)).toBe('1.0 km')
+    expect(formatAway(960)).toBe('950 m')
+  })
 })
 
 describe('gradeBand', () => {

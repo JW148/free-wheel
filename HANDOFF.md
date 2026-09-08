@@ -16,11 +16,12 @@ this for where the work actually stands.
 | **Phase 3** — React/MapLibre PWA | ✅ Basemap renders with labels, offline |
 | **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. **Ridden 2026-09-06** |
 | **Phase 5** — basemap legibility | 🟡 Land cover, water and rail restyled after the ride. Tests green, not yet ridden |
+| **Phase 6** — navigation | 🟡 Progress, climbs, power, rerouting, heading, recording, library. Tests green, verified in a browser, **not yet ridden** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
-`docs/phase-5-progress.md`. Each
+`docs/phase-5-progress.md`, `docs/phase-6-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -35,16 +36,42 @@ wrong.
 
 ## Where to pick up
 
-**The next action is a ride, in daylight.** The first ride (2026-09-06) worked but produced one
+**The next action is a ride** — and there is now considerably more to test on it than there
+was. Phase 6 turned the ride screen from "a dot on a line" into navigation: it snaps the fix to
+the route, counts down the distance and gives an arrival clock, calls out the next climb with
+its gain and gradient, estimates power, reroutes when you leave the line, can turn the map to
+face the way you are going, and records the ride so you can keep it. `docs/phase-6-progress.md`
+records what was built, the three things that were wrong first, and why each constant is what
+it is.
+
+What a desk cannot answer, in rough order of risk:
+
+1. **Is the HUD readable at 25 km/h?** Four figures, a gradient strip and one line of text.
+   That is a judgement no test makes.
+2. **The compass.** `DeviceOrientationEvent.requestPermission()` only exists on iOS and only
+   resolves from a user gesture; desktop never prompts, so the whole permission path is
+   unexercised. Course-up falls back to the GPS course, which is `null` below a few km/h.
+3. **Does the power figure look sane?** Setup → Rider shows what the current setup predicts for
+   25 km/h flat and 10 km/h up 8%; the point of those two numbers is that a rider can check
+   them against what they know they hold. If they are wrong, the settings above them are the
+   thing to change, not the model.
+4. **Automatic rerouting on a real wrong turn**, including the 45 s cooldown feeling right
+   rather than either trigger-happy or absent.
+5. **Battery.** Wake lock, GPS at high accuracy, and a map that now redraws two extra GeoJSON
+   sources per fix.
+
+Then, and separately, the thing Phase 5 was waiting for:
+
+**The light theme in direct sunlight.** The first ride (2026-09-06) worked but produced one
 dominant complaint: the map was too monochromatic to orient by. Phase 5 fixed that — the
 archive already carried 43 distinct land kinds and the style was painting all of them one
 colour, at ΔE 2.4 from the earth beneath them. Land cover, water and railways are now
 restyled and every palette rule is asserted in `style.test.ts` rather than written down.
 
-What needs riding: **the light theme in direct sunlight.** That is the condition the light
-palette exists for and the one a desk and a Simulator cannot reproduce. Two things the rider
-asked for were deliberately *not* done — building footprints (2.6× archive size, declined) and
-an OpenCycleMap-style cycle network (impossible from this data — see below).
+That is the condition the light palette exists for and the one a desk and a Simulator cannot
+reproduce. Two things the rider asked for were deliberately *not* done — building footprints
+(2.6× archive size, declined) and an OpenCycleMap-style cycle network (impossible from this
+data — see below).
 
 The acceptance test, unchanged: airplane mode, cold launch from the Home Screen, plan a route,
 follow it.
@@ -53,7 +80,11 @@ What is known to work, and where:
 
 - **Desktop** — basemap, waypoints, routing, stats, GPX export, persistence across a cold
   reload. Edinburgh → Dalkeith on `trekking` returns 12.3 km / 40 min / 98 m, matching the GPX
-  header exactly.
+  header exactly. Phase 6 additionally: the ride HUD, progress and ETA, climb callouts, power,
+  automatic rerouting after going 1.2 km off the line, the ride summary, saving to the library,
+  and course-up matching the map bearing to the heading. Driven with `navigator.geolocation`
+  stubbed to walk the computed route — see `docs/phase-6-progress.md` for the method, and for
+  the `requestAnimationFrame` trap that makes a headless tab render no map at all.
 - **iOS 26.5 Simulator** — the app boots to the empty state, which is only reachable once
   `init()` resolves. That means the WasmGC engine loads, profiles provision into OPFS, and the
   VFS installs on real iOS WebKit. Nothing past that was exercised, because pushing a 34 MB

@@ -206,6 +206,25 @@ export function useRoute() {
   )
 
   /**
+   * Turns the plan round and routes it the other way.
+   *
+   * Not just `waypoints.reverse()` and keep the line. A cycle route is **not symmetric**: one-way
+   * streets, no-entry turns and BRouter's own cost model all mean the way home is a different
+   * road from the way out, sometimes substantially. Reversing the drawn geometry would put a
+   * line on the map that the rider cannot legally follow, so the reversed plan is routed again.
+   *
+   * Reuses `run`'s selection, which is the right behaviour on the planning screen: if you were
+   * comparing three styles on the way out, you want the same three on the way back.
+   */
+  const reverse = useCallback(() => {
+    setWaypoints((current) => [...current].reverse())
+    setRoutes({})
+    setGpx({})
+    setChosen(null)
+    setError(null)
+  }, [])
+
+  /**
    * Puts a saved route back on the map, exactly as it was computed.
    *
    * The stored GPX is re-parsed rather than a stored geometry being trusted, so a saved route
@@ -269,6 +288,7 @@ export function useRoute() {
     clear,
     run,
     rerouteFrom,
+    reverse,
     loadSaved,
     cancel,
     setError,

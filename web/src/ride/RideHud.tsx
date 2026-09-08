@@ -74,7 +74,10 @@ export default function RideHud({
           <RideProfile geometry={geometry} progress={progress} climbs={climbs} />
         )}
 
-        <Callout ahead={ahead} rest={rest} grade={progress?.grade ?? null} />
+        {/* Only where there is a route to say something about. Riding with no route is a
+            legitimate state — following your own position on the map — and "nothing steep
+            left on this route" would be a claim about a route that does not exist. */}
+        {geometry && progress && <Callout ahead={ahead} rest={rest} grade={progress.grade} />}
       </div>
 
       {offRoute && (
@@ -150,7 +153,7 @@ function Callout({
 }: {
   ahead: GradientAhead | null
   rest: GradientAhead | null
-  grade: number | null
+  grade: number
 }) {
   if (ahead?.inIt) {
     const { gradient } = ahead
@@ -159,7 +162,7 @@ function Callout({
         <span className="hud-callout-mark" />
         <strong>Climbing</strong> {formatAway(ahead.remainingM)} left ·{' '}
         {Math.round(ahead.remainingGainM)} m up
-        {grade !== null && ` · ${formatGrade(grade)} now`}
+        {` · ${formatGrade(grade)} now`}
       </p>
     )
   }

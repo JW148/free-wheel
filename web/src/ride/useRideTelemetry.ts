@@ -100,6 +100,9 @@ export function useRideTelemetry(input: {
   const [finished, setFinished] = useState<RideSummary | null>(null)
   const [finishedRecord, setFinishedRecord] = useState<RideRecord | null>(null)
 
+  // Mirrors `record` so the stop path can summarise it without reading state inside a state
+  // updater — updaters must be pure, and StrictMode double-invokes them.
+  const recordRef = useRef<RideRecord | null>(null)
   const hintM = useRef<number | null>(null)
   const smoothPower = useRef<number | null>(null)
   const smoothSpeed = useRef<number | null>(null)
@@ -116,7 +119,9 @@ export function useRideTelemetry(input: {
   // ── Starting and stopping ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (riding) {
-      setRecord(startRecording(Date.now()))
+      const started = startRecording(Date.now())
+      recordRef.current = started
+      setRecord(started)
       hintM.current = null
       smoothPower.current = null
       smoothSpeed.current = null
@@ -126,21 +131,28 @@ export function useRideTelemetry(input: {
     }
     // Ending a ride: keep the record so the summary has something to describe, and clear the
     // live figures so a stale power reading cannot sit on the planning screen.
-    setRecord((current) => {
-      if (current) {
-        setFinishedRecord(current)
-        setFinished(summarise(current))
-      }
-      return null
-    })
+    const finishing = recordRef.current
+    if (finishing) {
+      setFinishedRecord(finishing)
+      setFinished(summarise(finishing))
+    }
+    recordRef.current = null
+    setRecord(null)
     setPowerW(null)
   }, [riding])
 
   // A new route means the old progress describes nothing. This also covers a reroute, which
   // replaces the route under a rider who is still moving.
+  //
+  // Power is cleared with it. It is derived from the *route's* gradient, so the moment the
+  // route changes the last figure describes a hill that is no longer ahead — and leaving a
+  // live-looking wattage next to a dashed-out distance is worse than showing nothing for the
+  // one second until the next fix.
   useEffect(() => {
     hintM.current = null
+    smoothPower.current = null
     setProgress(null)
+    setPowerW(null)
     setOffRoute(ON_ROUTE)
   }, [geometry])
 
@@ -186,20 +198,17 @@ export function useRideTelemetry(input: {
       setPowerW(null)
     }
 
-    if (ridingRef.current) {
-      setRecord((current) =>
-        current === null
-          ? current
-          : recordFix(current, {
-              at: fix.at,
-              lon: fix.lon,
-              lat: fix.lat,
-              accuracyM: fix.accuracy,
-              speedMps: fix.speed,
-              powerW: watts,
-              routeElevM: nextProgress ? nextProgress.position.elevM : null,
-            }),
-      )
+    if (ridingRef.current && recordRef.current) {
+      recordRef.current = recordFix(recordRef.current, {
+        at: fix.at,
+        lon: fix.lon,
+        lat: fix.lat,
+        accuracyM: fix.accuracy,
+        speedMps: fix.speed,
+        powerW: watts,
+        routeElevM: nextProgress ? nextProgress.position.elevM : null,
+      })
+      setRecord(recordRef.current)
     }
   }, [fix])
 

@@ -57,7 +57,11 @@ export function formatPower(watts: number | null): string {
  */
 export function formatAway(metres: number): string {
   if (metres < 100) return `${Math.round(metres / 10) * 10} m`
-  if (metres < 1000) return `${Math.round(metres / 50) * 50} m`
+  // Round *before* choosing the unit. Rounding first and testing the raw value renders 999 m
+  // as "1000 m", which is both wrong-looking and one character wider than the "1.0 km" it
+  // should have been.
+  const rounded = Math.round(metres / 50) * 50
+  if (rounded < 1000) return `${rounded} m`
   if (metres < 10_000) return `${(metres / 1000).toFixed(1)} km`
   return `${Math.round(metres / 1000)} km`
 }

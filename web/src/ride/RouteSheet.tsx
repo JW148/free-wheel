@@ -5,6 +5,7 @@ import type { Plan } from './useRoute'
 import { formatDistance, formatDuration } from './gpx'
 import ElevationProfile from './ElevationProfile'
 import ElevationCompare from './ElevationCompare'
+import RouteClimbs from './RouteClimbs'
 import RouteLibrary from './RouteLibrary'
 import { putEntry, routeEntry, type SavedRoute } from './library'
 import { gpxFilename, shareGpx } from './share'
@@ -192,6 +193,8 @@ export default function RouteSheet({
                     label={profileById(plan.chosen).label}
                   />
 
+                  <RouteClimbs route={chosen} />
+
                   <Waypoints plan={plan} />
 
                   <SaveRoute
@@ -207,6 +210,13 @@ export default function RouteSheet({
                         Clear selection
                       </button>
                     )}
+                    {/* Turning round drops the computed route, because the way back is a
+                        different road — one-way streets and turn restrictions are not
+                        symmetric. The drawer falls back to the compare view, where Find route
+                        is the obvious next tap. */}
+                    <button type="button" onClick={plan.reverse}>
+                      Reverse
+                    </button>
                     <button type="button" onClick={plan.clear}>
                       Clear route
                     </button>
