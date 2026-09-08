@@ -12,7 +12,7 @@ import type { MapTheme, Palette, PaletteLand } from './style'
 import { PALETTES } from './style'
 import { LAND_TIERS, type LandClass } from './landcover'
 import { chroma, deltaE2000 } from './colour'
-import { PROFILES } from '../ride/profiles'
+import { ROUTE_PALETTE } from '../ride/profiles'
 
 // `basemapStyle` resolves glyph and sprite URLs against the document origin, because they are
 // fetched from MapLibre's worker where a relative URL would resolve against `/assets/`. Under
@@ -294,7 +294,7 @@ describe('palette', () => {
 
   it('keeps every route colour clear of every basemap colour', () => {
     for (const theme of THEMES) {
-      for (const profile of PROFILES) {
+      for (const profile of ROUTE_PALETTE) {
         for (const [name, colour] of every(PALETTES[theme])) {
           expect(
             deltaE2000(profile.colour, colour),

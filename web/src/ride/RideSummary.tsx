@@ -1,31 +1,32 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Drawer } from 'vaul'
-import { formatElapsed, formatEnergy, formatSpeed } from './format'
-import { formatDistance } from './gpx'
-import { kilocaloriesFrom } from './power'
-import { rideEntry, putEntry } from './library'
+import { defaultRouteName, deleteEntry, putEntry, rideEntry, type SavedRide } from './library'
 import { traceToGpx, worthKeeping, type RideRecord, type RideSummary } from './recording'
+import RideStats from './RideStats'
 import { shareGpx } from './share'
 
 /**
- * What the ride was, offered once, at the moment it ends.
+ * What the ride was, the moment it ends.
  *
- * ## Why a sheet and not a screen you can go back to
+ * ## It saves itself, and that is the change
  *
- * Because the decision is "keep this or not", and it is only interesting for about thirty
- * seconds. A rider who wants the ride keeps it and it goes in the library; a rider who tapped
- * Start by accident dismisses it. Making it a permanent screen would mean a nav item, a
- * back-stack, and an empty state, for a thing looked at once.
+ * This used to ask. There was a name field and a Save button, and dismissing the sheet threw
+ * the ride away — which is defensible for a decision that is only interesting for thirty
+ * seconds, and wrong for the only copy of something that took two hours to make. Two things
+ * came out of riding it:
  *
- * A ride under 200 m is not offered at all (`worthKeeping`): that is a mis-tap, and asking
- * someone whether they want to keep a 40 m ride is worse than silently discarding it.
+ * - **The stats were unreachable afterwards.** Dismiss the sheet and the ride's figures were
+ *   gone even if it *had* been saved, because nothing in the library opened them.
+ * - **The name field summoned iOS's shake-to-undo.** A text input with typing history in it,
+ *   plus a bike on cobbles, is an "Undo Typing" alert every few seconds. WebKit offers no way
+ *   to refuse the alert, so the only fix is to have no text field on the riding screen at all.
  *
- * ## The figures, and the two that are not here
+ * So the ride is written to the library as soon as the sheet appears, under the generated
+ * date-and-distance name, and this screen becomes a *report* rather than a decision: here is
+ * what happened, it is kept, and here are the two things you might want to do about it. Naming
+ * happens in the library, where the rider has stopped and a keyboard costs nothing.
  *
- * Distance, moving time, average and maximum speed, climbing, and work done. Not *average
- * gradient*, which is zero for every loop, and not *calories*, which appears as kJ with the
- * near-identity spelled out — quoting a calorie figure alongside a kilojoule figure invites
- * the reader to think they are two measurements rather than one number twice.
+ * A ride under 200 m is still not kept at all (`worthKeeping`): that is a mis-tap on Start.
  */
 export default function RideSummarySheet({
   summary,
@@ -36,23 +37,55 @@ export default function RideSummarySheet({
   record: RideRecord
   onDismiss: () => void
 }) {
-  const [name, setName] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
   const keepable = worthKeeping(record)
+  const [state, setState] = useState<'saving' | 'saved' | 'failed' | 'discarded'>('saving')
+  const [problem, setProblem] = useState<string | null>(null)
+  const [entry, setEntry] = useState<SavedRide | null>(null)
 
-  const save = async () => {
+  // Built once, so a retry writes the same record under the same id rather than a second copy.
+  const candidate = useMemo(() => {
+    const name = defaultRouteName(summary.startedAt, summary.distanceM)
+    return rideEntry({ name, summary, gpx: traceToGpx(record, name), trace: record.trace })
+  }, [summary, record])
+
+  const save = useCallback(async () => {
+    setState('saving')
+    setProblem(null)
     try {
-      await putEntry(
-        rideEntry({ name, summary, gpx: traceToGpx(record, name || 'free-wheel ride'), trace: record.trace }),
-      )
-      setSaved(true)
+      await putEntry(candidate)
+      setEntry(candidate)
+      setState('saved')
     } catch (e) {
       // The ride is still on screen and still exportable. Say what happened rather than
       // pretending it saved.
       setProblem(e instanceof Error ? e.message : String(e))
+      setState('failed')
+    }
+  }, [candidate])
+
+  // Once, on arrival. A ref rather than a dependency-free effect because StrictMode runs
+  // effects twice on the same instance, and the second run would write a duplicate.
+  const attempted = useRef(false)
+  useEffect(() => {
+    if (!keepable || attempted.current) return
+    attempted.current = true
+    void save()
+  }, [keepable, save])
+
+  const discard = async () => {
+    try {
+      if (entry) await deleteEntry('ride', entry.id)
+      setState('discarded')
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e))
     }
   }
+
+  const exportGpx = () =>
+    void shareGpx(
+      candidate.gpx,
+      `free-wheel-ride-${new Date(summary.startedAt).toISOString().slice(0, 10)}`,
+    )
 
   return (
     <Drawer.Root open onOpenChange={(open) => !open && onDismiss()}>
@@ -70,79 +103,39 @@ export default function RideSummarySheet({
               </button>
             </div>
 
-            <dl className="detail-stats summary-stats">
-              <div>
-                <dd>{formatDistance(summary.distanceM)}</dd>
-                <dt>ridden</dt>
-              </div>
-              <div>
-                <dd>{formatElapsed(summary.movingS)}</dd>
-                <dt>moving</dt>
-              </div>
-              <div>
-                <dd>{formatSpeed(summary.avgSpeedMps)}</dd>
-                <dt>avg km/h</dt>
-              </div>
-              <div>
-                <dd>{formatSpeed(summary.maxSpeedMps)}</dd>
-                <dt>max km/h</dt>
-              </div>
-              <div>
-                <dd>{Math.round(summary.ascentM)} m</dd>
-                <dt>climbed</dt>
-              </div>
-              <div>
-                <dd>{formatElapsed(summary.elapsedS)}</dd>
-                <dt>elapsed</dt>
-              </div>
-            </dl>
+            <RideStats summary={summary} />
 
-            {summary.avgPowerW !== null && summary.energyKj > 0 && (
-              <p className="summary-effort">
-                About <strong>{Math.round(summary.avgPowerW / 5) * 5} W</strong> average and{' '}
-                <strong>{formatEnergy(summary.energyKj)} kJ</strong> of work — roughly{' '}
-                {Math.round(kilocaloriesFrom(summary.energyKj))} Calories, which is the same
-                number because a cyclist is about 24% efficient. Estimated from speed, gradient
-                and your weight; it is not a power meter.
-              </p>
-            )}
-
-            {keepable ? (
-              saved ? (
-                <p className="warn">Saved. It is in the library, under Routes and rides.</p>
-              ) : (
-                <>
-                  <label className="named-save">
-                    <span className="section-label">Name it, or leave it blank</span>
-                    <input
-                      type="text"
-                      value={name}
-                      placeholder="Tuesday evening loop"
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                  </label>
-                  <div className="sheet-actions">
-                    <button type="button" className="primary" onClick={() => void save()}>
-                      Save this ride
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void shareGpx(
-                          traceToGpx(record, name || 'free-wheel ride'),
-                          `free-wheel-ride-${new Date(summary.startedAt).toISOString().slice(0, 10)}`,
-                        )
-                      }
-                    >
-                      Export GPX
-                    </button>
-                  </div>
-                </>
-              )
-            ) : (
+            {!keepable ? (
               <p className="warn">
                 Under 200 m, so there is nothing worth keeping. Nothing was recorded.
               </p>
+            ) : state === 'discarded' ? (
+              <p className="warn">Thrown away. Nothing was kept.</p>
+            ) : (
+              <>
+                <p className="warn">
+                  {state === 'saved'
+                    ? `Saved as “${candidate.name}”. It is in the library under Saved, where you can rename it, see these figures again, or ride it back.`
+                    : state === 'saving'
+                      ? 'Saving to the library…'
+                      : 'It is not saved. The ride is still here — try again, or export it.'}
+                </p>
+                <div className="sheet-actions">
+                  {state === 'failed' && (
+                    <button type="button" className="primary" onClick={() => void save()}>
+                      Try again
+                    </button>
+                  )}
+                  <button type="button" onClick={exportGpx}>
+                    Export GPX
+                  </button>
+                  {state === 'saved' && (
+                    <button type="button" onClick={() => void discard()}>
+                      Throw it away
+                    </button>
+                  )}
+                </div>
+              </>
             )}
 
             {problem && (

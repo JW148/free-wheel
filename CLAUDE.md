@@ -41,8 +41,8 @@ useful reference material.
 engine/          Gradle + TeaVM. Compiles BRouter's Java to WasmGC and JS.
 web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (generated).
   src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
-                 The navigation kernel — progress, climbs, power, recording, library — is pure
-                 and tested; `useRideTelemetry` is the only place it meets React.
+                 The navigation kernel — progress, climbs, power, ascent, recording, library,
+                 hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
   src/setup/     Overlay: importing data, and the diagnostics/parity harness.
   src/engine/    Worker, Comlink client, OPFS VFS and tile store.
   src/map/       PMTiles-over-OPFS source, basemap style, the MapLibre worker fix.
@@ -419,6 +419,39 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   never added and waypoint markers are never created — which looks exactly like a marker bug
   and is not. Shim `requestAnimationFrame` to a `setTimeout` before the map is built when
   driving the app from headless automation. Close cousin of the dead-worker trap above.
+- **iOS shake-to-undo cannot be refused, so the riding screen carries no text field.** A bike
+  on rough ground performs the gesture continuously, and WebKit offers a page no way to decline
+  the "Undo Typing" alert — there is no cancellable event. The only lever is an empty undo
+  stack, so a finished ride saves itself under its generated name and renaming happens in the
+  library. `RideView` also refuses `beforeinput` with `inputType: 'historyUndo'` while riding,
+  which does not stop the alert but stops it quietly reverting something off screen. The user's
+  own escape hatch is Settings → Accessibility → Touch → Shake to Undo.
+- **A recorded ride is not BRouter GPX, and must not be read as if it were.** It carries no
+  `track-length` summary, so `parseBrouterGpx` reports a route of length zero that the progress
+  bar then divides by. `parseTrackGpx` measures the distance from the track instead, and sums
+  ascent through the shared `ascent.ts` — one deadband constant, or the stats rail and the climb
+  list disagree about the same hill.
+- **A recorded track has heights only where it was following a route.** `RouteGeometry.hasElevation`
+  (and `hasHeights()` for a parsed route) is the gate: where it is false, the power column, the
+  lookahead graph, the elevation profile and the climb list are all *removed* rather than drawn
+  from zeros. A flat bar chart is not "no data" — it is a claim that the road ahead is level.
+- **`plan.chosen` can name something the engine cannot route.** Following a recorded track sets
+  it to the `recorded` pseudo-profile, which is deliberately not in `PROFILES`. Anything that
+  asks the engine for a profile must use `plan.rerouteProfile`, which falls back to the ticked
+  selection — otherwise a reroute fails at the exact moment a lost rider needs it. `style.test.ts`
+  iterates `ROUTE_PALETTE`, not `PROFILES`, so the extra colour is still held to the ΔE floor.
+- **The riding HUD's height is measured, not guessed.** Both sizes are absolutely positioned
+  layers that cross-fade, and a `ResizeObserver` on each drives a `height` transition on the
+  panel. A hard-coded collapsed height does not work: the climb line appears and disappears
+  inside the strip, so the strip's own height is not constant. `data-measured="no"` suppresses
+  the transition until both layers have been measured, or the panel animates once on arrival.
+  This is the one place the "don't animate a backdrop-filtered box's height" rule is knowingly
+  broken — one panel on a deliberate tap, not seven blurred buttons once a second.
+- **The rider's marker has two sizes and is switched by `setPositionEmphasis`.** One size served
+  both screens and measured 20 logical pixels on the road, which is a street label. Riding is
+  45 px of arrow over a 34 px halo; the arrow is drawn at 64 device pixels and scaled *down*,
+  and carries a white ring inside a dark hairline so one image works over both basemaps without
+  a repaint on a theme swap.
 - **The iOS Simulator reaches the Mac's `localhost`, which is a secure context** — so it needs
   no HTTPS and no trusted CA, unlike a physical device. `simctl` is not on PATH here:
   `xcode-select` points at CommandLineTools, so use

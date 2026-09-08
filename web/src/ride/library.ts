@@ -137,6 +137,38 @@ export function rideEntry(input: {
   }
 }
 
+/**
+ * What the library is showing.
+ *
+ * The list was one undivided stream, on the argument that a route and a ride are the same
+ * object to a rider and the useful ordering is by *when*, across both. That argument holds and
+ * `'all'` is still the default — but it turned out to be only half the story. Once rides
+ * accumulate they are the bulk of the list, and "the route I planned for Saturday" gets
+ * pushed off the bottom by a fortnight of commutes. So the ordering stays and a filter sits
+ * above it: three taps of context, not a tab bar you have to choose before you can look.
+ */
+export type LibraryFilter = 'all' | 'route' | 'ride'
+
+/** Pure, so the toggle's behaviour is testable without a database. */
+export function filterEntries<T extends { kind: 'route' | 'ride' }>(
+  entries: T[],
+  filter: LibraryFilter,
+): T[] {
+  return filter === 'all' ? entries : entries.filter((entry) => entry.kind === filter)
+}
+
+/**
+ * An entry under a new name, or under its old one if the new name is blank.
+ *
+ * Blank is not a valid name here — every entry is identified in a list by its name, and the
+ * generated one ("8 Sep · 34.2 km") is better than an empty row. Clearing the field therefore
+ * reverts rather than erases, which is also what stops a fumbled rename destroying the only
+ * label on a ride.
+ */
+export function renamed<T extends LibraryEntry>(entry: T, name: string): T {
+  return { ...entry, name: name.trim() || entry.name }
+}
+
 /** Newest first. What a rider wants: the thing they saved last is the thing they want back. */
 export function byNewest<T extends { savedAt: number }>(entries: T[]): T[] {
   return [...entries].sort((a, b) => b.savedAt - a.savedAt)
@@ -222,6 +254,8 @@ export const deleteEntry = (kind: 'route' | 'ride', id: string) =>
 
 export const getRoute = (id: string) =>
   run<SavedRoute | undefined>(ROUTES, 'readonly', (s) => s.get(id))
+
+export const getRide = (id: string) => run<SavedRide | undefined>(RIDES, 'readonly', (s) => s.get(id))
 
 /**
  * Asks the browser to stop evicting this origin under storage pressure.

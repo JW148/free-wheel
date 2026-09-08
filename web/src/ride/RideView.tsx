@@ -18,6 +18,7 @@ import {
   routeAt,
   setFocus,
   setPosition,
+  setPositionEmphasis,
   setRoutes,
   setTravelled,
 } from './routeLayers'
@@ -32,6 +33,7 @@ import { useRouteSheet } from './useRouteSheet'
 const RIDING_ZOOM = 16.5
 
 const CONTROLS_KEY = 'free-wheel.controls.v1'
+const HUD_KEY = 'free-wheel.hud.v1'
 const COURSE_UP_KEY = 'free-wheel.courseup.v1'
 const VOICE_KEY = 'free-wheel.voice.v1'
 
@@ -134,6 +136,20 @@ export default function RideView({
     }
   })
   /**
+   * Whether the HUD is showing the elevation graph.
+   *
+   * Remembered, like the rail and the theme, and for the same reason: a rider who folded the
+   * panel away wants it folded away on the next ride too. The chevron that brings it back
+   * never leaves the panel, so there is no state this can get stuck in.
+   */
+  const [hudExpanded, setHudExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(HUD_KEY) !== 'mini'
+    } catch {
+      return true
+    }
+  })
+  /**
    * Whether the app speaks the climb ahead.
    *
    * On by default, which is a deliberate choice rather than an oversight. A muted feature is a
@@ -153,10 +169,11 @@ export default function RideView({
       localStorage.setItem(CONTROLS_KEY, controlsOpen ? 'open' : 'closed')
       localStorage.setItem(COURSE_UP_KEY, courseUp ? 'on' : 'off')
       localStorage.setItem(VOICE_KEY, voice ? 'on' : 'off')
+      localStorage.setItem(HUD_KEY, hudExpanded ? 'full' : 'mini')
     } catch {
       /* Private mode. The rail just opens expanded next launch. */
     }
-  }, [controlsOpen, courseUp, voice])
+  }, [controlsOpen, courseUp, voice, hudExpanded])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -436,6 +453,45 @@ export default function RideView({
     }
   }, [map, styleReady, fix, following, followPaused, courseUp, heading.heading])
 
+  /**
+   * Grows the rider's marker for the road and shrinks it again for the planning screen.
+   *
+   * Its own effect rather than a line in the camera effect above: that one runs on every fix,
+   * and setting a paint property once a second is work for nothing. This runs twice a ride.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady) return
+    setPositionEmphasis(instance, riding)
+  }, [map, styleReady, riding])
+
+  /**
+   * Swallows the undo iOS offers when the phone is shaken.
+   *
+   * Shake-to-undo is a system gesture, and a bike on cobbles performs it continuously: the
+   * ride reported an "Undo Typing" alert appearing every few seconds. WebKit gives a page no
+   * way to decline the alert — the only lever is to have nothing undoable in the document, so
+   * the riding screen now carries no text field at all (see `RideSummary.tsx`).
+   *
+   * This is the second half of that: if an earlier edit *is* still on WebKit's undo stack —
+   * a name typed in the library, a weight typed in Setup, in this same page load — then
+   * shaking would silently revert it. Refusing `historyUndo` while riding means the worst
+   * outcome is an alert that does nothing, rather than an alert that quietly edits something
+   * the rider cannot see.
+   *
+   * A rider who genuinely wants the alert gone can turn Shake to Undo off in Settings →
+   * Accessibility → Touch. Nothing in a web app can do it for them.
+   */
+  useEffect(() => {
+    if (!riding) return
+    const refuse = (event: Event) => {
+      const type = (event as InputEvent).inputType
+      if (type === 'historyUndo' || type === 'historyRedo') event.preventDefault()
+    }
+    document.addEventListener('beforeinput', refuse)
+    return () => document.removeEventListener('beforeinput', refuse)
+  }, [riding])
+
   const centreOnMe = useCallback(async () => {
     setFollowPaused(false)
     const here = await locateOnce()
@@ -473,7 +529,11 @@ export default function RideView({
   // ── Rerouting ─────────────────────────────────────────────────────────────────────────
   const reroute = useCallback(async () => {
     const { plan: current, fix: here, telemetry: state } = live.current
-    if (!here || !state.geometry || !current.chosen) return
+    // `rerouteProfile`, not `chosen`: following a recorded track sets `chosen` to a
+    // pseudo-profile that names no `.brf`, and asking the engine for it would fail at the one
+    // moment the rider needs an answer. See `useRoute.rerouteProfile`.
+    const profile = current.rerouteProfile
+    if (!here || !state.geometry || !profile) return
     lastRerouteAt.current = Date.now()
     setRerouting(true)
     try {
@@ -482,7 +542,7 @@ export default function RideView({
         current.waypoints,
         state.progress?.position.alongM ?? 0,
       )
-      await current.rerouteFrom({ lon: here.lon, lat: here.lat }, remaining, current.chosen)
+      await current.rerouteFrom({ lon: here.lon, lat: here.lat }, remaining, profile)
     } finally {
       setRerouting(false)
     }
@@ -518,6 +578,22 @@ export default function RideView({
   }, [locateOnce, map, courseUp, heading, announcer, voice])
 
   /**
+   * Starts a ride with nothing to follow.
+   *
+   * The same ride as any other — the same wake lock, the same recording, the same summary at
+   * the end — with the route-shaped half of the screen simply absent. It exists because the
+   * app was only useful once you had planned something, and half of riding is going out
+   * without a plan and wanting the line you took afterwards. The recorded track can then be
+   * loaded back out of the library and followed, which is the other half of the same feature.
+   *
+   * Offered only where there is no chosen route: with one chosen, Start already means "ride
+   * it", and a second button meaning "ride it but ignore it" is a question nobody is asking.
+   */
+  const record = useCallback(() => {
+    void startRiding()
+  }, [startRiding])
+
+  /**
    * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
    * the collapse animation can index off it — the travel and stagger are both functions of a
    * button's position in the stack, and hand-numbering them would rot the first time one moved.
@@ -537,6 +613,16 @@ export default function RideView({
       label: 'Saved routes and rides',
       onClick: sheet.showLibrary,
     },
+    ...(plan.chosen
+      ? []
+      : [
+          {
+            key: 'record',
+            icon: <RecordIcon />,
+            label: 'Record a ride without a route',
+            onClick: record,
+          },
+        ]),
     {
       key: 'theme',
       icon: theme === 'dark' ? <SunIcon /> : <MoonIcon />,
@@ -587,6 +673,8 @@ export default function RideView({
         <div className="ride-chrome">
           <RideHud
             telemetry={telemetry}
+            expanded={hudExpanded}
+            onExpandedChange={setHudExpanded}
             speedMps={fix?.speed ?? null}
             fixLabel={FIX_LABEL[fixStatus](fix?.accuracy ?? null, wakeLock.supported)}
             offRouteHint={
@@ -727,8 +815,15 @@ export default function RideView({
           plan={plan}
           sheet={sheet}
           onStart={() => void startRiding()}
+          onRecord={record}
           onLoadSaved={(entry) => {
             if (plan.loadSaved(entry)) {
+              sheet.setView('detail')
+              sheet.setOpen(false)
+            }
+          }}
+          onLoadTrack={(entry) => {
+            if (plan.loadTrack(entry)) {
               sheet.setView('detail')
               sheet.setOpen(false)
             }
@@ -801,6 +896,20 @@ function PinIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" />
       <circle cx="12" cy="10.4" r="2.4" />
+    </svg>
+  )
+}
+
+/**
+ * A filled dot in a ring, for recording. The universally understood record button, and the
+ * only icon in the rail with a solid centre — which is what makes it findable at a glance
+ * among six outlines.
+ */
+function RecordIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="4.6" fill="currentColor" stroke="none" />
     </svg>
   )
 }

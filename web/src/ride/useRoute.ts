@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { sharedEngine } from '../engine/engineClient'
 import { tilesForWaypoints } from '../engine/tiles'
 import { haversineM } from './geo'
-import { parseBrouterGpx, type ParsedRoute } from './gpx'
+import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
 import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
+import { isRoutableProfile, RECORDED_TRACK } from './profiles'
 
 export type { Waypoint } from './plan'
 
@@ -39,7 +40,10 @@ export function useRoute() {
     const parsed: Record<string, ParsedRoute> = {}
     for (const [id, doc] of Object.entries(restored.current?.gpx ?? {})) {
       try {
-        parsed[id] = parseBrouterGpx(doc)
+        // The key says which document this is. A recorded track has no `track-length` summary,
+        // so reading it with the engine's parser restores a route of zero length — and a
+        // progress bar that divides by it. See `parseTrackGpx`.
+        parsed[id] = id === RECORDED_TRACK.id ? parseTrackGpx(doc) : parseBrouterGpx(doc)
       } catch {
         // Drop an unparseable stored route rather than refusing to start.
       }
@@ -265,6 +269,40 @@ export function useRoute() {
     [],
   )
 
+  /**
+   * Puts a *recorded* ride back on the map as the line to follow.
+   *
+   * Deliberately different from {@link loadSaved} in three ways, all of which follow from a
+   * track being something that happened rather than something the engine computed:
+   *
+   * - **It is drawn as `recorded`, not as a profile.** No profile produced it, and labelling it
+   *   with one would claim a routing style it never had.
+   * - **The selection is left alone.** It is what "Find route" and an automatic reroute will
+   *   use, and a recorded track cannot route — so the rider keeps whatever style they had.
+   * - **The waypoints become its two ends.** They are what a reroute routes *to*: come off the
+   *   track and the app takes you on to where the track finished, which is the only useful
+   *   answer. The middle of the track is not waypoints — it is the road.
+   */
+  const loadTrack = useCallback((entry: { gpx: string }): boolean => {
+    try {
+      const parsed = parseTrackGpx(entry.gpx)
+      const start = parsed.coords[0]
+      const finish = parsed.coords[parsed.coords.length - 1]
+      setWaypoints([
+        { id: crypto.randomUUID(), lon: start[0], lat: start[1] },
+        { id: crypto.randomUUID(), lon: finish[0], lat: finish[1] },
+      ])
+      setRoutes({ [RECORDED_TRACK.id]: parsed })
+      setGpx({ [RECORDED_TRACK.id]: entry.gpx })
+      setChosen(RECORDED_TRACK.id)
+      setError(null)
+      return true
+    } catch (e) {
+      setError(`That recorded ride could not be read: ${e instanceof Error ? e.message : e}`)
+      return false
+    }
+  }, [])
+
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
     sharedEngine().cancel()
@@ -301,6 +339,18 @@ export function useRoute() {
     rerouteFrom,
     reverse,
     loadSaved,
+    loadTrack,
+    /**
+     * The profile a reroute should use.
+     *
+     * Not simply `chosen`: following a recorded track sets `chosen` to `recorded`, which names
+     * no `.brf` file, so a reroute would ask the engine for a profile that does not exist and
+     * come back with a routing failure at the exact moment the rider is lost. The ticked
+     * selection is the honest fallback — it is the style this rider rides.
+     */
+    rerouteProfile: isRoutableProfile(chosen) ? chosen! : selection[0],
+    /** Whether what is on the map is a track that was ridden rather than a computed route. */
+    isRecordedTrack: chosen === RECORDED_TRACK.id,
     cancel,
     setError,
   }

@@ -2,7 +2,16 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parseBrouterGpx } from './gpx'
-import { byNewest, defaultRouteName, previewOf, routeEntry } from './library'
+import {
+  byNewest,
+  defaultRouteName,
+  filterEntries,
+  previewOf,
+  renamed,
+  rideEntry,
+  routeEntry,
+} from './library'
+import { summarise, startRecording } from './recording'
 
 const fixture = (name: string) =>
   readFileSync(fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url)), 'utf8')
@@ -85,5 +94,52 @@ describe('byNewest', () => {
     const entries = [{ savedAt: 100 }, { savedAt: 300 }]
     byNewest(entries)
     expect(entries[0].savedAt).toBe(100)
+  })
+})
+
+describe('filterEntries', () => {
+  const entries = [
+    { kind: 'ride' as const, id: 'a' },
+    { kind: 'route' as const, id: 'b' },
+    { kind: 'ride' as const, id: 'c' },
+  ]
+
+  it('leaves the mixed list alone, which is the default and the useful order', () => {
+    expect(filterEntries(entries, 'all')).toEqual(entries)
+  })
+
+  it('shows only what was planned', () => {
+    expect(filterEntries(entries, 'route').map((e) => e.id)).toEqual(['b'])
+  })
+
+  it('shows only what was ridden', () => {
+    expect(filterEntries(entries, 'ride').map((e) => e.id)).toEqual(['a', 'c'])
+  })
+})
+
+describe('renamed', () => {
+  const entry = rideEntry({
+    name: '',
+    summary: summarise(startRecording(Date.UTC(2026, 8, 8, 17, 0))),
+    gpx: '<gpx/>',
+    trace: [
+      { lon: -3.2, lat: 55.9, elevM: 60, at: 0 },
+      { lon: -3.1, lat: 55.9, elevM: 62, at: 1000 },
+    ],
+  })
+
+  it('takes the new name', () => {
+    expect(renamed(entry, '  Pentlands loop ').name).toBe('Pentlands loop')
+  })
+
+  it('keeps the old name rather than leaving a row with no label', () => {
+    expect(renamed(entry, '   ').name).toBe(entry.name)
+  })
+
+  it('changes nothing else, so a rename cannot lose the track', () => {
+    const next = renamed(entry, 'Commute')
+    expect(next.id).toBe(entry.id)
+    expect(next.gpx).toBe(entry.gpx)
+    expect(next.summary).toBe(entry.summary)
   })
 })

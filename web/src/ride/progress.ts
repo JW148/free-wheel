@@ -1,5 +1,6 @@
 import { haversineM } from './geo'
-import type { ParsedRoute } from './gpx'
+import { ASCENT_DEADBAND_M } from './ascent'
+import { hasHeights, type ParsedRoute } from './gpx'
 
 /**
  * Where the rider is *on the route*, rather than where they are on the earth.
@@ -29,18 +30,6 @@ import type { ParsedRoute } from './gpx'
 const EARTH_R = 6_371_000
 const DEG = Math.PI / 180
 
-/**
- * Height change ignored before it counts as climbing.
- *
- * Not an arbitrary smoothing constant: 6 m is SRTM's stated vertical accuracy, so anything
- * smaller cannot be distinguished from the data being wrong. Summing *every* positive step
- * instead gives 943 m on the London–Brighton fixture against BRouter's own filtered figure of
- * **592 m** — a number this app displays, right next to it, in the stats rail. With the
- * deadband it comes to 589 m, and 0 m against BRouter's 1 m on the urban fixture. Agreement to
- * within half a percent on a figure derived two entirely different ways is about as good as it
- * gets, and the alternative was a "climbing still to come" that contradicted "climbing" by 60%.
- */
-const ASCENT_DEADBAND_M = 6
 
 export interface RouteGeometry {
   coords: [number, number][]
@@ -58,6 +47,17 @@ export interface RouteGeometry {
   cumulativeAscentM: number[]
   elevations: number[]
   totalM: number
+  /**
+   * Whether this track carries real heights at all.
+   *
+   * True for anything BRouter computed — it stamps an SRTM height on every point. False for a
+   * *recorded* ride, whose heights were only ever the route's own and are therefore absent
+   * wherever the rider was off route, and completely absent for a ride recorded with no route
+   * to follow. Everything downstream that is a function of height — the gradient, the power
+   * estimate, the climb callout, the elevation profile — has to say it cannot answer rather
+   * than answer from zeros, which is a flat road and a plausible-looking wattage.
+   */
+  hasElevation: boolean
 }
 
 /**
@@ -118,6 +118,10 @@ function buildGeometry(route: ParsedRoute): RouteGeometry | null {
     cumulativeM,
     cumulativeAscentM,
     elevations: route.elevations,
+    // Any non-zero height means the data is real. A route genuinely at sea level for its whole
+    // length would read as having none, which is the same answer either way: there is no
+    // gradient to report.
+    hasElevation: hasHeights(route),
     totalM: cumulativeM[cumulativeM.length - 1],
   }
 }

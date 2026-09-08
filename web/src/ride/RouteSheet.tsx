@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { Drawer } from 'vaul'
 import { PROFILES, profileById } from './profiles'
 import type { Plan } from './useRoute'
-import { formatDistance, formatDuration } from './gpx'
+import { formatDistance, formatDuration, hasHeights } from './gpx'
 import ElevationProfile from './ElevationProfile'
 import ElevationCompare from './ElevationCompare'
 import RouteClimbs from './RouteClimbs'
 import RouteLibrary from './RouteLibrary'
-import { putEntry, routeEntry, type SavedRoute } from './library'
+import { putEntry, routeEntry, type SavedRide, type SavedRoute } from './library'
 import { gpxFilename, shareGpx } from './share'
 import type { RouteSheetState } from './useRouteSheet'
 
@@ -46,12 +46,17 @@ export default function RouteSheet({
   plan,
   sheet,
   onStart,
+  onRecord,
   onLoadSaved,
+  onLoadTrack,
 }: {
   plan: Plan
   sheet: RouteSheetState
   onStart: () => void
+  /** Starts a ride with nothing to follow, recording where the rider goes. */
+  onRecord: () => void
   onLoadSaved: (entry: SavedRoute) => void
+  onLoadTrack: (entry: SavedRide) => void
 }) {
   /** Bumped after a save so the library list picks the new entry up. */
   const [librarySaves, setLibrarySaves] = useState(0)
@@ -150,7 +155,11 @@ export default function RouteSheet({
                     </button>
                     <Drawer.Title className="drawer-title">Saved</Drawer.Title>
                   </div>
-                  <RouteLibrary onLoad={onLoadSaved} reloadKey={librarySaves} />
+                  <RouteLibrary
+                    onLoad={onLoadSaved}
+                    onLoadTrack={onLoadTrack}
+                    reloadKey={librarySaves}
+                  />
                 </>
               ) : sheet.view === 'detail' && chosen && plan.chosen ? (
                 <>
@@ -187,20 +196,34 @@ export default function RouteSheet({
                     </div>
                   </dl>
 
-                  <ElevationProfile
-                    route={chosen}
-                    colour={profileById(plan.chosen).colour}
-                    label={profileById(plan.chosen).label}
-                  />
+                  {/* A recorded track's heights came from whatever route it was ridden
+                      along, so a ride recorded without one has none at all — and an
+                      elevation chart drawn from zeros is a flat road, which is a claim
+                      about the terrain rather than an absence of one. */}
+                  {hasHeights(chosen) ? (
+                    <>
+                      <ElevationProfile
+                        route={chosen}
+                        colour={profileById(plan.chosen).colour}
+                        label={profileById(plan.chosen).label}
+                      />
 
-                  <RouteClimbs route={chosen} />
+                      <RouteClimbs route={chosen} />
+                    </>
+                  ) : (
+                    <p className="warn">
+                      This track carries no surveyed heights, so there is no elevation profile
+                      and no climb list. Distance is measured from the track itself.
+                    </p>
+                  )}
 
                   <Waypoints plan={plan} />
 
-                  <SaveRoute
-                    plan={plan}
-                    onSaved={() => setLibrarySaves((n) => n + 1)}
-                  />
+                  {/* A recorded track is already in the library, and saving it as a *route*
+                      would file it under a profile that never produced it. */}
+                  {!plan.isRecordedTrack && (
+                    <SaveRoute plan={plan} onSaved={() => setLibrarySaves((n) => n + 1)} />
+                  )}
 
                   <div className="sheet-actions">
                     {/* Only where there is a comparison to go back to. With a lone route this
@@ -331,6 +354,12 @@ export default function RouteSheet({
                   <div className="sheet-actions">
                     <button type="button" onClick={sheet.showLibrary}>
                       Saved routes
+                    </button>
+                    {/* Riding with nothing planned. Here rather than only on the rail because
+                        this is the screen a rider is on when they decide they do not want a
+                        route today — and because the rail's icons cannot say "no route". */}
+                    <button type="button" onClick={onRecord}>
+                      Just record
                     </button>
                     <button
                       type="button"

@@ -9,13 +9,19 @@ import { formatAway } from './format'
  *
  * Two bands, answering two different questions, because one chart cannot answer both:
  *
- * - **The lookahead** is the next few kilometres, magnified. This is the question the user
- *   actually asked for — "is there a massive hill coming up, or a break on the downhill" — and
- *   it is unanswerable from a whole-route profile, where the next 2 km of a 90 km ride is four
- *   pixels wide.
- * - **The overview** is the whole route as a 6 px bar: how far through you are, and where the
- *   remaining climbs sit. It is what stops the lookahead from being disorienting, because a
- *   magnified window with no context does not tell you whether you are nearly home.
+ * - **The lookahead** ({@link RideProfile}) is the next few kilometres, magnified. This is the
+ *   question the user actually asked for — "is there a massive hill coming up, or a break on
+ *   the downhill" — and it is unanswerable from a whole-route profile, where the next 2 km of
+ *   a 90 km ride is four pixels wide.
+ * - **The overview** ({@link RouteOverview}) is the whole route as a 6 px bar: how far through
+ *   you are, and where the remaining climbs sit. It is what stops the lookahead from being
+ *   disorienting, because a magnified window with no context does not tell you whether you are
+ *   nearly home.
+ *
+ * They were one SVG until the HUD learned to collapse. The collapsed HUD keeps the overview
+ * and drops the lookahead — progress and the shape of what is left are worth 10 px of screen
+ * even when the graph is not — so the two bands are now two components. They still share this
+ * comment, because they are still one design.
  *
  * ## Severity is in the colour, not the shape
  *
@@ -34,8 +40,6 @@ import { formatAway } from './format'
 const WIDTH = 320
 const AHEAD_HEIGHT = 68
 const OVERVIEW_HEIGHT = 8
-const GAP = 5
-const HEIGHT = AHEAD_HEIGHT + GAP + OVERVIEW_HEIGHT
 
 /** Slices across the lookahead. 64 is about two per device pixel at the width this draws at. */
 const SLICES = 64
@@ -57,11 +61,9 @@ const MIN_BAND_M = 18
 export default function RideProfile({
   geometry,
   progress,
-  climbs,
 }: {
   geometry: RouteGeometry
   progress: RideProgress
-  climbs: Gradient[]
 }) {
   // Quantised to 25 m, which is the resampling step everything upstream already works in.
   // Without it the 64 slices are recomputed on every fix and the bars shimmer by a fraction
@@ -102,10 +104,10 @@ export default function RideProfile({
   return (
     <svg
       className="ride-profile"
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+      viewBox={`0 0 ${WIDTH} ${AHEAD_HEIGHT}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label={ariaLabel(windowM, low, high, progress)}
+      aria-label={aheadLabel(windowM, low, high)}
     >
       {slices.map((slice, i) => (
         <rect
@@ -148,46 +150,74 @@ export default function RideProfile({
         strokeWidth={2}
         vectorEffect="non-scaling-stroke"
       />
-
-      {/* ── The whole route, as a bar ─────────────────────────────────────────────────── */}
-      <g transform={`translate(0 ${AHEAD_HEIGHT + GAP})`}>
-        <rect
-          x={0}
-          y={0}
-          width={WIDTH}
-          height={OVERVIEW_HEIGHT}
-          rx={OVERVIEW_HEIGHT / 2}
-          fill="currentColor"
-          fillOpacity={0.15}
-        />
-        {climbs
-          .filter((climb) => climb.kind === 'climb')
-          .map((climb) => (
-            <rect
-              key={climb.startM}
-              x={(climb.startM / geometry.totalM) * WIDTH}
-              width={Math.max(2, ((climb.endM - climb.startM) / geometry.totalM) * WIDTH)}
-              y={0}
-              height={OVERVIEW_HEIGHT}
-              fill={gradeColour(climb.grade)}
-              fillOpacity={0.9}
-            />
-          ))}
-        <rect
-          x={0}
-          y={0}
-          width={Math.max(0, progress.fraction * WIDTH)}
-          height={OVERVIEW_HEIGHT}
-          rx={OVERVIEW_HEIGHT / 2}
-          fill="currentColor"
-          fillOpacity={0.55}
-        />
-      </g>
     </svg>
   )
 }
 
-function ariaLabel(windowM: number, low: number, high: number, progress: RideProgress): string {
+/**
+ * The whole route as a bar: how far through, and where the climbs that are left sit.
+ *
+ * The one thing the collapsed HUD keeps. It is 10 px tall and answers the question a rider
+ * asks most often — am I nearly there — which is why hiding the graph does not mean hiding
+ * this.
+ */
+export function RouteOverview({
+  geometry,
+  progress,
+  climbs,
+}: {
+  geometry: RouteGeometry
+  progress: RideProgress
+  climbs: Gradient[]
+}) {
+  return (
+    <svg
+      className="ride-overview"
+      viewBox={`0 0 ${WIDTH} ${OVERVIEW_HEIGHT}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={overviewLabel(progress)}
+    >
+      <rect
+        x={0}
+        y={0}
+        width={WIDTH}
+        height={OVERVIEW_HEIGHT}
+        rx={OVERVIEW_HEIGHT / 2}
+        fill="currentColor"
+        fillOpacity={0.15}
+      />
+      {climbs
+        .filter((climb) => climb.kind === 'climb')
+        .map((climb) => (
+          <rect
+            key={climb.startM}
+            x={(climb.startM / geometry.totalM) * WIDTH}
+            width={Math.max(2, ((climb.endM - climb.startM) / geometry.totalM) * WIDTH)}
+            y={0}
+            height={OVERVIEW_HEIGHT}
+            fill={gradeColour(climb.grade)}
+            fillOpacity={0.9}
+          />
+        ))}
+      <rect
+        x={0}
+        y={0}
+        width={Math.max(0, progress.fraction * WIDTH)}
+        height={OVERVIEW_HEIGHT}
+        rx={OVERVIEW_HEIGHT / 2}
+        fill="currentColor"
+        fillOpacity={0.55}
+      />
+    </svg>
+  )
+}
+
+function aheadLabel(windowM: number, low: number, high: number): string {
   const climb = high - low > 5 ? `, rising ${Math.round(high - low)} metres` : ', roughly level'
-  return `The next ${formatAway(windowM)}${climb}. ${Math.round(progress.fraction * 100)}% of the route ridden, ${formatAway(progress.remainingM)} to go.`
+  return `The next ${formatAway(windowM)}${climb}.`
+}
+
+function overviewLabel(progress: RideProgress): string {
+  return `${Math.round(progress.fraction * 100)}% of the route ridden, ${formatAway(progress.remainingM)} to go.`
 }

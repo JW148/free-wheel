@@ -165,9 +165,9 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
     type: 'circle',
     source: POSITION_SOURCE,
     paint: {
-      'circle-radius': 18,
+      'circle-radius': MARKER.planning.haloPx,
       'circle-color': '#9ba8ab',
-      'circle-opacity': 0.22,
+      'circle-opacity': 0.2,
     },
   })
   map.addLayer({
@@ -178,10 +178,12 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
     // reads as two riders.
     filter: ['!', ['has', 'heading']],
     paint: {
-      'circle-radius': 7,
-      'circle-color': '#4a86c4',
-      'circle-stroke-width': 3,
-      'circle-stroke-color': '#ccd0cf',
+      'circle-radius': MARKER.planning.dotPx,
+      'circle-color': RIDER_FILL,
+      // White, not the old pale grey: the light theme's earth is near-white, so a grey ring
+      // gave the marker no separation at all on the map most rides happen on.
+      'circle-stroke-width': 3.5,
+      'circle-stroke-color': '#ffffff',
     },
   })
 
@@ -200,9 +202,63 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
         'icon-rotation-alignment': 'map',
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 16, 1],
+        'icon-size': arrowSize('planning'),
       },
     })
+  }
+}
+
+/**
+ * How big the rider's marker is drawn, planning versus riding.
+ *
+ * Two sizes, because the two situations are not the same problem. Planning, you are holding
+ * the phone and looking for a small "you are here" that does not cover the road you are
+ * choosing. Riding, the phone is at arm's length on a bar mount, the screen is glanced at for
+ * well under a second in daylight, and the marker is what every other reading on screen is
+ * relative to — so it is the one element allowed to be loud.
+ *
+ * One size used to serve both, and on the road it measured 20 logical pixels: about the size
+ * of a street label, in a blue close to the `fastbike` line. Riding is now 45 px of arrow over
+ * a 34 px halo.
+ */
+const MARKER = {
+  planning: { haloPx: 18, dotPx: 7.5, arrowFar: 0.72, arrowNear: 1 },
+  riding: { haloPx: 34, dotPx: 11, arrowFar: 1.05, arrowNear: 1.4 },
+} as const
+
+/** The blue of the marker. It is a symbol with a white ring, not a line, so the route
+ *  palette's ΔE clearance rule does not bind on it — form separates it, not hue. */
+const RIDER_FILL = '#1e7ae6'
+
+/**
+ * The arrow's zoom curve for one mode.
+ *
+ * `zoom` has to be the input to the top-level `interpolate` — the same rule as every other
+ * expression in this file — so switching modes means replacing the whole expression rather
+ * than multiplying it by a factor.
+ */
+function arrowSize(mode: keyof typeof MARKER): ExpressionSpecification {
+  return ['interpolate', ['linear'], ['zoom'], 10, MARKER[mode].arrowFar, 16, MARKER[mode].arrowNear]
+}
+
+/**
+ * Switches the marker between its planning and riding sizes.
+ *
+ * A property update rather than a rebuilt layer: this runs on every transition into and out of
+ * riding, and re-adding a symbol layer drops it to the top of the stack in *insertion* order,
+ * which is fine — but re-adding the circle layers would put them over the route, and the
+ * marker's whole job is to sit on the line rather than hide it.
+ */
+export function setPositionEmphasis(map: MapLibreMap, riding: boolean): void {
+  const mode = riding ? 'riding' : 'planning'
+  if (map.getLayer('position-halo')) {
+    map.setPaintProperty('position-halo', 'circle-radius', MARKER[mode].haloPx)
+  }
+  if (map.getLayer('position-dot')) {
+    map.setPaintProperty('position-dot', 'circle-radius', MARKER[mode].dotPx)
+  }
+  if (map.getLayer('position-arrow')) {
+    map.setLayoutProperty('position-arrow', 'icon-size', arrowSize(mode))
   }
 }
 
@@ -230,7 +286,10 @@ export function applyOverlayTheme(map: MapLibreMap, theme: 'dark' | 'light'): vo
 function ensureArrowImage(map: MapLibreMap): boolean {
   if (map.hasImage(RIDER_ARROW)) return true
 
-  const size = 40
+  // 64 device pixels at pixelRatio 2 is 32 logical, which `icon-size` scales to 45 while
+  // riding. Drawn larger than it is ever displayed on purpose: an upscaled icon is soft, and
+  // softness on the one marker that has to be found instantly is the whole complaint.
+  const size = 64
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
@@ -238,21 +297,43 @@ function ensureArrowImage(map: MapLibreMap): boolean {
   if (!ctx) return false
 
   // A kite pointing up: nose at the top, swept back to two tips, notched at the tail. The
-  // notch is what makes the direction unambiguous at 20 px — a plain triangle reads as
-  // symmetrical at a glance and can be seen pointing either way.
-  ctx.beginPath()
-  ctx.moveTo(20, 4)
-  ctx.lineTo(33, 34)
-  ctx.lineTo(20, 26)
-  ctx.lineTo(7, 34)
-  ctx.closePath()
+  // notch is what makes the direction unambiguous at a glance — a plain triangle reads as
+  // symmetrical and can be seen pointing either way.
+  const kite = () => {
+    ctx.beginPath()
+    ctx.moveTo(32, 5)
+    ctx.lineTo(53, 57)
+    ctx.lineTo(32, 44)
+    ctx.lineTo(11, 57)
+    ctx.closePath()
+  }
 
-  ctx.fillStyle = '#4a86c4'
-  ctx.fill()
   ctx.lineJoin = 'round'
-  ctx.lineWidth = 3
-  ctx.strokeStyle = '#ccd0cf'
+  ctx.lineCap = 'round'
+
+  /*
+   * Three concentric passes, widest first, because a stroke is centred on the path: the dark
+   * pass survives only as a hairline outside the white one.
+   *
+   * Two rings rather than one is what makes a single image work over both basemaps. The old
+   * marker had a pale grey ring, which is invisible against the light theme's near-white
+   * earth — so on the map most rides happen on, the arrow was a small blue shape with no
+   * separation at all. White against a dark map, dark against a light one, and no repaint on
+   * a theme swap.
+   */
+  kite()
+  ctx.lineWidth = 11
+  ctx.strokeStyle = 'rgba(6, 20, 27, 0.5)'
   ctx.stroke()
+
+  kite()
+  ctx.lineWidth = 7
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+
+  kite()
+  ctx.fillStyle = RIDER_FILL
+  ctx.fill()
 
   map.addImage(RIDER_ARROW, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 })
   return true
