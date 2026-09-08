@@ -46,6 +46,15 @@ export interface CueInput {
   remainingM: number
   climbs: Gradient[]
   offRoute: boolean
+  /**
+   * When the current off-route episode began, from `trackOffRoute`. `null` while on route.
+   *
+   * This is what identifies the *episode*, and it has to, because a rider can leave and rejoin
+   * the same route any number of times without the geometry ever changing — which is the normal
+   * case with automatic rerouting switched off. Keyed on the route alone, the second wrong turn
+   * would be met with silence.
+   */
+  offRouteSince: number | null
   /** Bumped whenever the route is replaced, so cues from the old route cannot block new ones. */
   routeVersion: number
 }
@@ -79,18 +88,31 @@ const ARRIVED_M = 60
  * as two sentences a few seconds apart anyway.
  */
 export function cueFor(input: CueInput, said: ReadonlySet<string>): Cue | null {
-  const { alongM, remainingM, climbs, offRoute, routeVersion } = input
+  const { alongM, remainingM, climbs, offRoute, offRouteSince, routeVersion } = input
   const unsaid = (key: string) => !said.has(key)
 
   // Off route first: it invalidates everything else that could be said about the route.
-  const offKey = `off:${routeVersion}`
+  const offKey = `off:${routeVersion}:${offRouteSince ?? 0}`
   if (offRoute && unsaid(offKey)) return { key: offKey, text: 'Off route.' }
 
-  if (remainingM <= ARRIVED_M && unsaid('arrived')) {
-    return { key: 'arrived', text: 'You have arrived.' }
+  // Versioned like everything else: a reroute produces a new finish to count down to, and
+  // without the version a route replaced after arriving would never announce its own.
+  const arrivedKey = `arrived:${routeVersion}`
+  const finishKey = `finish:${routeVersion}`
+
+  if (remainingM <= ARRIVED_M && unsaid(arrivedKey)) {
+    return { key: arrivedKey, text: 'You have arrived.' }
   }
-  if (remainingM <= FINISH_NEAR_M && unsaid('finish')) {
-    return { key: 'finish', text: `Finish in ${spokenDistance(remainingM)}.` }
+  // Strictly *outside* the arrival radius, and only if arrival has not already been announced.
+  // Without both guards a rider whose fix skips 600 m straight to 30 m — or who drifts back
+  // out to 400 m after arriving — hears "You have arrived" and then "Finish in 400 metres".
+  if (
+    remainingM <= FINISH_NEAR_M &&
+    remainingM > ARRIVED_M &&
+    unsaid(finishKey) &&
+    unsaid(arrivedKey)
+  ) {
+    return { key: finishKey, text: `Finish in ${spokenDistance(remainingM)}.` }
   }
 
   for (const gradient of climbs) {

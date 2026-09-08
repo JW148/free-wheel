@@ -43,6 +43,7 @@ const base: CueInput = {
   remainingM: 20_000,
   climbs: [],
   offRoute: false,
+  offRouteSince: null,
   routeVersion: 1,
 }
 
@@ -126,7 +127,7 @@ describe('cueFor', () => {
   })
 
   it('will say “off route” again after a reroute, but not before', () => {
-    const off = { ...base, offRoute: true }
+    const off = { ...base, offRoute: true, offRouteSince: 1000 }
     const first = cueFor(off, none)!
     const said = new Set([first.key])
     expect(cueFor(off, said)).toBeNull()
@@ -134,9 +135,36 @@ describe('cueFor', () => {
     expect(cueFor({ ...off, routeVersion: 2 }, said)!.text).toBe('Off route.')
   })
 
+  it('says “off route” again on a second wrong turn on the same route', () => {
+    // The case with automatic rerouting switched off: the geometry never changes, so keying
+    // the cue to the route alone would meet the second wrong turn with silence.
+    const first = cueFor({ ...base, offRoute: true, offRouteSince: 1000 }, none)!
+    const said = new Set([first.key])
+    // Back on the line: nothing to say.
+    expect(cueFor({ ...base, offRouteSince: null }, said)).toBeNull()
+    // And off it again, twenty minutes later.
+    expect(cueFor({ ...base, offRoute: true, offRouteSince: 2200 }, said)!.text).toBe('Off route.')
+  })
+
   it('counts the finish down and then announces it', () => {
     expect(cueFor({ ...base, remainingM: 400 }, none)!.text).toContain('Finish in 400 metres')
     expect(cueFor({ ...base, remainingM: 30 }, none)!.text).toBe('You have arrived.')
+  })
+
+  it('does not count down to a finish it has already announced', () => {
+    // A fix that skips the whole 500–60 m window says only "arrived"; a rider who then drifts
+    // back out to 400 m must not be told the finish is coming.
+    const arrival = cueFor({ ...base, remainingM: 30 }, none)!
+    const said = new Set([arrival.key])
+    expect(cueFor({ ...base, remainingM: 400 }, said)).toBeNull()
+    expect(cueFor({ ...base, remainingM: 30 }, said)).toBeNull()
+  })
+
+  it('counts down to the finish of a route that replaced one already arrived at', () => {
+    const arrival = cueFor({ ...base, remainingM: 30 }, none)!
+    const said = new Set([arrival.key])
+    const rerouted = cueFor({ ...base, remainingM: 400, routeVersion: 2 }, said)!
+    expect(rerouted.text).toContain('Finish in')
   })
 
   it('never says two things at once', () => {
@@ -196,7 +224,14 @@ describe('a whole ride, cue by cue', () => {
   const said = new Set<string>()
   for (let alongM = 0; alongM <= geometry.totalM; alongM += 25) {
     const cue = cueFor(
-      { alongM, remainingM: geometry.totalM - alongM, climbs, offRoute: false, routeVersion: 1 },
+      {
+        alongM,
+        remainingM: geometry.totalM - alongM,
+        climbs,
+        offRoute: false,
+        offRouteSince: null,
+        routeVersion: 1,
+      },
       said,
     )
     if (cue) {

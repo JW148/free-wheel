@@ -181,6 +181,28 @@ still false in the render that closure came from. The one utterance that has to 
 was silently swallowed, and with it every cue for the rest of the ride. The caller checks the
 mute setting instead, because the caller can see it correctly.
 
+A review pass found five more of the same shape, all in the seam between the pure rules and
+the browser, and all fixed:
+
+- **Un-muting mid-ride never spoke.** A rider who muted last session starts the next one with
+  the voice off, so Start never primes — and iOS will not speak from an effect it has not
+  first spoken from inside a gesture. The toggle is itself a tap, so it now says "Voice on",
+  which doubles as the unlock.
+- **The first cue could cancel the priming utterance.** `say()` cancels before every
+  utterance, and a cue on the first fix would therefore cancel a gesture-initiated utterance
+  *before it started speaking* — which is the moment that unlocks the session. There is now a
+  two-second grace after priming during which cues queue instead of interrupting.
+- **Muting forgot what had been said**, because the reset was keyed on `enabled` rather than
+  on the ride, so un-muting replayed every cue whose condition was still true — including a
+  climb you were halfway up, announced as though it were ahead.
+- **"Off route" was keyed to the route.** With automatic rerouting switched off — a supported
+  setting — the geometry never changes, so a second wrong turn was met with silence. It is
+  keyed to the off-route *episode* now.
+- **"Finish in 400 metres" could follow "You have arrived."** The finish branch had no lower
+  bound, so any fix that skipped the 500–60 m window in one step, or any drift back out after
+  arriving, counted down to a finish already announced. `arrived` and `finish` were also the
+  only unversioned keys, so a reroute after arriving left the new route with neither.
+
 The approach window also lost its lower bound. It was 250 m, on the reasoning that a rider
 almost on a climb can see it — true, and not the case it caught. Cues are said once, so the
 only rider it silenced was one who *started* inside the window. On the Edinburgh test route

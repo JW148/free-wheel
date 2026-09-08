@@ -181,12 +181,22 @@ export default function RideView({
             remainingM: telemetry.progress.remainingM,
             climbs: telemetry.climbs,
             offRoute: telemetry.offRoute,
+            offRouteSince: telemetry.offRouteSince,
             routeVersion,
           }
         : null,
-    [riding, telemetry.progress, telemetry.climbs, telemetry.offRoute, routeVersion],
+    [
+      riding,
+      telemetry.progress,
+      telemetry.climbs,
+      telemetry.offRoute,
+      telemetry.offRouteSince,
+      routeVersion,
+    ],
   )
-  const announcer = useAnnouncer(riding && voice, cueInput)
+  // `riding` is the session: muting is not the end of a ride, and forgetting what has been
+  // said because someone hit mute means un-muting replays it all.
+  const announcer = useAnnouncer(riding && voice, cueInput, riding)
 
   /** Set by a pan, cleared by the timer or by Recentre. See {@link FOLLOW_RESUME_MS}. */
   const [followPaused, setFollowPaused] = useState(false)
@@ -417,6 +427,20 @@ export default function RideView({
     }
   }, [locateOnce, map])
 
+  /**
+   * Turning the voice on has to speak *something*, immediately, from inside this tap.
+   *
+   * A rider who muted last session starts the next one with `voice` off, so `startRiding`
+   * never primes — and iOS will not let the page speak from an effect it has not first spoken
+   * from inside a gesture. Without this the button would light up and nothing would ever be
+   * heard. The confirmation doubles as the unlock.
+   */
+  const toggleVoice = useCallback(() => {
+    const next = !voice
+    setVoice(next)
+    if (next) announcer.say('Voice on.')
+  }, [voice, announcer])
+
   const toggleCourseUp = useCallback(() => {
     setCourseUp((on) => {
       // iOS will only hand over the compass from inside a user gesture, and this is one.
@@ -566,7 +590,7 @@ export default function RideView({
                       className="icon-button"
                       data-active={voice ? 'yes' : 'no'}
                       aria-pressed={voice}
-                      onClick={() => setVoice((on) => !on)}
+                      onClick={toggleVoice}
                       aria-label={voice ? 'Stop speaking the climbs' : 'Speak the climbs ahead'}
                     >
                       {voice ? <SpeakerIcon /> : <SpeakerOffIcon />}
