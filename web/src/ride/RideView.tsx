@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Marker, type MapMouseEvent } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
@@ -8,6 +8,7 @@ import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
 import { useHeading } from './useHeading'
 import { useRideTelemetry } from './useRideTelemetry'
+import { useAnnouncer } from './useAnnouncer'
 import type { Rider } from './useRider'
 import { shortestTurn } from './geo'
 import { sliceAlong, waypointsAhead } from './progress'
@@ -33,6 +34,7 @@ const RIDING_ZOOM = 16.5
 
 const CONTROLS_KEY = 'free-wheel.controls.v1'
 const COURSE_UP_KEY = 'free-wheel.courseup.v1'
+const VOICE_KEY = 'free-wheel.voice.v1'
 
 /**
  * How long after a pan the camera goes back to following.
@@ -132,14 +134,30 @@ export default function RideView({
       return true
     }
   })
+  /**
+   * Whether the app speaks the climb ahead.
+   *
+   * On by default, which is a deliberate choice rather than an oversight. A muted feature is a
+   * feature nobody finds, and this one only ever speaks *after* the rider has tapped Start —
+   * where the very first thing it says is "Ride started", so the connection between the tap
+   * and the voice is immediate and the mute button is on the same screen.
+   */
+  const [voice, setVoice] = useState(() => {
+    try {
+      return localStorage.getItem(VOICE_KEY) !== 'off'
+    } catch {
+      return true
+    }
+  })
   useEffect(() => {
     try {
       localStorage.setItem(CONTROLS_KEY, controlsOpen ? 'open' : 'closed')
       localStorage.setItem(COURSE_UP_KEY, courseUp ? 'on' : 'off')
+      localStorage.setItem(VOICE_KEY, voice ? 'on' : 'off')
     } catch {
       /* Private mode. The rail just opens expanded next launch. */
     }
-  }, [controlsOpen, courseUp])
+  }, [controlsOpen, courseUp, voice])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -147,6 +165,28 @@ export default function RideView({
   const wakeLock = useWakeLock(riding)
   const heading = useHeading(following, fix?.heading ?? null)
   const telemetry = useRideTelemetry({ riding, route: plan.route, fix, rider: rider.setup })
+
+  /**
+   * Bumped whenever the route is replaced, so cues about the old route cannot suppress the
+   * same cue about the new one — "off route" has to be sayable again after a reroute.
+   */
+  const [routeVersion, setRouteVersion] = useState(0)
+  useEffect(() => setRouteVersion((v) => v + 1), [telemetry.geometry])
+
+  const cueInput = useMemo(
+    () =>
+      riding && telemetry.progress
+        ? {
+            alongM: telemetry.progress.position.alongM,
+            remainingM: telemetry.progress.remainingM,
+            climbs: telemetry.climbs,
+            offRoute: telemetry.offRoute,
+            routeVersion,
+          }
+        : null,
+    [riding, telemetry.progress, telemetry.climbs, telemetry.offRoute, routeVersion],
+  )
+  const announcer = useAnnouncer(riding && voice, cueInput)
 
   /** Set by a pan, cleared by the timer or by Recentre. See {@link FOLLOW_RESUME_MS}. */
   const [followPaused, setFollowPaused] = useState(false)
@@ -420,8 +460,11 @@ export default function RideView({
     // Ride can be started from inside the drawer, which covers the map it is about to lock
     // to the rider.
     closeSheet.current()
-    // Still inside the tap that started the ride, so iOS will accept the compass request.
+    // Both of these must happen inside the tap that started the ride. iOS will not grant the
+    // compass outside a user gesture, and it will not let the page speak until it has spoken
+    // once from inside one — silently, in both cases.
     if (courseUp && heading.permission === 'unknown') void heading.request()
+    if (voice) announcer.prime()
     const here = await locateOnce()
     if (!map.current) return
     map.current.easeTo({
@@ -429,7 +472,7 @@ export default function RideView({
       zoom: RIDING_ZOOM,
       duration: 900,
     })
-  }, [locateOnce, map, courseUp, heading])
+  }, [locateOnce, map, courseUp, heading, announcer, voice])
 
   /**
    * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
@@ -517,6 +560,18 @@ export default function RideView({
                   </p>
                 )}
                 <div className="map-controls map-controls-riding">
+                  {announcer.supported && (
+                    <button
+                      type="button"
+                      className="icon-button"
+                      data-active={voice ? 'yes' : 'no'}
+                      aria-pressed={voice}
+                      onClick={() => setVoice((on) => !on)}
+                      aria-label={voice ? 'Stop speaking the climbs' : 'Speak the climbs ahead'}
+                    >
+                      {voice ? <SpeakerIcon /> : <SpeakerOffIcon />}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="icon-button"
@@ -728,6 +783,29 @@ function CompassIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M15.5 8.5 13 13l-4.5 2.5L11 11z" />
+    </svg>
+  )
+}
+
+/**
+ * A speaker with two arcs. The arcs are what make it read as *sound* rather than as a
+ * megaphone or a bookmark at 24px; the muted variant drops them for a cross, so the two states
+ * differ by more than the presence of a small detail.
+ */
+function SpeakerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z" />
+      <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.3 6.5a8 8 0 0 1 0 11" />
+    </svg>
+  )
+}
+
+function SpeakerOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z" />
+      <path d="m16 9.5 5 5M21 9.5l-5 5" />
     </svg>
   )
 }

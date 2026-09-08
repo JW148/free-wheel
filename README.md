@@ -16,7 +16,9 @@ library on the phone, and export as GPX.
 how far left, and what time you arrive. Under them, the next 3 km of road drawn as a gradient
 strip, and one line naming the climb — or the descent — that is coming. Leave the route and it
 routes again from where you are, through whatever waypoints are still ahead. The map can turn to
-face the way you are going.
+face the way you are going. And it speaks — sparingly, about five things, all of them the sort
+you would rather hear than read: a climb coming up and how steep it is, the top of a hard one,
+a long descent, going off route, and the finish.
 
 **Afterwards.** The ride is recorded — distance, moving time, climbing, average and maximum
 speed, and the work done — and can be kept or exported.

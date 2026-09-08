@@ -21,11 +21,12 @@ cheaply enough to be silly to leave out.
 | *(added)* Climb list when planning | ✅ same detection the HUD calls out on the road |
 | *(added)* Reverse the route | ✅ re-routed, because the way back is a different road |
 | *(added)* Storage persistence request | ✅ in Setup → Rider |
+| *(added)* Spoken climb cues | ✅ on-device speech, fourteen cues over a 95 km route |
 
 ## The shape of it
 
-Everything interesting is **pure and tested**, and the React layer only sequences it. Five
-modules, 229 assertions, no DOM:
+Everything interesting is **pure and tested**, and the React layer only sequences it. Seven
+modules, 255 assertions, no DOM:
 
 ```
 progress.ts    snap a fix to the route; distance along, remaining, gradient, ETA, off-route
@@ -33,6 +34,7 @@ climbs.ts      the climbs and descents on a route, as named features
 power.ts       watts, from speed and gradient
 rider.ts       mass, drag area, rolling resistance — and what a rider actually knows
 recording.ts   what happened, accumulated one fix at a time
+cues.ts        what to say out loud, and when
 library.ts     saved routes and rides (IndexedDB)
 ```
 
@@ -130,6 +132,60 @@ stronger than the rider pushes rather than resists (squaring without the sign re
 being blown along as working hard); and freewheeling downhill returns **0 W**, not a negative
 number, because a rider understands 0 W instantly and −180 W not at all.
 
+## Speech, and why it says so little
+
+Every other feature on the riding screen needs a rider to look down, and looking down at
+25 km/h is the one thing a cycling app can ask for that has a real cost. The information that
+matters most — a wall in 400 m — is also the information you most want *before* you are on it.
+iOS carries its voices on-device, so this works in airplane mode like everything else.
+
+Chattiness is the failure mode: an app that talks constantly gets muted, and a muted app says
+nothing at all. So the bar is that a cue must change what the rider does in the next minute.
+Five kinds survive it — a climb coming up, the top of a *hard* climb, a long descent, off
+route, and the finish. Deliberately absent: kilometre ticks, speed, power, and anything the
+screen already shows continuously.
+
+Walked over the London → Brighton fixture at 25 m steps — 3,800 positions — that yields
+**fourteen cues in 95 km**, roughly one every 7 km:
+
+```
+ 5.3 km  Climb in 700 metres. 55 metres at 2 percent, steepening to 4 percent.
+10.8 km  Climb in 700 metres. 24 metres at 7 percent, steepening to 10 percent.
+26.3 km  Climb in 700 metres. 62 metres at 6 percent.
+31.5 km  Downhill in 700 metres, for 1.2 kilometres.
+...
+94.4 km  Finish in 500 metres.
+94.8 km  You have arrived.
+```
+
+`cues.ts` is pure and the decision is tested by advancing a number, because "say this once,
+when this becomes true" is exactly the logic that silently regresses into saying it every
+second. `cues.test.ts` asserts the whole-ride sequence: more than five cues, fewer than forty,
+none repeated, and the finish last.
+
+Three things about `speechSynthesis` that had to be designed around, all of which fail
+*silently*:
+
+1. **The first utterance needs a user gesture** on iOS. `prime()` is called from the Start
+   button and says "Ride started", which both unlocks speech for the session and makes the
+   connection between the tap and the voice obvious — which is why the feature ships on by
+   default rather than muted-and-undiscovered.
+2. **Utterances queue.** Each cue cancels whatever is speaking, because cues are only issued
+   when they are worth interrupting for.
+3. **The voice list loads asynchronously**, so nothing here picks a voice; the default for the
+   document language is correct and immune to it.
+
+There was a fourth, and it was a real bug caught in the browser: `prime()` originally checked
+`enabled`, which is `riding && voice` — and at the moment the Start handler runs, `riding` is
+still false in the render that closure came from. The one utterance that has to get through
+was silently swallowed, and with it every cue for the rest of the ride. The caller checks the
+mute setting instead, because the caller can see it correctly.
+
+The approach window also lost its lower bound. It was 250 m, on the reasoning that a rider
+almost on a climb can see it — true, and not the case it caught. Cues are said once, so the
+only rider it silenced was one who *started* inside the window. On the Edinburgh test route
+the first climb is 200 m in and was never mentioned at all.
+
 ## Colour: the two ride overlays are achromatic, on purpose
 
 `docs/phase-4-progress.md` establishes that every route colour must sit **ΔE ≥ 16** from every
@@ -187,7 +243,7 @@ put a line on the map the rider cannot legally follow *and* reported the wrong f
 
 ## Verification
 
-Unit tests: **229 assertions across 14 files**, all pure. The five new modules are covered
+Unit tests: **255 assertions across 15 files**, all pure. The five new modules are covered
 directly, including the three GPS failure modes the recorder exists to filter — a receiver
 jittering 4 m/s at traffic lights for ten minutes (must add zero distance), a 3 km teleport out
 of a tunnel (must not be credited, but must re-anchor so the *next* step is measured correctly),

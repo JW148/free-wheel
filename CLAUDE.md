@@ -397,6 +397,15 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   button and from Start, both of which are taps. The GPS course is the fallback and is `null`
   below a few km/h — which is every junction and every set of lights, hence wanting the compass
   at all.
+- **Speech is sparse on purpose, and `speechSynthesis` fails silently in three ways.** The
+  first utterance needs a user gesture on iOS (hence `prime()` from Start), utterances queue
+  rather than replace (hence `cancel()` before each), and the voice list loads async (hence
+  never picking a voice). A fourth, caught in the browser: `prime()` must **not** check
+  `enabled`, because `riding` is still false in the render its closure came from — gating there
+  swallowed the one utterance that unlocks the rest of the session. The cue rules live in
+  `cues.ts`, are pure, and are tested by walking a real route: fourteen cues over 95 km. If you
+  add a cue, it has to change what the rider does in the next minute — an app that talks
+  constantly gets muted, and a muted app says nothing at all.
 - **A hidden browser tab never fires `requestAnimationFrame`, and MapLibre's style loader
   awaits one.** The map then silently never loads: no `load` event, no `error`,
   `isStyleLoaded()` false, `getStyle()` undefined, and **zero** sprite or glyph requests in
