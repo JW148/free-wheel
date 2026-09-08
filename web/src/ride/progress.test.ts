@@ -14,8 +14,10 @@ import {
   rideProgress,
   routeBearingAhead,
   routeGeometry,
+  sliceAlong,
   snapToRoute,
   trackOffRoute,
+  waypointsAhead,
 } from './progress'
 
 const fixture = (name: string) =>
@@ -122,6 +124,38 @@ describe('snapToRoute', () => {
     const snapped = snapToRoute(line, [at150[0], at150[1] + 0.002], 150)
     expect(snapped.offsetM).toBeGreaterThan(200)
     expect(snapped.offsetM).toBeLessThan(240)
+  })
+})
+
+describe('sliceAlong', () => {
+  const line = routeGeometry(straightEastRoute([0, 100, 200, 300], [0, 0, 0, 0]))!
+
+  it('interpolates both ends rather than snapping to a vertex', () => {
+    const slice = sliceAlong(line, 50, 250)
+    expect(slice).toHaveLength(4)
+    expect(slice[0]).toEqual(pointAt(line, 50))
+    expect(slice[slice.length - 1]).toEqual(pointAt(line, 250))
+  })
+
+  it('keeps every vertex strictly inside the range', () => {
+    expect(sliceAlong(line, 0, 300)).toHaveLength(4)
+    expect(sliceAlong(line, 120, 180)).toHaveLength(2)
+  })
+
+  it('clamps to the route and copes with a reversed range', () => {
+    expect(sliceAlong(line, -500, 9999)).toHaveLength(4)
+    expect(sliceAlong(line, 250, 50)).toHaveLength(4)
+  })
+
+  it('returns nothing drawable for an empty range', () => {
+    expect(sliceAlong(line, 100, 100)).toEqual([])
+    expect(sliceAlong(line, 400, 500)).toEqual([])
+  })
+
+  it('follows the real route without shortcuts', () => {
+    // The slice from 0 to the end must be the route, vertex for vertex.
+    const whole = sliceAlong(short, 0, short.totalM)
+    expect(whole).toHaveLength(short.coords.length)
   })
 })
 
@@ -240,6 +274,42 @@ describe('etaSeconds', () => {
     expect(early).toBeGreaterThan(1800)
     expect(late).toBeGreaterThan(early)
     expect(late).toBeLessThanOrEqual(3600)
+  })
+})
+
+describe('waypointsAhead', () => {
+  const line = routeGeometry(straightEastRoute([0, 1000, 2000, 3000], [0, 0, 0, 0]))!
+  const at = (m: number) => {
+    const [lon, lat] = pointAt(line, m)
+    return { lon, lat }
+  }
+  const plan = [at(0), at(1000), at(2000), at(3000)]
+
+  it('drops the start and the via points already ridden through', () => {
+    expect(waypointsAhead(line, plan, 1500)).toEqual([plan[2], plan[3]])
+  })
+
+  it('drops the start even before the rider has moved, because it is behind them by definition', () => {
+    expect(waypointsAhead(line, plan, 0)).toEqual([plan[1], plan[2], plan[3]])
+  })
+
+  it('reduces a plain start-to-finish plan to the finish', () => {
+    expect(waypointsAhead(line, [plan[0], plan[3]], 500)).toEqual([plan[3]])
+  })
+
+  it('always keeps the finish, whatever the snapping says', () => {
+    expect(waypointsAhead(line, plan, 3000)).toEqual([plan[3]])
+    expect(waypointsAhead(line, plan, 9999)).toEqual([plan[3]])
+  })
+
+  it('does not treat standing a few metres past a via point as having gone through it', () => {
+    // 15 m past. Within the margin, so the via point survives — a GPS fix cannot tell the
+    // difference and sending the rider on without it would silently change the route.
+    expect(waypointsAhead(line, plan, 1015)).toContain(plan[1])
+  })
+
+  it('has nothing to say about an empty plan', () => {
+    expect(waypointsAhead(line, [], 0)).toEqual([])
   })
 })
 

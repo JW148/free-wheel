@@ -22,8 +22,34 @@ import { profileById } from './profiles'
 const ROUTE_SOURCE = 'route'
 const ROUTE_LINE_LAYER = 'route-line'
 const POSITION_SOURCE = 'position'
+/** The stretch already ridden, drawn over the route to grey it out. */
+const TRAVELLED_SOURCE = 'travelled'
+/** The climb coming up, drawn as a halo around the route. */
+const FOCUS_SOURCE = 'focus'
+const RIDER_ARROW = 'rider-arrow'
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
+
+/**
+ * How the two ride-mode overlays are coloured.
+ *
+ * Both are deliberately **achromatic**, and that is the whole design. Six route colours
+ * already occupy the usable hue circle at C ≥ 45, and every one of them is asserted to sit ΔE
+ * ≥ 16 from every basemap colour (`style.test.ts`). A seventh and eighth hue would have to
+ * thread the same needle, and a rider glancing down would then have to decide whether an
+ * orange stretch of line meant "this is the trekking route" or "this is the climb".
+ *
+ * So neither overlay carries an identity. **Travelled** is a neutral grey painted over the
+ * route: what is behind you has stopped being a route and become map furniture, so it should
+ * look like it. **Focus** is a soft halo in whichever of black or white contrasts with the
+ * map underneath — a lightness effect, not a hue, which is why it needs no clearance rule and
+ * why it works over a route line of any colour.
+ */
+const OVERLAY: Record<'dark' | 'light', { travelled: string; halo: string; haloOpacity: number }> =
+  {
+    dark: { travelled: '#5b6b73', halo: '#ffffff', haloOpacity: 0.3 },
+    light: { travelled: '#9ba8ab', halo: '#06141b', haloOpacity: 0.2 },
+  }
 
 /**
  * How a route relates to the others on screen, which is what decides how loudly it is drawn.
@@ -49,11 +75,35 @@ export interface DrawnRoute {
  * Safe to call repeatedly — the map is rebuilt whenever the basemap archive changes, and the
  * caller should not have to track whether this particular instance has been set up yet.
  */
-export function ensureRouteLayers(map: MapLibreMap): void {
-  if (map.getSource(ROUTE_SOURCE)) return
+export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'dark'): void {
+  if (map.getSource(ROUTE_SOURCE)) {
+    // Already built. The palette may still have changed under it — `setStyle` rebuilds these
+    // layers from scratch, but a theme swap that somehow did not would otherwise leave a white
+    // halo on a white map.
+    applyOverlayTheme(map, theme)
+    return
+  }
 
   map.addSource(ROUTE_SOURCE, { type: 'geojson', data: EMPTY })
   map.addSource(POSITION_SOURCE, { type: 'geojson', data: EMPTY })
+  map.addSource(TRAVELLED_SOURCE, { type: 'geojson', data: EMPTY })
+  map.addSource(FOCUS_SOURCE, { type: 'geojson', data: EMPTY })
+
+  // The climb halo goes *under* the casing, so it reads as an aura around the route rather
+  // than a wash over it. Above the line, even blurred, it desaturates the colour that
+  // identifies which route you are on.
+  map.addLayer({
+    id: 'route-focus',
+    type: 'line',
+    source: FOCUS_SOURCE,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': OVERLAY[theme].halo,
+      'line-opacity': OVERLAY[theme].haloOpacity,
+      'line-blur': 6,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 16, 16, 30],
+    },
+  })
 
   // A casing under the line, for the same reason roads have one: a bare stroke over a busy
   // basemap is hard to follow at a glance, which is the only thing that matters here.
@@ -95,6 +145,20 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     },
   })
 
+  // What has been ridden, painted over the route in neutral grey. Above the line so it covers
+  // it, below the rider so it never covers them.
+  map.addLayer({
+    id: 'route-travelled',
+    type: 'line',
+    source: TRAVELLED_SOURCE,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': OVERLAY[theme].travelled,
+      'line-opacity': 0.85,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3.4, 16, 6.8],
+    },
+  })
+
   // The position dot goes last so it is never buried under the route it sits on.
   map.addLayer({
     id: 'position-halo',
@@ -110,6 +174,9 @@ export function ensureRouteLayers(map: MapLibreMap): void {
     id: 'position-dot',
     type: 'circle',
     source: POSITION_SOURCE,
+    // The plain dot only where there is no heading to draw. Two markers stacked on one fix
+    // reads as two riders.
+    filter: ['!', ['has', 'heading']],
     paint: {
       'circle-radius': 7,
       'circle-color': '#4a86c4',
@@ -117,6 +184,78 @@ export function ensureRouteLayers(map: MapLibreMap): void {
       'circle-stroke-color': '#ccd0cf',
     },
   })
+
+  if (ensureArrowImage(map)) {
+    map.addLayer({
+      id: 'position-arrow',
+      type: 'symbol',
+      source: POSITION_SOURCE,
+      filter: ['has', 'heading'],
+      layout: {
+        'icon-image': RIDER_ARROW,
+        'icon-rotate': ['get', 'heading'],
+        // Against the *map*, not the screen: the heading is a compass bearing, so it must
+        // turn with the map when the map turns. Viewport alignment would leave the arrow
+        // pointing north-up while the map was course-up, which is exactly backwards.
+        'icon-rotation-alignment': 'map',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 16, 1],
+      },
+    })
+  }
+}
+
+/** Repaints the two overlays for a palette change, if they exist yet. */
+export function applyOverlayTheme(map: MapLibreMap, theme: 'dark' | 'light'): void {
+  if (map.getLayer('route-travelled')) {
+    map.setPaintProperty('route-travelled', 'line-color', OVERLAY[theme].travelled)
+  }
+  if (map.getLayer('route-focus')) {
+    map.setPaintProperty('route-focus', 'line-color', OVERLAY[theme].halo)
+    map.setPaintProperty('route-focus', 'line-opacity', OVERLAY[theme].haloOpacity)
+  }
+}
+
+/**
+ * Registers the rider arrow, drawn to a canvas rather than shipped as a sprite.
+ *
+ * The basemap sprite sheet is fetched and committed by `npm run fetch-map-assets`, and adding
+ * an app icon to it would mean either hand-editing a generated file or a second sprite source.
+ * Drawing 40×40 pixels at load costs nothing and cannot go missing offline — which, per the
+ * glyphs-and-sprites trap in `style.ts`, is the failure mode worth designing out.
+ *
+ * Returns false where there is no canvas to draw on, in which case the plain dot stands in.
+ */
+function ensureArrowImage(map: MapLibreMap): boolean {
+  if (map.hasImage(RIDER_ARROW)) return true
+
+  const size = 40
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return false
+
+  // A kite pointing up: nose at the top, swept back to two tips, notched at the tail. The
+  // notch is what makes the direction unambiguous at 20 px — a plain triangle reads as
+  // symmetrical at a glance and can be seen pointing either way.
+  ctx.beginPath()
+  ctx.moveTo(20, 4)
+  ctx.lineTo(33, 34)
+  ctx.lineTo(20, 26)
+  ctx.lineTo(7, 34)
+  ctx.closePath()
+
+  ctx.fillStyle = '#4a86c4'
+  ctx.fill()
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = 3
+  ctx.strokeStyle = '#ccd0cf'
+  ctx.stroke()
+
+  map.addImage(RIDER_ARROW, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 })
+  return true
 }
 
 /**
@@ -270,13 +409,54 @@ export function mapTapAction(input: {
   return { do: 'nothing' }
 }
 
-export function setPosition(map: MapLibreMap, lon: number, lat: number): void {
+/**
+ * Moves the rider marker.
+ *
+ * `heading` is omitted from the properties rather than set to null when unknown, because the
+ * two marker layers select on `['has', 'heading']` — a null value would still *have* the
+ * property and would draw an arrow pointing due north at a rider standing still.
+ */
+export function setPosition(
+  map: MapLibreMap,
+  lon: number,
+  lat: number,
+  heading: number | null = null,
+): void {
   const source = map.getSource<GeoJSONSource>(POSITION_SOURCE)
   if (!source) return
   source.setData({
     type: 'FeatureCollection',
-    features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [lon, lat] } }],
+    features: [
+      {
+        type: 'Feature',
+        properties: heading === null ? {} : { heading },
+        geometry: { type: 'Point', coordinates: [lon, lat] },
+      },
+    ],
   })
+}
+
+/** The stretch already ridden, greyed out over the route. Empty clears it. */
+export function setTravelled(map: MapLibreMap, coords: [number, number][]): void {
+  setLine(map, TRAVELLED_SOURCE, coords)
+}
+
+/** The stretch to draw a halo around — the climb coming up. Empty clears it. */
+export function setFocus(map: MapLibreMap, coords: [number, number][]): void {
+  setLine(map, FOCUS_SOURCE, coords)
+}
+
+function setLine(map: MapLibreMap, source: string, coords: [number, number][]): void {
+  map.getSource<GeoJSONSource>(source)?.setData(
+    coords.length < 2
+      ? EMPTY
+      : {
+          type: 'FeatureCollection',
+          features: [
+            { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } },
+          ],
+        },
+  )
 }
 
 /** Bounding box of a set of coordinates, or null if there are none. */

@@ -6,15 +6,54 @@ import { nextPathMode, type PathMode } from '../map/style'
 import { useRoute } from './useRoute'
 import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
-import { boundsOf, drawnRoutes, mapTapAction, routeAt, setPosition, setRoutes } from './routeLayers'
+import { useHeading } from './useHeading'
+import { useRideTelemetry } from './useRideTelemetry'
+import type { Rider } from './useRider'
+import { shortestTurn } from './geo'
+import { sliceAlong, waypointsAhead } from './progress'
+import {
+  boundsOf,
+  drawnRoutes,
+  mapTapAction,
+  routeAt,
+  setFocus,
+  setPosition,
+  setRoutes,
+  setTravelled,
+} from './routeLayers'
 import { formatDistance, formatDuration } from './gpx'
+import { formatAway } from './format'
 import RouteSheet from './RouteSheet'
+import RideHud from './RideHud'
+import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
 
 const CONTROLS_KEY = 'free-wheel.controls.v1'
+const COURSE_UP_KEY = 'free-wheel.courseup.v1'
+
+/**
+ * How long after a pan the camera goes back to following.
+ *
+ * A rider who drags the map is asking a question — what is over there, where does this road
+ * go — and the answer takes a few seconds to read. Snapping back on the next fix makes the
+ * gesture impossible; never coming back means one accidental brush of the screen leaves the
+ * map stranded for the rest of the ride. Twelve seconds is long enough to look and short
+ * enough that it is forgiving.
+ */
+const FOLLOW_RESUME_MS = 12_000
+
+/**
+ * The minimum gap between automatic reroutes.
+ *
+ * Routing on a phone costs seconds and battery, and a rider on a parallel cycle path can be
+ * "off route" for a long time. Without a floor, the app would recompute continuously and the
+ * route would flicker between two answers. A manual tap on Reroute bypasses this: that is an
+ * explicit request, and refusing it would be inexplicable.
+ */
+const REROUTE_COOLDOWN_MS = 45_000
 
 /** One button on the floating rail. `pressed` is set only where the state is truly binary. */
 type RailControl = {
@@ -31,19 +70,25 @@ type RailControl = {
  *
  * It has two modes, and they want opposite things:
  *
- * - **Planning** — tap to place points, compare styles, read an elevation profile. Chrome is
- *   welcome; you are sitting still and looking at the screen.
+ * - **Planning** — tap to place points, compare styles, read an elevation profile, save a
+ *   route. Chrome is welcome; you are sitting still and looking at the screen.
  * - **Riding** — one glance, at speed, one-handed. Everything not needed for the next
  *   junction gets out of the way, the camera locks to the rider, and tapping the map no
  *   longer places a waypoint — a bump in the road should not edit the route.
+ *
+ * Riding mode now also *knows where you are on the route*, which is what `useRideTelemetry`
+ * exists for: progress, the climb ahead, an estimated power figure, whether you have come off
+ * the line, and a recording of what actually happened.
  */
 export default function RideView({
   container,
   basemap,
+  rider,
   onOpenSetup,
 }: {
   container: React.RefObject<HTMLDivElement | null>
   basemap: ReturnType<typeof useMapLibre>
+  rider: Rider
   onOpenSetup: () => void
 }) {
   const { map, error: mapError, styleReady, workerProblem, theme, setTheme, pathMode, setPathMode } =
@@ -61,6 +106,21 @@ export default function RideView({
   const [placing, setPlacing] = useState(true)
   const [follow, setFollow] = useState(false)
   /**
+   * Whether the map turns to face the way the rider is going.
+   *
+   * Off by default, and remembered. North-up is what the planning screen wants and what half
+   * of riders want on the road too — a rotating map is genuinely disorienting to some people,
+   * and the basemap's own labels are laid out for north-up. So it is a choice, not a mode the
+   * app assumes.
+   */
+  const [courseUp, setCourseUp] = useState(() => {
+    try {
+      return localStorage.getItem(COURSE_UP_KEY) === 'on'
+    } catch {
+      return false
+    }
+  })
+  /**
    * Whether the control rail is expanded. Remembered, like the theme and the path mode: a
    * rider who put the buttons away wants them away next time too, and the chevron that
    * brings them back never leaves the screen.
@@ -75,15 +135,23 @@ export default function RideView({
   useEffect(() => {
     try {
       localStorage.setItem(CONTROLS_KEY, controlsOpen ? 'open' : 'closed')
+      localStorage.setItem(COURSE_UP_KEY, courseUp ? 'on' : 'off')
     } catch {
       /* Private mode. The rail just opens expanded next launch. */
     }
-  }, [controlsOpen])
+  }, [controlsOpen, courseUp])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
   const { fix, status: fixStatus, error: fixError, locateOnce } = useGeolocation(following)
   const wakeLock = useWakeLock(riding)
+  const heading = useHeading(following, fix?.heading ?? null)
+  const telemetry = useRideTelemetry({ riding, route: plan.route, fix, rider: rider.setup })
+
+  /** Set by a pan, cleared by the timer or by Recentre. See {@link FOLLOW_RESUME_MS}. */
+  const [followPaused, setFollowPaused] = useState(false)
+  const [rerouting, setRerouting] = useState(false)
+  const lastRerouteAt = useRef(0)
 
   const markers = useRef(new Map<string, Marker>())
   const addWaypoint = useRef(plan.addWaypoint)
@@ -107,6 +175,10 @@ export default function RideView({
   canPlace.current = editable
   const closeSheet = useRef<() => void>(() => {})
   closeSheet.current = () => sheet.setOpen(false)
+  // Read from callbacks that must not be rebuilt on every render — a reroute reads the plan,
+  // the fix and the telemetry, all three of which change once a second.
+  const live = useRef({ plan, fix, telemetry })
+  live.current = { plan, fix, telemetry }
 
   // ── Tap to choose a route, clear a choice, or place a waypoint ─────────────────────────
   // Three intents, one gesture. `mapTapAction` owns the precedence and is tested directly.
@@ -129,6 +201,27 @@ export default function RideView({
       instance.off('click', onClick)
     }
   }, [map, styleReady])
+
+  // ── Panning pauses following ──────────────────────────────────────────────────────────
+  // Only a *user* drag: `originalEvent` is absent on the programmatic `easeTo` that follow
+  // mode itself issues, and without that check following would cancel itself on the first fix.
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady) return
+    const onDrag = (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) setFollowPaused(true)
+    }
+    instance.on('dragstart', onDrag)
+    return () => {
+      instance.off('dragstart', onDrag)
+    }
+  }, [map, styleReady])
+
+  useEffect(() => {
+    if (!followPaused) return
+    const id = setTimeout(() => setFollowPaused(false), FOLLOW_RESUME_MS)
+    return () => clearTimeout(id)
+  }, [followPaused])
 
   // ── Waypoint pins ─────────────────────────────────────────────────────────────────────
   // DOM markers rather than a symbol layer: they need to be individually draggable and
@@ -217,27 +310,118 @@ export default function RideView({
     if (drawn.length === 0) lastFitted.current = null
   }, [map, styleReady, plan.routes, plan.chosen, plan.waypoints.length, riding])
 
+  // ── Progress and the climb ahead, on the map ──────────────────────────────────────────
+  // Quantised to 25 m so the two GeoJSON sources are not rebuilt on every fix. At 25 km/h that
+  // is about three updates a second at worst, and the overlay creeps rather than jumps.
+  const travelledM =
+    telemetry.progress === null ? null : Math.round(telemetry.progress.position.alongM / 25) * 25
+  const climbSpan = telemetry.ahead
+    ? `${telemetry.ahead.gradient.startM}:${telemetry.ahead.gradient.endM}`
+    : null
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady) return
+    const geometry = telemetry.geometry
+    if (!riding || !geometry || travelledM === null) {
+      setTravelled(instance, [])
+      setFocus(instance, [])
+      return
+    }
+    setTravelled(instance, sliceAlong(geometry, 0, travelledM))
+    const climb = telemetry.ahead
+    setFocus(
+      instance,
+      climb ? sliceAlong(geometry, climb.gradient.startM, climb.gradient.endM) : [],
+    )
+    // `telemetry.ahead` is deliberately reduced to `climbSpan`: the object is rebuilt on every
+    // fix as the remaining distance ticks down, but the *stretch being highlighted* only
+    // changes when the climb does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, styleReady, riding, telemetry.geometry, travelledM, climbSpan])
+
   // ── The rider ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady || !fix) return
-    setPosition(instance, fix.lon, fix.lat)
-    if (following) instance.easeTo({ center: [fix.lon, fix.lat], duration: 700 })
-  }, [map, styleReady, fix, following])
+    // The arrow is drawn only while following. On the planning screen a heading arrow implies
+    // a live orientation the rider is not being given, and the plain dot says "you are here"
+    // without claiming to know which way you face.
+    setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
+    if (following && !followPaused) instance.easeTo({ center: [fix.lon, fix.lat], duration: 700 })
+  }, [map, styleReady, fix, following, followPaused, heading.heading])
+
+  // ── Turning the map to face the way you are going ─────────────────────────────────────
+  // Separate from the fix effect because the compass updates far more often than the GPS, and
+  // because the bearing has to be reset when course-up is switched off — which is not a fix.
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady) return
+    if (!courseUp || !following || followPaused) {
+      if (instance.getBearing() !== 0) instance.easeTo({ bearing: 0, duration: 400 })
+      return
+    }
+    if (heading.heading === null) return
+    // `shortestTurn` because MapLibre interpolates the bearing numerically: easing from 350 to
+    // 10 would spin the map the long way round through south.
+    instance.easeTo({
+      bearing: shortestTurn(instance.getBearing(), heading.heading),
+      duration: 400,
+    })
+  }, [map, styleReady, courseUp, following, followPaused, heading.heading])
 
   const centreOnMe = useCallback(async () => {
+    setFollowPaused(false)
     const here = await locateOnce()
     if (here && map.current) {
       map.current.easeTo({ center: [here.lon, here.lat], zoom: Math.max(map.current.getZoom(), 15) })
     }
   }, [locateOnce, map])
 
+  const toggleCourseUp = useCallback(() => {
+    setCourseUp((on) => {
+      // iOS will only hand over the compass from inside a user gesture, and this is one.
+      // Asking on mount instead produces a permission prompt nobody expects and a rejection
+      // that cannot be retried.
+      if (!on && heading.permission === 'unknown') void heading.request()
+      return !on
+    })
+  }, [heading])
+
+  // ── Rerouting ─────────────────────────────────────────────────────────────────────────
+  const reroute = useCallback(async () => {
+    const { plan: current, fix: here, telemetry: state } = live.current
+    if (!here || !state.geometry || !current.chosen) return
+    lastRerouteAt.current = Date.now()
+    setRerouting(true)
+    try {
+      const remaining = waypointsAhead(
+        state.geometry,
+        current.waypoints,
+        state.progress?.position.alongM ?? 0,
+      )
+      await current.rerouteFrom({ lon: here.lon, lat: here.lat }, remaining, current.chosen)
+    } finally {
+      setRerouting(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!riding || !telemetry.offRoute || rerouting) return
+    if (!rider.setup.autoReroute) return
+    if (Date.now() - lastRerouteAt.current < REROUTE_COOLDOWN_MS) return
+    void reroute()
+  }, [riding, telemetry.offRoute, telemetry.progress, rerouting, rider.setup.autoReroute, reroute])
+
   const startRiding = useCallback(async () => {
     setRiding(true)
     setPlacing(false)
+    setFollowPaused(false)
+    lastRerouteAt.current = 0
     // Ride can be started from inside the drawer, which covers the map it is about to lock
     // to the rider.
     closeSheet.current()
+    // Still inside the tap that started the ride, so iOS will accept the compass request.
+    if (courseUp && heading.permission === 'unknown') void heading.request()
     const here = await locateOnce()
     if (!map.current) return
     map.current.easeTo({
@@ -245,10 +429,10 @@ export default function RideView({
       zoom: RIDING_ZOOM,
       duration: 900,
     })
-  }, [locateOnce, map])
+  }, [locateOnce, map, courseUp, heading])
 
   /**
-   * The rail, in visual order top to bottom. An array rather than six hand-written buttons so
+   * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
    * the collapse animation can index off it — the travel and stagger are both functions of a
    * button's position in the stack, and hand-numbering them would rot the first time one moved.
    */
@@ -260,6 +444,12 @@ export default function RideView({
       active: placing,
       pressed: placing,
       onClick: () => setPlacing((p) => !p),
+    },
+    {
+      key: 'library',
+      icon: <BookmarkIcon />,
+      label: 'Saved routes and rides',
+      onClick: sheet.showLibrary,
     },
     {
       key: 'theme',
@@ -296,60 +486,64 @@ export default function RideView({
   /** How many routes are on the map. More than one, with none chosen, is the decision state. */
   const routeCount = Object.keys(plan.routes).length
 
+  const summary = telemetry.finished && telemetry.finishedRecord && (
+    <RideSummarySheet
+      summary={telemetry.finished}
+      record={telemetry.finishedRecord}
+      onDismiss={telemetry.dismissFinished}
+    />
+  )
+
   if (riding) {
     return (
       <div className="ride" data-riding="yes">
         <div ref={container} className="ride-map" />
         <div className="ride-chrome">
-          <div className="rail">
-            {route && (
-              <dl className="stats panel">
-                <div>
-                  <dd>{formatDistance(route.distanceM)}</dd>
-                  <dt>route</dt>
+          <RideHud
+            telemetry={telemetry}
+            speedMps={fix?.speed ?? null}
+            fixLabel={FIX_LABEL[fixStatus](fix?.accuracy ?? null, wakeLock.supported)}
+            offRouteHint={
+              telemetry.progress ? `${formatAway(telemetry.progress.position.offsetM)} off` : null
+            }
+            onReroute={() => void reroute()}
+            rerouting={rerouting || plan.routing !== null}
+            onEnd={() => setRiding(false)}
+            controls={
+              <>
+                {problem && (
+                  <p className="ride-error" role="alert">
+                    {problem}
+                  </p>
+                )}
+                <div className="map-controls map-controls-riding">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    data-active={courseUp ? 'yes' : 'no'}
+                    aria-pressed={courseUp}
+                    onClick={toggleCourseUp}
+                    aria-label={
+                      courseUp ? 'Keep the map north-up' : 'Turn the map to face my way'
+                    }
+                  >
+                    <CompassIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    data-active={followPaused ? 'yes' : 'no'}
+                    onClick={centreOnMe}
+                    aria-label={followPaused ? 'Resume following me' : 'Recentre on me'}
+                  >
+                    <TargetIcon />
+                  </button>
                 </div>
-                <div>
-                  <dd>{fix?.speed != null ? (fix.speed * 3.6).toFixed(1) : '—'}</dd>
-                  <dt>km/h</dt>
-                </div>
-                <div>
-                  <dd>{formatDuration(route.timeS)}</dd>
-                  <dt>est.</dt>
-                </div>
-              </dl>
-            )}
-          </div>
-
-          {problem && (
-            <p className="ride-error" role="alert">
-              {problem}
-            </p>
-          )}
-
-          <div className="map-controls">
-            <button
-              type="button"
-              className="icon-button"
-              onClick={centreOnMe}
-              aria-label="Recentre on me"
-            >
-              <TargetIcon />
-            </button>
-          </div>
-
-          <div className="ride-status panel">
-            <span className="ride-status-text">
-              {fixStatus === 'locating' && 'Getting a fix…'}
-              {fixStatus === 'tracking' && fix && `Following · ±${Math.round(fix.accuracy)} m`}
-              {fixStatus === 'denied' && 'No location permission'}
-              {fixStatus === 'error' && 'No fix'}
-              {!wakeLock.supported && ' · add to Home Screen to keep the screen on'}
-            </span>
-            <button type="button" className="ghost" onClick={() => setRiding(false)}>
-              End ride
-            </button>
-          </div>
+              </>
+            }
+          />
         </div>
+        {summary}
       </div>
     )
   }
@@ -431,10 +625,38 @@ export default function RideView({
           </button>
         </div>
 
-        <RouteSheet plan={plan} sheet={sheet} onStart={() => void startRiding()} />
+        <RouteSheet
+          plan={plan}
+          sheet={sheet}
+          onStart={() => void startRiding()}
+          onLoadSaved={(entry) => {
+            if (plan.loadSaved(entry)) {
+              sheet.setView('detail')
+              sheet.setOpen(false)
+            }
+          }}
+        />
       </div>
+      {summary}
     </div>
   )
+}
+
+/**
+ * The one-line status under the HUD, by fix state.
+ *
+ * A function per state rather than a ternary chain because two of them need the accuracy and
+ * one needs to append the wake-lock caveat — and because "no location permission" is the only
+ * one the rider can act on, so it must not be buried in a conditional expression.
+ */
+const FIX_LABEL: Record<string, (accuracy: number | null, wakeLock: boolean) => string> = {
+  idle: () => 'Not tracking',
+  locating: () => 'Getting a fix…',
+  tracking: (accuracy, wakeLock) =>
+    `±${Math.round(accuracy ?? 0)} m${wakeLock ? '' : ' · add to Home Screen to keep the screen on'}`,
+  denied: () => 'No location permission',
+  unavailable: () => 'No geolocation here',
+  error: () => 'No fix',
 }
 
 /* Inline SVG rather than sprite lookups: a missing sprite entry would be one more thing that
@@ -481,6 +703,31 @@ function PinIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" />
       <circle cx="12" cy="10.4" r="2.4" />
+    </svg>
+  )
+}
+
+/** A bookmark, for the saved list. Not a star, which everywhere else means "favourite". */
+function BookmarkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.5 3h11a1 1 0 0 1 1 1v17l-6.5-4.4L5.5 21V4a1 1 0 0 1 1-1z" />
+    </svg>
+  )
+}
+
+/**
+ * A compass needle, for course-up.
+ *
+ * Not the navigation arrow, which is already the follow button: "go to me" and "turn the map
+ * to face my way" are different requests and two identical triangles would make them look like
+ * the same one.
+ */
+function CompassIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M15.5 8.5 13 13l-4.5 2.5L11 11z" />
     </svg>
   )
 }

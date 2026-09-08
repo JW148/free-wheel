@@ -3,6 +3,7 @@ import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
 import FirstRun from './setup/FirstRun'
 import { useMapLibre } from './ride/useMapLibre'
+import { useRider } from './ride/useRider'
 import { sharedEngine } from './engine/engineClient'
 import './ride/ride.css'
 import './App.css'
@@ -19,6 +20,10 @@ import './App.css'
 export default function App() {
   const container = useRef<HTMLDivElement | null>(null)
   const basemap = useMapLibre(container)
+  // Owned here rather than in either screen: the ride screen reads it to estimate power and
+  // Setup edits it, and Setup is an overlay *over* the ride screen rather than a replacement,
+  // so two copies would drift.
+  const rider = useRider()
   const [setupOpen, setSetupOpen] = useState(false)
   /**
    * `null` until we know whether there is anything installed, so the guided flow does not
@@ -47,12 +52,15 @@ export default function App() {
       <RideView
         container={container}
         basemap={basemap}
+        rider={rider}
         onOpenSetup={() => setSetupOpen(true)}
       />
       {needsSetup === true && (
         <FirstRun basemap={basemap} onDone={() => setNeedsSetup(false)} />
       )}
-      {setupOpen && <SetupView basemap={basemap} onClose={() => setSetupOpen(false)} />}
+      {setupOpen && (
+        <SetupView basemap={basemap} rider={rider} onClose={() => setSetupOpen(false)} />
+      )}
     </>
   )
 }

@@ -151,6 +151,90 @@ export function useRoute() {
     if (failures.length) setError([...new Set(failures)].join(' '))
   }, [waypoints, selection])
 
+  /**
+   * Routes again from where the rider is now, through whatever is still ahead of them.
+   *
+   * Mid-ride, and so deliberately unlike {@link run} in three ways:
+   *
+   * - **One profile.** The comparison is over — the rider is on a road, committed. Routing six
+   *   profiles one after another would take six times as long at the moment it matters most.
+   * - **The plan is rewritten.** `waypoints` becomes the rider's position plus what is left,
+   *   because a route that starts 20 km behind the rider is not a route they can follow, and a
+   *   second reroute would otherwise be computed from the same stale start.
+   * - **A failure changes nothing.** The old route stays on the map and the rider keeps
+   *   whatever they had. The alternative — clearing the route because the reroute failed — is
+   *   the worst possible response to being lost.
+   *
+   * `remaining` comes from `waypointsAhead`, which is what stops a rider being sent back to a
+   * via point they have already gone through.
+   */
+  const rerouteFrom = useCallback(
+    async (
+      from: { lon: number; lat: number },
+      remaining: { lon: number; lat: number }[],
+      profileId: string,
+    ): Promise<boolean> => {
+      if (remaining.length === 0) return false
+      const next: Waypoint[] = [
+        { id: crypto.randomUUID(), lon: from.lon, lat: from.lat },
+        ...remaining.map((w) => ({ id: crypto.randomUUID(), lon: w.lon, lat: w.lat })),
+      ]
+      const lonLats = next.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
+
+      setRouting(profileId)
+      setError(null)
+      const outcome = await sharedEngine().route(profileId, lonLats)
+      setRouting(null)
+
+      if (!outcome.ok || !outcome.gpx) {
+        setError(explainRoutingFailure(outcome.error ?? 'routing failed', next))
+        return false
+      }
+      try {
+        const parsed = parseBrouterGpx(outcome.gpx)
+        setWaypoints(next)
+        setRoutes({ [profileId]: parsed })
+        setGpx({ [profileId]: outcome.gpx })
+        setChosen(profileId)
+        return true
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+        return false
+      }
+    },
+    [],
+  )
+
+  /**
+   * Puts a saved route back on the map, exactly as it was computed.
+   *
+   * The stored GPX is re-parsed rather than a stored geometry being trusted, so a saved route
+   * goes through the same `parseBrouterGpx` that every freshly computed one does — one code
+   * path, and the GPX parity corpus covers it.
+   *
+   * The selection collapses to the saved profile. A loaded route is a decision already made,
+   * and leaving a six-way comparison ticked would mean the next Reroute silently recomputed
+   * six routes.
+   */
+  const loadSaved = useCallback(
+    (entry: { waypoints: Waypoint[]; profile: string; gpx: string }): boolean => {
+      try {
+        const parsed = parseBrouterGpx(entry.gpx)
+        setWaypoints(entry.waypoints)
+        setSelection([entry.profile])
+        setRoutes({ [entry.profile]: parsed })
+        setGpx({ [entry.profile]: entry.gpx })
+        setChosen(entry.profile)
+        setError(null)
+        return true
+      } catch (e) {
+        setError(`That saved route could not be read: ${e instanceof Error ? e.message : e}`)
+        return false
+      }
+    },
+    [],
+  )
+
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
     sharedEngine().cancel()
@@ -184,6 +268,8 @@ export function useRoute() {
     removeWaypoint,
     clear,
     run,
+    rerouteFrom,
+    loadSaved,
     cancel,
     setError,
   }

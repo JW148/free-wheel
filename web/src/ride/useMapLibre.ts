@@ -110,7 +110,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
 
         created.on('error', (e) => setError(e.error?.message ?? 'map error'))
         created.once('load', () => {
-          ensureRouteLayers(created)
+          ensureRouteLayers(created, themeRef.current)
           setStyleReady(true)
         })
 
@@ -158,7 +158,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     setStyleReady(false)
     instance.setStyle(basemapStyle(name, next, pathModeRef.current))
     instance.once('styledata', () => {
-      ensureRouteLayers(instance)
+      ensureRouteLayers(instance, next)
       setStyleReady(true)
     })
   }, [])

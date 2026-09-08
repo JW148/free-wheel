@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { Drawer } from 'vaul'
 import { PROFILES, profileById } from './profiles'
 import type { Plan } from './useRoute'
 import { formatDistance, formatDuration } from './gpx'
 import ElevationProfile from './ElevationProfile'
 import ElevationCompare from './ElevationCompare'
+import RouteLibrary from './RouteLibrary'
+import { putEntry, routeEntry, type SavedRoute } from './library'
+import { gpxFilename, shareGpx } from './share'
 import type { RouteSheetState } from './useRouteSheet'
 
 /**
@@ -41,11 +45,15 @@ export default function RouteSheet({
   plan,
   sheet,
   onStart,
+  onLoadSaved,
 }: {
   plan: Plan
   sheet: RouteSheetState
   onStart: () => void
+  onLoadSaved: (entry: SavedRoute) => void
 }) {
+  /** Bumped after a save so the library list picks the new entry up. */
+  const [librarySaves, setLibrarySaves] = useState(0)
   const routeIds = Object.keys(plan.routes)
   const routed = routeIds.length > 0
   const comparing = plan.selection.length > 1
@@ -128,7 +136,22 @@ export default function RouteSheet({
           <Drawer.Content className="drawer" aria-describedby={undefined}>
             <Drawer.Handle className="drawer-handle" />
             <div className="drawer-body">
-              {sheet.view === 'detail' && chosen && plan.chosen ? (
+              {sheet.view === 'library' ? (
+                <>
+                  <div className="drawer-head">
+                    <button
+                      type="button"
+                      className="drawer-back"
+                      onClick={() => sheet.setView('compare')}
+                      aria-label="Back to the route"
+                    >
+                      <ChevronLeftIcon />
+                    </button>
+                    <Drawer.Title className="drawer-title">Saved</Drawer.Title>
+                  </div>
+                  <RouteLibrary onLoad={onLoadSaved} reloadKey={librarySaves} />
+                </>
+              ) : sheet.view === 'detail' && chosen && plan.chosen ? (
                 <>
                   <div className="drawer-head">
                     <button
@@ -171,6 +194,11 @@ export default function RouteSheet({
 
                   <Waypoints plan={plan} />
 
+                  <SaveRoute
+                    plan={plan}
+                    onSaved={() => setLibrarySaves((n) => n + 1)}
+                  />
+
                   <div className="sheet-actions">
                     {/* Only where there is a comparison to go back to. With a lone route this
                         would just disable Start and explain nothing. */}
@@ -184,7 +212,11 @@ export default function RouteSheet({
                     </button>
                     <button
                       type="button"
-                      onClick={() => void exportGpx(plan.chosenGpx, plan.chosen)}
+                      onClick={() =>
+                        plan.chosenGpx &&
+                        plan.chosen &&
+                        void shareGpx(plan.chosenGpx, gpxFilename(plan.chosen))
+                      }
                       disabled={!plan.chosenGpx}
                     >
                       Export GPX
@@ -287,6 +319,9 @@ export default function RouteSheet({
                   <Waypoints plan={plan} />
 
                   <div className="sheet-actions">
+                    <button type="button" onClick={sheet.showLibrary}>
+                      Saved routes
+                    </button>
                     <button
                       type="button"
                       onClick={plan.clear}
@@ -360,34 +395,78 @@ function ChevronRightIcon() {
 }
 
 /**
- * Hands the GPX to the OS.
+ * Saves the chosen route to the library, under a name if the rider wants one.
  *
- * `navigator.share` with a File is the one that matters on iOS — it puts the route into
- * Files, Mail, or another cycling app in two taps. The download fallback covers desktop,
- * where sharing a file is often unsupported.
+ * Two steps rather than one, and the first step is a button rather than an always-visible
+ * field. A name is worth asking for — "Pentlands loop" beats "8 Sep · 34.2 km" a month later —
+ * but a text input sitting open in the drawer is a keyboard waiting to cover the map, and most
+ * saves do not want one.
  */
-async function exportGpx(gpx: string | null, profile: string | null): Promise<void> {
-  if (!gpx || !profile) return
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
-  const file = new File([gpx], `free-wheel-${profile}-${stamp}.gpx`, {
-    type: 'application/gpx+xml',
-  })
+function SaveRoute({ plan, onSaved }: { plan: Plan; onSaved: () => void }) {
+  const [naming, setNaming] = useState(false)
+  const [name, setName] = useState('')
+  const [state, setState] = useState<'idle' | 'saved' | 'failed'>('idle')
+  const [problem, setProblem] = useState<string | null>(null)
 
-  if (navigator.canShare?.({ files: [file] })) {
+  const route = plan.route
+  const gpx = plan.chosenGpx
+  if (!route || !gpx || !plan.chosen) return null
+
+  const save = async () => {
     try {
-      await navigator.share({ files: [file], title: 'free-wheel route' })
-      return
-    } catch (error) {
-      // A cancelled share sheet rejects. That is a choice, not a failure — fall through to
-      // a download only if something actually went wrong.
-      if (error instanceof DOMException && error.name === 'AbortError') return
+      await putEntry(
+        routeEntry({
+          name,
+          waypoints: plan.waypoints,
+          profile: plan.chosen!,
+          gpx,
+          route,
+        }),
+      )
+      setState('saved')
+      setNaming(false)
+      setName('')
+      onSaved()
+    } catch (e) {
+      setState('failed')
+      setProblem(e instanceof Error ? e.message : String(e))
     }
   }
 
-  const url = URL.createObjectURL(file)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = file.name
-  link.click()
-  URL.revokeObjectURL(url)
+  if (state === 'saved') {
+    return <p className="warn">Saved to the library on this phone.</p>
+  }
+
+  if (!naming) {
+    return (
+      <div className="sheet-actions">
+        <button type="button" onClick={() => setNaming(true)}>
+          Save this route
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <label className="named-save">
+        <span className="section-label">Name it, or leave it blank</span>
+        <input
+          type="text"
+          value={name}
+          placeholder="Pentlands loop"
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
+      <div className="sheet-actions">
+        <button type="button" className="primary" onClick={() => void save()}>
+          Save
+        </button>
+        <button type="button" onClick={() => setNaming(false)}>
+          Cancel
+        </button>
+      </div>
+      {problem && <p className="warn" role="alert">Could not save it: {problem}</p>}
+    </>
+  )
 }

@@ -247,6 +247,37 @@ export function pointAt(geometry: RouteGeometry, alongM: number): [number, numbe
   ]
 }
 
+/**
+ * The stretch of route between two distances, as coordinates ready to draw.
+ *
+ * Both ends are interpolated rather than snapped to the nearest vertex. That matters at the
+ * near end: the "already ridden" overlay is drawn from 0 to wherever the rider is, and
+ * snapping it to the last vertex would make it jump forward in 30 m steps rather than creeping
+ * along under the dot.
+ *
+ * Returns fewer than two points — and so nothing drawable — for an empty or reversed range.
+ */
+export function sliceAlong(
+  geometry: RouteGeometry,
+  fromM: number,
+  toM: number,
+): [number, number][] {
+  const from = clamp(Math.min(fromM, toM), 0, geometry.totalM)
+  const to = clamp(Math.max(fromM, toM), 0, geometry.totalM)
+  if (to - from <= 0) return []
+
+  const out: [number, number][] = [pointAt(geometry, from)]
+  const first = segmentIndexAt(geometry.cumulativeM, from)
+  const last = segmentIndexAt(geometry.cumulativeM, to)
+  for (let i = first + 1; i <= last; i++) {
+    if (geometry.cumulativeM[i] > from && geometry.cumulativeM[i] < to) {
+      out.push(geometry.coords[i])
+    }
+  }
+  out.push(pointAt(geometry, to))
+  return out
+}
+
 /** Interpolated height a given distance along the route, metres. */
 export function elevationAt(geometry: RouteGeometry, alongM: number): number {
   const { cumulativeM, elevations } = geometry
@@ -361,6 +392,36 @@ export function etaSeconds(input: {
 
   const trust = clamp(fraction, 0, 1)
   return remainingM * (observedPace * trust + plannedPace * (1 - trust))
+}
+
+/**
+ * The waypoints a rider has not reached yet, for rerouting from where they now are.
+ *
+ * The naive version — "keep everything except the start" — sends a rider who has already
+ * passed the second of three via points back to it, which is the single worst thing a
+ * navigation app can do and is exactly when it would do it. So each waypoint is snapped onto
+ * the route and kept only if it lies ahead.
+ *
+ * Three deliberate details. The **start is always dropped**, whatever the snapping says — the
+ * rider's current position takes its place, and routing back to where you set off from is
+ * never what "reroute" means. The **finish is always kept**, for the mirror-image reason: a
+ * route with no destination is not a route. And a via point fractionally *behind* the rider is
+ * kept — `PASSED_MARGIN_M` — because standing 15 m past one is not the same as having gone
+ * through it, and a GPS fix is not precise enough to tell the difference.
+ */
+const PASSED_MARGIN_M = 30
+
+export function waypointsAhead<T extends { lon: number; lat: number }>(
+  geometry: RouteGeometry,
+  waypoints: T[],
+  alongM: number,
+): T[] {
+  if (waypoints.length === 0) return []
+  const finish = waypoints[waypoints.length - 1]
+  const ahead = waypoints
+    .slice(1, -1)
+    .filter((w) => snapToRoute(geometry, [w.lon, w.lat]).alongM > alongM - PASSED_MARGIN_M)
+  return [...ahead, finish]
 }
 
 /**

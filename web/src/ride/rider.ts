@@ -17,6 +17,16 @@ export interface RiderSetup {
   bikeKg: number
   position: PositionId
   tyres: TyreId
+  /**
+   * Whether leaving the route should route again from where the rider is.
+   *
+   * On by default, because the alternative is a rider who has taken a wrong turn staring at a
+   * line they are no longer on. Off is a real preference and not a fringe one: on a ride where
+   * the route is a suggestion rather than an instruction — a known local loop, a group ride
+   * following someone else — a route that keeps redrawing itself is noise, and routing on a
+   * phone costs battery and seconds.
+   */
+  autoReroute: boolean
 }
 
 /**
@@ -62,6 +72,7 @@ export const DEFAULT_RIDER: RiderSetup = {
   bikeKg: 10,
   position: 'hoods',
   tyres: 'allroad',
+  autoReroute: true,
 }
 
 /** Sanity bounds. Not validation for its own sake — a zero mass divides the model by zero. */
@@ -95,6 +106,8 @@ export function migrateRider(raw: unknown): RiderSetup {
     tyres: TYRES.some((t) => t.id === stored.tyres)
       ? (stored.tyres as TyreId)
       : DEFAULT_RIDER.tyres,
+    autoReroute:
+      typeof stored.autoReroute === 'boolean' ? stored.autoReroute : DEFAULT_RIDER.autoReroute,
   }
 }
 
