@@ -152,7 +152,7 @@ let open: Promise<IDBDatabase> | null = null
 function db(): Promise<IDBDatabase> {
   // Cached, because opening on every call serialises behind the version-change transaction and
   // makes a list of twenty entries twenty round trips.
-  return (open ??= new Promise((resolve, reject) => {
+  return (open ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = () => {
       const database = request.result
@@ -167,19 +167,43 @@ function db(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error ?? new Error('could not open the route library'))
     // Another tab holding an old version open. Nothing to do but say so.
     request.onblocked = () => reject(new Error('another tab has the route library open'))
+  }).catch((reason) => {
+    // A *rejected* promise must not stay in the cache. `??=` would keep it forever, so one
+    // transient failure — another tab mid-upgrade, a browser still starting up — would disable
+    // the library until the app was reloaded, with the library button reporting the same stale
+    // error every time it was tapped.
+    open = null
+    throw reason
   }))
 }
 
+/**
+ * Runs one request and settles on the **transaction**, not on the request.
+ *
+ * The obvious version resolves in `request.onsuccess`, and it is wrong in a way that only
+ * shows up when it matters. A request succeeds when the database has accepted it; the data is
+ * not durable until the transaction *commits*, and a commit can still fail — which is exactly
+ * what a quota overrun does. Resolving early reports a successful save that was then rolled
+ * back, and the rider finds out when the list comes back empty.
+ *
+ * A failed commit also fires `abort` rather than `error`, so an abort with no prior request
+ * error left the promise unsettled forever: the save button would spin until the app was
+ * reloaded.
+ */
 function run<T>(store: string, mode: IDBTransactionMode, act: (s: IDBObjectStore) => IDBRequest<T>) {
   return db().then(
     (database) =>
       new Promise<T>((resolve, reject) => {
         const transaction = database.transaction(store, mode)
         const request = act(transaction.objectStore(store))
-        request.onsuccess = () => resolve(request.result)
-        // Both, because a request can succeed and its transaction still fail on commit —
-        // which is exactly what a quota overrun looks like.
+        let result: T
+        request.onsuccess = () => {
+          result = request.result
+        }
         request.onerror = () => reject(request.error ?? new Error('library request failed'))
+        transaction.oncomplete = () => resolve(result)
+        transaction.onabort = () =>
+          reject(transaction.error ?? new Error('the route library ran out of room'))
         transaction.onerror = () => reject(transaction.error ?? new Error('library write failed'))
       }),
   )

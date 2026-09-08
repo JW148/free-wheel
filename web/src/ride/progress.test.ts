@@ -51,12 +51,20 @@ describe('routeGeometry', () => {
     for (let i = 1; i < long.cumulativeAscentM.length; i++) {
       expect(long.cumulativeAscentM[i]).toBeGreaterThanOrEqual(long.cumulativeAscentM[i - 1])
     }
-    // Unfiltered ascent over a real route is larger than BRouter's filtered figure — that is
-    // the point of the filter — but it must be the same order of magnitude, not ten times it.
-    const filtered = parseBrouterGpx(fixture('london-brighton.gpx')).ascendM
-    const total = long.cumulativeAscentM[long.cumulativeAscentM.length - 1]
-    expect(total).toBeGreaterThan(filtered * 0.5)
-    expect(total).toBeLessThan(filtered * 3)
+  })
+
+  it('agrees with the ascent figure the app already shows, to within a few per cent', () => {
+    // "Climbing still to come" is read next to "climbing", which is BRouter's own filtered
+    // number. Summing every positive step gave 943 m against BRouter's 592 — a 60%
+    // contradiction between two figures on the same screen.
+    for (const name of ['london-brighton.gpx', 'urban-short.gpx']) {
+      const route = parseBrouterGpx(fixture(name))
+      const geometry = routeGeometry(route)!
+      const total = geometry.cumulativeAscentM[geometry.cumulativeAscentM.length - 1]
+      expect(Math.abs(total - route.ascendM), `${name}: ${total} vs ${route.ascendM}`).toBeLessThan(
+        Math.max(5, route.ascendM * 0.1),
+      )
+    }
   })
 
   it('has nothing to say about a route with one point', () => {
@@ -106,6 +114,33 @@ describe('snapToRoute', () => {
     expect(snapToRoute(outAndBack, beside, 150).alongM).toBeCloseTo(150, 0)
     // 450 along the 600 m out-and-back is the same ground, on the way home.
     expect(snapToRoute(outAndBack, beside, 450).alongM).toBeCloseTo(450, 0)
+  })
+
+  it('keeps the hinted leg when one bad fix lands nearer the other one', () => {
+    // Two parallel legs 36 m apart — a dual carriageway, or an out-and-back on a wide road.
+    // A single fix 46 m off the outbound leg is only 10 m from the return leg, so the global
+    // scan prefers it; and because the answer becomes the next hint, taking it once strands
+    // the rider on the wrong leg for the rest of the ride.
+    const lat = 55.95
+    const perDegreeE = haversineM([0, lat], [1, lat])
+    const north = 36 / 111_320
+    const parallel = routeGeometry({
+      coords: [
+        [0, lat],
+        [900 / perDegreeE, lat],
+        [900 / perDegreeE, lat + north],
+        [0, lat + north],
+      ],
+      elevations: [0, 0, 0, 0],
+      distanceM: 1836,
+      ascendM: 0,
+      timeS: null,
+      name: 'parallel',
+    })!
+
+    // 450 m along the outbound leg, but 46 m north of it — so 10 m south of the return leg.
+    const stray: [number, number] = [450 / perDegreeE, lat + 46 / 111_320]
+    expect(snapToRoute(parallel, stray, 450).alongM).toBeCloseTo(450, -1)
   })
 
   it('recovers from a stale hint by scanning the whole route', () => {

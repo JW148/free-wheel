@@ -29,11 +29,32 @@ import type { ParsedRoute } from './gpx'
 const EARTH_R = 6_371_000
 const DEG = Math.PI / 180
 
+/**
+ * Height change ignored before it counts as climbing.
+ *
+ * Not an arbitrary smoothing constant: 6 m is SRTM's stated vertical accuracy, so anything
+ * smaller cannot be distinguished from the data being wrong. Summing *every* positive step
+ * instead gives 943 m on the London–Brighton fixture against BRouter's own filtered figure of
+ * **592 m** — a number this app displays, right next to it, in the stats rail. With the
+ * deadband it comes to 589 m, and 0 m against BRouter's 1 m on the urban fixture. Agreement to
+ * within half a percent on a figure derived two entirely different ways is about as good as it
+ * gets, and the alternative was a "climbing still to come" that contradicted "climbing" by 60%.
+ */
+const ASCENT_DEADBAND_M = 6
+
 export interface RouteGeometry {
   coords: [number, number][]
   /** Metres from the start at each coordinate. Same length as {@link coords}. */
   cumulativeM: number[]
-  /** Metres of *climbing* done by each coordinate — descent contributes nothing. */
+  /**
+   * Metres of *climbing* done by each coordinate — descent contributes nothing, and a rise
+   * smaller than {@link ASCENT_DEADBAND_M} contributes nothing either.
+   *
+   * The gain is credited in a lump at the vertex where it crosses the band rather than being
+   * spread over the vertices that earned it, so `ascentBy` between two points is slightly
+   * steppy. That costs nothing: it is read as "how much is left", where a metre either way is
+   * invisible, and the alternative is a second pass to redistribute it.
+   */
   cumulativeAscentM: number[]
   elevations: number[]
   totalM: number
@@ -56,11 +77,22 @@ export function routeGeometry(route: ParsedRoute): RouteGeometry | null {
   const cumulativeAscentM = new Array<number>(route.coords.length)
   cumulativeM[0] = 0
   cumulativeAscentM[0] = 0
+  // The height the next rise is measured from. It follows the route down as well as up, or a
+  // long descent would leave it stranded at the summit and credit the whole way back.
+  let reference = route.elevations[0] ?? 0
 
   for (let i = 1; i < route.coords.length; i++) {
     cumulativeM[i] = cumulativeM[i - 1] + haversineM(route.coords[i - 1], route.coords[i])
-    const rise = (route.elevations[i] ?? 0) - (route.elevations[i - 1] ?? 0)
-    cumulativeAscentM[i] = cumulativeAscentM[i - 1] + Math.max(0, rise)
+
+    const here = route.elevations[i] ?? 0
+    let climbed = cumulativeAscentM[i - 1]
+    if (here - reference >= ASCENT_DEADBAND_M) {
+      climbed += here - reference
+      reference = here
+    } else if (reference - here >= ASCENT_DEADBAND_M) {
+      reference = here
+    }
+    cumulativeAscentM[i] = climbed
   }
 
   return {
@@ -98,13 +130,27 @@ const WINDOW_AHEAD_M = 600
 const WINDOW_BEHIND_M = 120
 
 /**
- * How bad a windowed match has to be before the whole route is searched.
+ * How far off the line the windowed match may be before the hint is judged stale.
  *
- * Above this the windowed answer is not credible as "the rider moved a bit", so it is worth
- * paying for a global scan — which is what recovers the position after a tunnel, a long
- * signal loss, or a route that was loaded with the rider already halfway along it.
+ * Deliberately large, and it was 45 m at first, which did not work. A bad windowed match has
+ * two quite different causes and they separate by *magnitude*:
+ *
+ * - **The rider is off the line but near it** — a parallel path, a wide dual carriageway, a
+ *   poor fix. Tens of metres. The hint is still right: they did not teleport.
+ * - **The hint is stale** — a tunnel, a long signal loss, a route loaded with the rider
+ *   already halfway along it. Hundreds of metres or kilometres.
+ *
+ * With the threshold at 45 m the first case fell through to the global scan, and the global
+ * scan is a *superset* of the window, so it can never be worse — which meant the hint's
+ * protection evaporated exactly when it was needed. One 46 m fix on a parallel out-and-back
+ * moved `alongM` 280 m backwards onto the other leg, and since the answer becomes the next
+ * hint, the rider stayed there.
+ *
+ * At 250 m the first case keeps its hint and the second still recovers. A rider genuinely
+ * 150 m off route keeps a lagging but continuous position, which is the right answer for
+ * someone about to be rerouted anyway.
  */
-const WINDOW_TRUST_M = 45
+const HINT_STALE_M = 250
 
 /**
  * The point on the route nearest a fix.
@@ -131,7 +177,7 @@ export function snapToRoute(
           hintAlongM + WINDOW_AHEAD_M,
         )
 
-  if (windowed && windowed.offsetM <= WINDOW_TRUST_M) return windowed
+  if (windowed && windowed.offsetM <= HINT_STALE_M) return windowed
 
   // The hint is no longer credible. Scan everything, and take the windowed answer only if it
   // is still the better of the two — a tie goes to continuity, because a progress bar that
@@ -156,10 +202,24 @@ function scan(
   let bestT = 0
   let bestSquared = Infinity
 
-  for (let i = 0; i < coords.length - 1; i++) {
-    // Skip whole segments outside the window, but keep any that straddle an edge.
+  // Binary search to the window rather than walking to it. Skipping segments with `continue`
+  // still touched every one from the start of the route, so the hinted path — the one taken on
+  // every fix — was O(route) rather than the O(window) it exists to be.
+  const first = fromM === -Infinity ? 0 : segmentIndexAt(cumulativeM, Math.max(0, fromM))
+
+  for (let i = first; i < coords.length - 1; i++) {
+    // Keep a segment that straddles the near edge; stop past the far one.
     if (cumulativeM[i + 1] < fromM) continue
     if (cumulativeM[i] > toM) break
+
+    // The window is a *distance* range, so a segment that straddles its far edge must be
+    // considered only up to that edge. Including such a segment whole is what let a 900 m
+    // return leg be matched 450 m beyond the end of the window — which put the rider on the
+    // wrong leg of an out-and-back, the exact thing the hint exists to prevent. Infinite
+    // bounds fall out correctly: ±Infinity divided by a positive length clamps to 0 and 1.
+    const segmentM = cumulativeM[i + 1] - cumulativeM[i]
+    const low = segmentM > 0 ? clamp((fromM - cumulativeM[i]) / segmentM, 0, 1) : 0
+    const high = segmentM > 0 ? clamp((toM - cumulativeM[i]) / segmentM, 0, 1) : 0
 
     const ax = (coords[i][0] - point[0]) * scaleX
     const ay = (coords[i][1] - point[1]) * scaleY
@@ -171,7 +231,8 @@ function scan(
 
     // A zero-length segment — BRouter emits repeated points at some junctions — projects to
     // its own endpoint rather than dividing by zero.
-    const t = lengthSquared === 0 ? 0 : clamp(-(ax * dx + ay * dy) / lengthSquared, 0, 1)
+    const t =
+      lengthSquared === 0 ? 0 : clamp(-(ax * dx + ay * dy) / lengthSquared, low, high)
     const px = ax + t * dx
     const py = ay + t * dy
     const squared = px * px + py * py

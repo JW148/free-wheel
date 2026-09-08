@@ -883,7 +883,13 @@
   cursor: pointer;
 }
 
-.drawer-body button:disabled {
+/* `:not(.primary)` for the same reason the rule above it has one, and its absence undid most
+   of the fix it was written alongside. `.primary:disabled` sets `--muted` on the recessed fill
+   so the word stays legible — but this rule is later and more specific (0-2-1 against 0-2-0),
+   so every disabled primary *inside the drawer* went back to `--slate-500` on the new darker
+   surface at about 2:1. Only the copy on the sheet bar got the improvement, which is the
+   least-used of the two. */
+.drawer-body button:not(.primary):disabled {
   color: var(--slate-500);
   cursor: default;
 }

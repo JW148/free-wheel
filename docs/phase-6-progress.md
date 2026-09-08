@@ -78,8 +78,8 @@ It splits only when the difference is dramatic. Worked through:
 | 1 km at 5% + 300 m at 7% | **3.88** | 1.47 | the whole climb, correctly |
 | 9.8 km at 1.2% with a 1 km 6% ramp | 2.03 | **3.84** | the ramp, correctly |
 
-Result on London → Brighton: **22 features in 5 ms**, against 20 before — but including the
-27 km ramp, which is the point. Both failure modes of an unsmoothed threshold — zero features
+Result on London → Brighton: **29 features in 5 ms**, including the 27 km ramp, which is the
+point. Both failure modes of an unsmoothed threshold — zero features
 or hundreds — are asserted against in `climbs.test.ts`, along with a dead-flat towpath carrying
 ±1.5 m of SRTM noise, which must produce nothing.
 
@@ -263,9 +263,59 @@ different road. Measured on the test route, Edinburgh centre → Straiton:
 Nearly a kilometre longer and a quarter less climbing. Reversing the drawn geometry would have
 put a line on the map the rider cannot legally follow *and* reported the wrong figures for it.
 
+## What a second review pass found
+
+Everything above was written before the branch was reviewed. The review found eight more
+problems, and the pattern is worth recording: **not one was in the pure logic, and every one
+was on a boundary between a rule and the thing it was applied to.** The tests covered what each
+rule does; what they did not cover was the rule being applied at the wrong moment.
+
+- **A climb could vanish because the winning span failed the threshold.** `bestSpan` picked the
+  top-scoring stretch and `extract` then checked it against the thresholds — but `gain²/length`
+  is not monotone in gradient, so the winner is often a span that fails while a real climb sits
+  inside it. A 10 km drag at 1.2% with a 250 m ramp at 5.8% scores 1.44 for the whole and 0.84
+  for the ramp: the whole won, failed the 1.5% floor, and *nothing at all* was reported. This
+  is the same bug the extraction step was introduced to fix, one level down. The thresholds now
+  live inside the search, so it can only ever return something worth reporting.
+- **The snap hint stopped protecting anything above 45 m.** The global fallback is a *superset*
+  of the window, so it can never be worse — meaning "take the window only if it is better" was
+  a tie-break that essentially never fired. One 46 m fix on a pair of parallel legs 36 m apart
+  moved `alongM` 280 m onto the wrong leg, and because the answer becomes the next hint, it
+  stayed there. Two changes: the threshold is now 250 m (a bad windowed match is either *tens*
+  of metres — off the line but near it — or *hundreds* — a stale hint; they separate cleanly by
+  magnitude), and the projection is clamped to the window rather than whole segments being
+  included or excluded, which is what let a 900 m return leg be matched 450 m past the window's
+  edge.
+- **"Climbing still to come" contradicted "climbing" by 60%.** `cumulativeAscentM` summed every
+  positive step: 943 m on London → Brighton against BRouter's own filtered 592 m, displayed on
+  the same screen. A 6 m deadband — SRTM's stated vertical accuracy, not a fitted constant —
+  gives 589 m, and 0 m against BRouter's 1 m on the urban fixture.
+- **The library reported saves that had been rolled back.** `run` resolved on
+  `request.onsuccess`, which fires when the database *accepts* a request, not when the
+  transaction commits — and a quota overrun fails at commit. Worse, a failed commit fires
+  `abort` rather than `error`, so an abort with no prior request error left the promise
+  unsettled forever and the save button spinning. It settles on the transaction now.
+- **Average speed was assembled from two different definitions.** Distance was gated on
+  accuracy and moving time on a reported speed, and `summarise` divides one by the other: a fix
+  with no speed (iOS omits it below a few km/h) added distance but no time, and a vague fix
+  added time but no distance. They share their gates now, and where no speed is reported the
+  ground is used instead.
+- **Ascent had no teleport guard**, though distance did. A fix that snaps to another pass of the
+  route hands over tens of metres of height between two seconds; 2 m/s is four times the world
+  hour record for vertical ascent, so anything beyond that moves the reference without being
+  credited.
+- **A transient failure disabled the library until reload**, because `open ??=` caches a
+  rejected promise as happily as a resolved one.
+- **The "windowed" scan iterated from index 0**, so the hinted path — the one taken on every
+  fix — was O(route) rather than the O(window) its docstring claimed.
+
+Two smaller ones in the CSS the branch inherited: `.drawer-body button:disabled` is later and
+more specific than `.primary:disabled`, so the disabled-primary fix reached only the sheet bar
+and not the drawer — which is where the disabled primary actually lives.
+
 ## Verification
 
-Unit tests: **255 assertions across 15 files**, all pure. The five new modules are covered
+Unit tests: **264 assertions across 15 files**, all pure. The five new modules are covered
 directly, including the three GPS failure modes the recorder exists to filter — a receiver
 jittering 4 m/s at traffic lights for ten minutes (must add zero distance), a 3 km teleport out
 of a tunnel (must not be credited, but must re-anchor so the *next* step is measured correctly),

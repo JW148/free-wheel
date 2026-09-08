@@ -113,6 +113,35 @@ describe('recordFix', () => {
     expect(record.distanceM).toBeCloseTo(800, 0)
   })
 
+  it('counts moving time from the ground when iOS declines to report a speed', () => {
+    // Below a few km/h iOS often reports no speed at all. Counting the distance but not the
+    // time inflates the average speed, which is the headline figure on the summary.
+    const record = ride(800, 8, { speedMps: null })
+    expect(record.distanceM).toBeCloseTo(800, 0)
+    expect(record.movingS).toBeGreaterThan(80)
+    expect(summarise(record).avgSpeedMps).toBeCloseTo(8, 0)
+  })
+
+  it('counts neither time nor distance from a fix too vague for either', () => {
+    // The mirror image: adding moving time without distance deflates the average instead.
+    const record = ride(800, 8, { accuracyM: 900 })
+    expect(record.distanceM).toBe(0)
+    expect(record.movingS).toBe(0)
+  })
+
+  it('does not credit a snap onto another part of the route as climbing', () => {
+    let record = startRecording(START)
+    record = recordFix(record, fix(0, 0, { routeElevM: 100 }))
+    record = recordFix(record, fix(8, 1, { routeElevM: 101 }))
+    const before = record.ascentM
+    // The fix snapped to a different pass of the route: 80 m of height in one second.
+    record = recordFix(record, fix(16, 2, { routeElevM: 181 }))
+    expect(record.ascentM).toBe(before)
+    // …and the reference follows, so the next real metre is measured from where we now are.
+    record = recordFix(record, fix(24, 3, { routeElevM: 183 }))
+    expect(record.ascentM).toBeCloseTo(before + 2, 1)
+  })
+
   it('remembers the fastest moment, but not an impossible one', () => {
     let record = startRecording(START)
     record = recordFix(record, fix(0, 0, { speedMps: 12 }))

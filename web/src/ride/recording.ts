@@ -87,6 +87,14 @@ const MOVING_MPS = 0.8
  * positive one over 90 km inflates the total. One metre is the smallest step in the data.
  */
 const ASCENT_DEADBAND_M = 1
+/**
+ * The fastest anyone climbs, in metres of height per second.
+ *
+ * 2 m/s is 7,200 m an hour — roughly four times the world hour record for vertical ascent, so
+ * it can never reject a real climb. It exists only to reject the impossible: a fix that snaps
+ * to a different part of the route hands over a height change that no rider produced.
+ */
+const MAX_CLIMB_MPS = 2
 /** Trace points are thinned to this spacing. 10 m is finer than the fixes on most bikes. */
 const TRACE_SPACING_M = 10
 
@@ -132,7 +140,26 @@ export function recordFix(record: RideRecord, sample: RideSample): RideRecord {
     next.maxSpeedMps = Math.max(record.maxSpeedMps, speedMps)
   }
 
-  const moving = speedMps !== null ? speedMps >= MOVING_MPS : false
+  const stepM = record.anchor
+    ? haversineM([record.anchor.lon, record.anchor.lat], [sample.lon, sample.lat])
+    : 0
+  const stepS = record.anchor ? Math.max(0.001, (sample.at - record.anchor.at) / 1000) : 0
+  const plausible = record.anchor === null || stepM / stepS <= MAX_SPEED_MPS
+
+  /**
+   * Moving time and distance must share their gates, because `summarise` divides one by the
+   * other and a figure assembled from two different definitions is wrong in both directions:
+   * a fix with no reported speed added distance but no time (average speed too high), and a
+   * vague fix added time but no distance (too low).
+   *
+   * So: the same accuracy gate as distance, and where iOS declines to report a speed — which
+   * it does below a few km/h — fall back to how far the bike actually went.
+   */
+  const moving =
+    usable &&
+    (speedMps !== null
+      ? speedMps >= MOVING_MPS && speedMps <= MAX_SPEED_MPS
+      : plausible && record.anchor !== null && stepM / stepS >= MOVING_MPS)
   if (moving) next.movingS = record.movingS + dtS
 
   if (sample.powerW !== null && moving) {
@@ -142,12 +169,6 @@ export function recordFix(record: RideRecord, sample: RideSample): RideRecord {
   }
 
   if (usable) {
-    const stepM = record.anchor
-      ? haversineM([record.anchor.lon, record.anchor.lat], [sample.lon, sample.lat])
-      : 0
-    const stepS = record.anchor ? Math.max(0.001, (sample.at - record.anchor.at) / 1000) : 0
-    const plausible = record.anchor === null || stepM / stepS <= MAX_SPEED_MPS
-
     if (record.anchor === null) {
       next.anchor = { lon: sample.lon, lat: sample.lat, at: sample.at }
       next.trace = [...record.trace, point(sample)]
@@ -176,7 +197,15 @@ export function recordFix(record: RideRecord, sample: RideSample): RideRecord {
       next.lastElevM = sample.routeElevM
     } else {
       const rise = sample.routeElevM - record.lastElevM
-      if (rise >= ASCENT_DEADBAND_M) {
+      // The same teleport guard distance gets, and for the same reason. The height comes from
+      // the *snapped* position, so a fix that snaps to another pass of the route hands over a
+      // height change of tens of metres between two consecutive seconds. Even a mountain goat
+      // cannot climb faster than 2 m/s, so anything beyond that is a jump, not a hill: move
+      // the reference without crediting it.
+      const climbable = Math.max(ASCENT_DEADBAND_M, MAX_CLIMB_MPS * dtS)
+      if (rise > climbable) {
+        next.lastElevM = sample.routeElevM
+      } else if (rise >= ASCENT_DEADBAND_M) {
         next.ascentM = record.ascentM + rise
         next.lastElevM = sample.routeElevM
       } else if (rise <= -ASCENT_DEADBAND_M) {

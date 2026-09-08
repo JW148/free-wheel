@@ -57,10 +57,19 @@ const SMOOTH_HALF = 2
  */
 const NOISE_M = 8
 
-/** Below these a feature is real but not worth a rider's attention. */
+/**
+ * Below these a feature is real but not worth a rider's attention.
+ *
+ * `MIN_GRADE` is 2% because that is roughly where a road stops feeling flat — and because the
+ * app's own gradient scale calls anything under 3% "rising" rather than steep, so listing a
+ * 1.6% stretch as a climb would contradict the colour it is drawn in. With the thresholds now
+ * applied *inside* `bestSpan`, a lower floor also produces markedly more features: at 1.5%,
+ * London to Brighton listed 21 climbs over 95 km, several of them 12 m at 1.7%. At 2% it lists
+ * 15, and the ones that go are the ones nobody would have called a hill.
+ */
 const MIN_GAIN_M = 12
 const MIN_LENGTH_M = 150
-const MIN_GRADE = 0.015
+const MIN_GRADE = 0.02
 
 const STEEPEST_WINDOW_M = 100
 
@@ -122,8 +131,6 @@ function extract(
   const gainM = Math.abs(elevation[best.end] - elevation[best.start])
   const lengthM = (best.end - best.start) * step
   const grade = lengthM === 0 ? 0 : gainM / lengthM
-  // Nothing inside this run clears the bar. Recursing would only find weaker things.
-  if (gainM < MIN_GAIN_M || lengthM < MIN_LENGTH_M || grade < MIN_GRADE) return
 
   found.push({
     kind: elevation[best.end] > elevation[best.start] ? 'climb' : 'descent',
@@ -141,7 +148,15 @@ function extract(
 }
 
 /**
- * The stretch of a run that most deserves to be called a climb, by `gain² / length`.
+ * The best stretch of a run that is *worth reporting at all*, by `gain² / length`.
+ *
+ * The thresholds are applied here, inside the search, rather than to the winner afterwards.
+ * That looks like a detail and is the difference between finding a climb and finding none:
+ * `gain²/length` is not monotone in gradient, so the top-scoring span is frequently one that
+ * fails the thresholds while a perfectly good climb sits inside it. A 10 km drag at 1.2% with
+ * a 250 m ramp at 5.8% in the middle scores 1.44 for the whole and 0.84 for the ramp — so
+ * checking the winner afterwards rejected the drag, returned, and reported **nothing at all**
+ * for a road with a real climb on it. Searching only among qualifying spans finds the ramp.
  *
  * The score needs one property above all: for a constant gradient it must prefer the *whole*
  * thing, so a steady 4% climb is reported once rather than chopped up. `gain²/length` reduces
@@ -162,15 +177,23 @@ function extract(
 function bestSpan(elevation: number[], run: Run, step: number): Run | null {
   const rising = elevation[run.end] >= elevation[run.start]
   const maxSpan = Math.max(1, Math.ceil(MAX_FEATURE_M / step))
+  // A span shorter than this cannot clear MIN_LENGTH_M, so it need never be scored.
+  const minSpan = Math.max(1, Math.ceil(MIN_LENGTH_M / step))
 
   let best: Run | null = null
   let bestScore = 0
   for (let i = run.start; i < run.end; i++) {
     const limit = Math.min(run.end, i + maxSpan)
-    for (let j = i + 1; j <= limit; j++) {
+    for (let j = i + minSpan; j <= limit; j++) {
       const delta = elevation[j] - elevation[i]
       if (rising ? delta <= 0 : delta >= 0) continue
-      const score = (delta * delta) / ((j - i) * step)
+
+      const gainM = Math.abs(delta)
+      if (gainM < MIN_GAIN_M) continue
+      const lengthM = (j - i) * step
+      if (gainM / lengthM < MIN_GRADE) continue
+
+      const score = (gainM * gainM) / lengthM
       if (score > bestScore) {
         bestScore = score
         best = { start: i, end: j }

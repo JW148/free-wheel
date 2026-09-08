@@ -75,6 +75,22 @@ describe('gradients', () => {
     expect(found[0].gainM).toBeGreaterThan(70)
   })
 
+  it('finds a ramp buried in a long drag that does not itself qualify', () => {
+    // 10 km rising 1.2% overall — below the threshold — with a 250 m ramp at 5.8% in the
+    // middle. Checking the thresholds *after* picking the top-scoring span rejected the whole
+    // drag, returned, and reported nothing at all for a road with a real climb on it.
+    const route = shaped(10_000, (m) =>
+      m < 4000 ? m * 0.008 : m < 4250 ? 32 + (m - 4000) * 0.058 : 46.5 + (m - 4250) * 0.008,
+    )
+    const found = gradients(routeGeometry(route)!)
+
+    expect(found.length).toBeGreaterThanOrEqual(1)
+    const ramp = found.find((g) => g.grade > 0.04)
+    expect(ramp, 'the ramp inside the drag').toBeDefined()
+    expect(ramp!.startM).toBeGreaterThan(3800)
+    expect(ramp!.startM).toBeLessThan(4400)
+  })
+
   it('has nothing to say about a flat towpath, noise and all', () => {
     // ±1.5 m of SRTM noise on a dead flat route. Without smoothing this is 200 "climbs".
     const route = shaped(5000, (m) => 20 + Math.sin(m / 37) * 1.5 + Math.sin(m / 91) * 1.2)
