@@ -61,6 +61,16 @@ export interface RouteGeometry {
 }
 
 /**
+ * Cached by route identity.
+ *
+ * Three separate places want the geometry of the same route at the same moment — the ride
+ * telemetry, the elevation chart and the climb list — and each had its own `useMemo`, so the
+ * work was done three times over. A `WeakMap` keyed on the parsed route means it is done once
+ * and collected with the route, without any of the three having to know about the others.
+ */
+const geometryCache = new WeakMap<ParsedRoute, RouteGeometry | null>()
+
+/**
  * Precomputes everything that is a function of the route alone.
  *
  * Built once per route and reused for every fix. A 76 km route is ~5,000 points, and redoing
@@ -71,6 +81,14 @@ export interface RouteGeometry {
  * Returns `null` for a route with nothing to travel along.
  */
 export function routeGeometry(route: ParsedRoute): RouteGeometry | null {
+  const cached = geometryCache.get(route)
+  if (cached !== undefined) return cached
+  const built = buildGeometry(route)
+  geometryCache.set(route, built)
+  return built
+}
+
+function buildGeometry(route: ParsedRoute): RouteGeometry | null {
   if (route.coords.length < 2) return null
 
   const cumulativeM = new Array<number>(route.coords.length)

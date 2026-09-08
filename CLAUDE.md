@@ -388,10 +388,16 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   symmetric: the test route measures 9.2 km / 140 m out and 10.1 km / 103 m back. Reversing the
   drawn geometry would put a line on the map the rider cannot legally follow and quote the
   wrong figures for it.
-- **MapLibre interpolates `bearing` numerically.** Easing from 350° to 10° spins the map 340°
-  backwards through south. `shortestTurn` in `geo.ts` rewrites the target (to 370) so it turns
-  the short way. For the same reason no two headings may be compared with `Math.abs(a - b)` —
-  `angleGap` exists.
+- **`easeTo` already turns the short way round**, so do not write the arithmetic yourself:
+  MapLibre 6's `_normalizeBearing` picks the nearest equivalent of the target to the current
+  bearing. A `shortestTurn` helper was written here on the assumption that it interpolated
+  numerically, and it was simply wrong. What *is* still needed is `angleGap` — no two headings
+  may be compared with `Math.abs(a - b)`, which says 350° and 10° are 340° apart.
+- **Recentring and rotating must be one `easeTo`, not two effects.** `easeTo` stops whatever is
+  in flight and defaults its target centre to the *current* centre, so a rotation issued in the
+  same commit as a recentre cancels it before its first frame — the map turns to face the right
+  way and then never follows the rider. Both effects had `heading` in their dependencies, which
+  is what put them in the same commit.
 - **`DeviceOrientationEvent.requestPermission()` only resolves from a user gesture on iOS**, so
   the compass cannot be asked for on mount. `useHeading.request()` is called from the course-up
   button and from Start, both of which are taps. The GPS course is the fallback and is `null`

@@ -76,7 +76,7 @@ export const DEFAULT_RIDER: RiderSetup = {
 }
 
 /** Sanity bounds. Not validation for its own sake — a zero mass divides the model by zero. */
-const MASS_LIMITS = { riderKg: [30, 200], bikeKg: [3, 60] } as const
+export const MASS_LIMITS = { riderKg: [30, 200], bikeKg: [3, 60] } as const
 
 export const totalMassKg = (setup: RiderSetup) => setup.riderKg + setup.bikeKg
 export const cdaOf = (setup: RiderSetup) =>

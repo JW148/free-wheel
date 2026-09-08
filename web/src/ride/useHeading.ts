@@ -77,6 +77,10 @@ export function useHeading(active: boolean, courseDeg: number | null) {
     if (!active || permission !== 'granted') {
       vector.current = null
       lastAt.current = null
+      // And the reading itself, not just the accumulator. `heading` is `compass ?? courseDeg`,
+      // so a value left behind here is both a stale bearing on the next Follow and a permanent
+      // veto on the GPS-course fallback — once `compass` is non-null it never yields again.
+      setCompass(null)
       return
     }
 

@@ -99,7 +99,24 @@ const MAX_DEPTH = 5
  *    See {@link bestSpan} — this is the step that stops a sharp ramp disappearing into the
  *    long shallow drag containing it.
  */
+/**
+ * Cached by geometry identity, for the same reason `routeGeometry` is.
+ *
+ * This one matters more: `bestSpan` is quadratic within its span cap, so a 95 km route costs a
+ * few million iterations. Five milliseconds is nothing once; three times, synchronously,
+ * while the drawer is opening, is a frame a rider can feel.
+ */
+const gradientCache = new WeakMap<RouteGeometry, Gradient[]>()
+
 export function gradients(geometry: RouteGeometry): Gradient[] {
+  const cached = gradientCache.get(geometry)
+  if (cached) return cached
+  const found = detect(geometry)
+  gradientCache.set(geometry, found)
+  return found
+}
+
+function detect(geometry: RouteGeometry): Gradient[] {
   if (geometry.totalM < MIN_LENGTH_M) return []
 
   const count = Math.max(2, Math.round(geometry.totalM / SAMPLE_M) + 1)

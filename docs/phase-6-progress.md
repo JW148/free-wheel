@@ -309,6 +309,42 @@ rule does; what they did not cover was the rule being applied at the wrong momen
 - **The "windowed" scan iterated from index 0**, so the hinted path — the one taken on every
   fix — was O(route) rather than the O(window) its docstring claimed.
 
+A third pass over the UI wiring found nine more, in the same place — the join between a rule
+and the moment it runs:
+
+- **The map rotated but never followed.** Recentring and rotating were two effects, both with
+  `heading` in their dependencies, so both ran in the same commit. `easeTo` stops whatever is
+  in flight and defaults its target centre to the *current* centre, so the rotation cancelled
+  the recentre before its first frame. One effect, one `easeTo`, now.
+- **`shortestTurn` was solving a problem MapLibre does not have.** It was written on the
+  assumption that `easeTo` interpolates the bearing numerically; MapLibre 6's
+  `_normalizeBearing` already picks the nearest equivalent of the target. Deleted, and the note
+  about it in `CLAUDE.md` corrected — a wrong gotcha is worse than none.
+- **Panning spun the map to north-up.** The bearing reset treated "following is paused" the
+  same as "course-up is off", so looking ahead turned the map under your thumb and turned it
+  back twelve seconds later.
+- **A rejected engine call pinned the routing spinner.** `route()` reports a *routing* failure
+  by returning, but the call can still reject — a worker that would not spawn. Uncaught, that
+  skipped `setRouting(null)` and left Reroute reading "Routing…" for the rest of the ride with
+  no way to clear it.
+- **The compass never let go.** Deactivating cleared the smoothing accumulator but not the
+  reading, so `compass ?? courseDeg` returned a stale bearing on the next Follow — and, once
+  non-null, permanently vetoed the GPS-course fallback.
+- **`heading.request()` ran inside a state updater**, which StrictMode double-invokes: the
+  second `requestPermission()` rejects while the first prompt is open, and the catch marked the
+  compass denied even when the rider allowed it. Exactly the bug already fixed once in
+  `prime()`, in a second place.
+- **The mass fields bypassed their own limits.** `migrateRider` clamps on load, so 500 kg
+  skewed the power model for a session and then silently changed on the next launch. Clamping
+  on every keystroke is worse — typing "5" towards "55" snaps to the 30 kg floor — so the field
+  holds its own text and commits a clamped number on blur.
+- **The climb list, the elevation chart and the ride telemetry each computed `gradients()` for
+  the same route.** Five milliseconds three times over, synchronously, while the drawer opens.
+  Both `routeGeometry` and `gradients` are now cached in a `WeakMap` on the object they derive
+  from, so the three share one computation and none of them has to know about the others.
+- **"Downhill in 0 m"** — the descent callout ignored `inIt`, which the climb callout beside it
+  has always honoured.
+
 Two smaller ones in the CSS the branch inherited: `.drawer-body button:disabled` is later and
 more specific than `.primary:disabled`, so the disabled-primary fix reached only the sheet bar
 and not the drawer — which is where the disabled primary actually lives.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { POSITIONS, TYRES, cdaOf, crrOf, totalMassKg } from '../ride/rider'
+import { MASS_LIMITS, POSITIONS, TYRES, cdaOf, crrOf, totalMassKg } from '../ride/rider'
 import { estimatePowerW } from '../ride/power'
 import { requestPersistence } from '../ride/library'
 import type { Rider } from '../ride/useRider'
@@ -50,28 +50,18 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
       </p>
 
       <div className="rider-masses">
-        <label>
-          <span className="section-label">You, in kg</span>
-          <input
-            type="number"
-            inputMode="decimal"
-            min={30}
-            max={200}
-            value={setup.riderKg}
-            onChange={(e) => update({ riderKg: Number(e.target.value) || setup.riderKg })}
-          />
-        </label>
-        <label>
-          <span className="section-label">Bike and bags, in kg</span>
-          <input
-            type="number"
-            inputMode="decimal"
-            min={3}
-            max={60}
-            value={setup.bikeKg}
-            onChange={(e) => update({ bikeKg: Number(e.target.value) || setup.bikeKg })}
-          />
-        </label>
+        <Mass
+          label="You, in kg"
+          value={setup.riderKg}
+          limits={MASS_LIMITS.riderKg}
+          onCommit={(riderKg) => update({ riderKg })}
+        />
+        <Mass
+          label="Bike and bags, in kg"
+          value={setup.bikeKg}
+          limits={MASS_LIMITS.bikeKg}
+          onCommit={(bikeKg) => update({ bikeKg })}
+        />
       </div>
 
       <fieldset className="profiles">
@@ -168,5 +158,55 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
         </button>
       )}
     </section>
+  )
+}
+
+/**
+ * A mass field that clamps when you leave it, not while you are typing.
+ *
+ * `migrateRider` clamps on load, so an out-of-range value typed here used to skew the power
+ * model for the whole session and then silently change on the next launch. Clamping on every
+ * keystroke instead is worse: typing "5" on the way to "55" would snap the field to the 30 kg
+ * floor and the next keystroke would produce "305".
+ *
+ * So the field holds its own text while focused and commits a clamped number on blur. `min`
+ * and `max` stay on the input for the numeric keyboard and for assistive technology.
+ */
+function Mass({
+  label,
+  value,
+  limits,
+  onCommit,
+}: {
+  label: string
+  value: number
+  limits: readonly [number, number]
+  onCommit: (value: number) => void
+}) {
+  const [text, setText] = useState<string | null>(null)
+
+  const commit = () => {
+    const parsed = Number(text)
+    setText(null)
+    if (text === null || text.trim() === '' || !Number.isFinite(parsed)) return
+    onCommit(Math.min(Math.max(parsed, limits[0]), limits[1]))
+  }
+
+  return (
+    <label>
+      <span className="section-label">{label}</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        min={limits[0]}
+        max={limits[1]}
+        value={text ?? String(value)}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+      />
+    </label>
   )
 }

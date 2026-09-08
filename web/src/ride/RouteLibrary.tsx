@@ -68,8 +68,17 @@ export default function RouteLibrary({
   }, [refresh, reloadKey])
 
   const remove = async (entry: LibraryEntry) => {
-    await deleteEntry(entry.kind, entry.id)
+    // A blocked database, or a second tab mid-upgrade. Silently leaving the row in place reads
+    // as a dead button; `refresh` has said so from the start and this had not. The message is
+    // set *after* the refresh, because a successful refresh clears it.
+    let failure: string | null = null
+    try {
+      await deleteEntry(entry.kind, entry.id)
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e)
+    }
     await refresh()
+    if (failure) setProblem(failure)
   }
 
   if (entries === null) return <p className="section-label">Loading saved routes…</p>

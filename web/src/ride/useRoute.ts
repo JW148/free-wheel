@@ -127,22 +127,29 @@ export function useRoute() {
     // Sequentially, because the engine Worker blocks inside Wasm for the duration of a
     // route — issuing them in parallel would queue them anyway, and would lose the
     // per-profile progress the rider can see.
-    for (const id of selection) {
-      setRouting(id)
-      const outcome = await sharedEngine().route(id, lonLats)
-      if (!outcome.ok || !outcome.gpx) {
-        failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
-        continue
+    try {
+      for (const id of selection) {
+        setRouting(id)
+        const outcome = await sharedEngine().route(id, lonLats)
+        if (!outcome.ok || !outcome.gpx) {
+          failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
+          continue
+        }
+        try {
+          computed[id] = parseBrouterGpx(outcome.gpx)
+          documents[id] = outcome.gpx
+        } catch (e) {
+          failures.push(e instanceof Error ? e.message : String(e))
+        }
       }
-      try {
-        computed[id] = parseBrouterGpx(outcome.gpx)
-        documents[id] = outcome.gpx
-      } catch (e) {
-        failures.push(e instanceof Error ? e.message : String(e))
-      }
+    } catch (e) {
+      // The call itself rejecting — a worker that would not spawn — rather than a route that
+      // could not be found. Without the `finally` below it leaves the button reading
+      // "Routing…" until the app is reloaded.
+      failures.push(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRouting(null)
     }
-
-    setRouting(null)
     setRoutes(computed)
     setGpx(documents)
     setChosen(chosenAfterRun(Object.keys(computed)))
@@ -183,14 +190,12 @@ export function useRoute() {
 
       setRouting(profileId)
       setError(null)
-      const outcome = await sharedEngine().route(profileId, lonLats)
-      setRouting(null)
-
-      if (!outcome.ok || !outcome.gpx) {
-        setError(explainRoutingFailure(outcome.error ?? 'routing failed', next))
-        return false
-      }
       try {
+        const outcome = await sharedEngine().route(profileId, lonLats)
+        if (!outcome.ok || !outcome.gpx) {
+          setError(explainRoutingFailure(outcome.error ?? 'routing failed', next))
+          return false
+        }
         const parsed = parseBrouterGpx(outcome.gpx)
         setWaypoints(next)
         setRoutes({ [profileId]: parsed })
@@ -198,8 +203,14 @@ export function useRoute() {
         setChosen(profileId)
         return true
       } catch (e) {
+        // `route()` reports a routing failure by returning, but the *call* can still reject —
+        // a worker that failed to spawn, an engine that could not initialise. Uncaught, that
+        // skipped `setRouting(null)` and pinned the spinner: mid-ride the Reroute button would
+        // read "Routing…" for the rest of the ride with no way to clear it.
         setError(e instanceof Error ? e.message : String(e))
         return false
+      } finally {
+        setRouting(null)
       }
     },
     [],

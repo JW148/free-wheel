@@ -185,8 +185,18 @@ function Callout({
     return (
       <p className="hud-callout" style={{ '--tint': gradeColour(-0.05) } as React.CSSProperties}>
         <span className="hud-callout-mark" />
-        <strong>Downhill in {formatAway(rest.distanceToM)}</strong> ·{' '}
-        {formatAway(rest.gradient.lengthM)} of it
+        {/* `inIt`, like the climb branch above. Without it a rider halfway down was told
+            "Downhill in 0 m", which is both wrong and faintly insulting. */}
+        {rest.inIt ? (
+          <>
+            <strong>Descending</strong> {formatAway(rest.remainingM)} left
+          </>
+        ) : (
+          <>
+            <strong>Downhill in {formatAway(rest.distanceToM)}</strong> ·{' '}
+            {formatAway(rest.gradient.lengthM)} of it
+          </>
+        )}
       </p>
     )
   }

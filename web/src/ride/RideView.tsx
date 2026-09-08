@@ -10,7 +10,6 @@ import { useHeading } from './useHeading'
 import { useRideTelemetry } from './useRideTelemetry'
 import { useAnnouncer } from './useAnnouncer'
 import type { Rider } from './useRider'
-import { shortestTurn } from './geo'
 import { sliceAlong, waypointsAhead } from './progress'
 import {
   boundsOf,
@@ -389,35 +388,53 @@ export default function RideView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, styleReady, riding, telemetry.geometry, travelledM, climbSpan])
 
-  // ── The rider ─────────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const instance = map.current
-    if (!instance || !styleReady || !fix) return
-    // The arrow is drawn only while following. On the planning screen a heading arrow implies
-    // a live orientation the rider is not being given, and the plain dot says "you are here"
-    // without claiming to know which way you face.
-    setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
-    if (following && !followPaused) instance.easeTo({ center: [fix.lon, fix.lat], duration: 700 })
-  }, [map, styleReady, fix, following, followPaused, heading.heading])
-
-  // ── Turning the map to face the way you are going ─────────────────────────────────────
-  // Separate from the fix effect because the compass updates far more often than the GPS, and
-  // because the bearing has to be reset when course-up is switched off — which is not a fix.
+  // ── The camera ────────────────────────────────────────────────────────────────────────
+  /**
+   * One effect, and it has to be one.
+   *
+   * Recentring and rotating were two effects, both listing `heading.heading` in their
+   * dependencies, so both ran in the same commit. `easeTo` calls `stop()` on whatever
+   * animation is in flight and defaults its target centre to the map's *current* centre — so
+   * the rotation cancelled the recentre before its first frame, and with course-up on the map
+   * turned to face the right way and then never followed the rider. `centreOnMe` lost its ease
+   * to the same collision.
+   *
+   * The bearing goes back to north when course-up is off or the ride has ended — but
+   * deliberately **not** while following is merely paused. Panning to look at what is up ahead
+   * should not spin the map to north-up under your thumb and then spin it back twelve seconds
+   * later.
+   */
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
-    if (!courseUp || !following || followPaused) {
-      if (instance.getBearing() !== 0) instance.easeTo({ bearing: 0, duration: 400 })
-      return
+
+    // The arrow is drawn only while following. On the planning screen a heading arrow implies
+    // a live orientation the rider is not being given, and the plain dot says "you are here"
+    // without claiming to know which way you face.
+    if (fix) setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
+
+    const locked = following && !followPaused
+    const turning = locked && courseUp && heading.heading !== null
+    const northUp = !courseUp || !following
+
+    // MapLibre 6 normalises a target bearing against the current one (`_normalizeBearing`), so
+    // it already turns the short way round; nothing here has to do that arithmetic.
+    const bearing = turning
+      ? heading.heading!
+      : northUp && instance.getBearing() !== 0
+        ? 0
+        : null
+
+    if (locked && fix) {
+      instance.easeTo({
+        center: [fix.lon, fix.lat],
+        ...(bearing === null ? {} : { bearing }),
+        duration: 700,
+      })
+    } else if (bearing !== null) {
+      instance.easeTo({ bearing, duration: 400 })
     }
-    if (heading.heading === null) return
-    // `shortestTurn` because MapLibre interpolates the bearing numerically: easing from 350 to
-    // 10 would spin the map the long way round through south.
-    instance.easeTo({
-      bearing: shortestTurn(instance.getBearing(), heading.heading),
-      duration: 400,
-    })
-  }, [map, styleReady, courseUp, following, followPaused, heading.heading])
+  }, [map, styleReady, fix, following, followPaused, courseUp, heading.heading])
 
   const centreOnMe = useCallback(async () => {
     setFollowPaused(false)
@@ -442,14 +459,16 @@ export default function RideView({
   }, [voice, announcer])
 
   const toggleCourseUp = useCallback(() => {
-    setCourseUp((on) => {
-      // iOS will only hand over the compass from inside a user gesture, and this is one.
-      // Asking on mount instead produces a permission prompt nobody expects and a rejection
-      // that cannot be retried.
-      if (!on && heading.permission === 'unknown') void heading.request()
-      return !on
-    })
-  }, [heading])
+    const next = !courseUp
+    setCourseUp(next)
+    // Outside the updater, not inside it. StrictMode double-invokes updaters, and the second
+    // `requestPermission()` rejects while the first prompt is still open — so the catch marked
+    // the compass denied even when the rider allowed it.
+    //
+    // iOS will only hand the compass over from inside a user gesture, and this is one. Asking
+    // on mount instead produces a prompt nobody expects and a rejection that cannot be retried.
+    if (next && heading.permission === 'unknown') void heading.request()
+  }, [courseUp, heading])
 
   // ── Rerouting ─────────────────────────────────────────────────────────────────────────
   const reroute = useCallback(async () => {
