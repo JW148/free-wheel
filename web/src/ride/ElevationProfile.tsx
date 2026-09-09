@@ -1,5 +1,8 @@
 import { useId, useMemo, useRef, useState } from 'react'
 import { elevationProfile } from './elevation'
+import { gradients } from './climbs'
+import { routeGeometry } from './progress'
+import { gradeColour } from './gradeScale'
 import { formatDistance } from './gpx'
 import type { ParsedRoute } from './gpx'
 
@@ -48,6 +51,13 @@ export default function ElevationProfile({
   const gradientId = `elev-${useId().replace(/[^a-zA-Z0-9]/g, '')}`
 
   const profile = useMemo(() => elevationProfile(route), [route])
+  // The same features the riding HUD calls out, marked on the chart the rider is reading now.
+  // Without them a 96px auto-scaled profile shows the *shape* and nothing about severity, and
+  // the list below has to be matched up to it by eye.
+  const climbs = useMemo(() => {
+    const geometry = routeGeometry(route)
+    return geometry ? gradients(geometry).filter((g) => g.kind === 'climb') : []
+  }, [route])
 
   if (!profile || profile.totalDistanceM === 0) return null
 
@@ -127,6 +137,20 @@ export default function ElevationProfile({
             strokeOpacity="0.1"
             strokeWidth="1"
             vectorEffect="non-scaling-stroke"
+          />
+        ))}
+
+        {/* Under the profile line, over the fill: a climb is a stretch of the *route*, so it
+            should read as a band on the ground rather than as another series. */}
+        {climbs.map((climb) => (
+          <rect
+            key={climb.startM}
+            x={x(climb.startM)}
+            width={Math.max(1, x(climb.endM) - x(climb.startM))}
+            y={PAD_TOP - 4}
+            height={HEIGHT - PAD_BOTTOM - PAD_TOP + 4}
+            fill={gradeColour(climb.grade)}
+            fillOpacity={0.18}
           />
         ))}
 

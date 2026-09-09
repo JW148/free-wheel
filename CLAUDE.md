@@ -40,7 +40,9 @@ useful reference material.
 ```
 engine/          Gradle + TeaVM. Compiles BRouter's Java to WasmGC and JS.
 web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (generated).
-  src/ride/      The ride screen: map, waypoints, routing, follow. This is the app.
+  src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
+                 The navigation kernel — progress, climbs, power, ascent, recording, library,
+                 hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
   src/setup/     Overlay: importing data, and the diagnostics/parity harness.
   src/engine/    Worker, Comlink client, OPFS VFS and tile store.
   src/map/       PMTiles-over-OPFS source, basemap style, the MapLibre worker fix.
@@ -353,6 +355,103 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   map does not repaint when a second profile is ticked.
 - **Setup is an overlay over the ride screen, never a replacement.** Unmounting the map drops
   its OPFS handles and its whole tile cache; the map controller therefore lives in `App.tsx`.
+- **A fix is snapped to the route with a *hint*, and the hint is load-bearing.** Nearest-point
+  over the whole polyline is O(route) per fix and wrong on any route that crosses itself — an
+  out-and-back is two coincident lines and the search picks between them by floating-point
+  luck, so a rider on the way home sees the distance remaining jump back to the full route
+  length. `snapToRoute` searches −120 m to +600 m around the previous answer first and only
+  falls back to a global scan when that match is worse than 45 m. A tie goes to the window:
+  a progress bar that lags beats one that jumps.
+- **A climb is the best-scoring stretch of a run, not the run.** `gradients()` resamples,
+  smooths and prunes by persistence — then extracts the sub-stretch maximising `gain²/length`
+  and recurses either side. That score is chosen because at constant gradient it prefers the
+  *whole* climb (it reduces to `grade² × length`), so a steady 4% is reported once. Without the
+  extraction, London → Brighton reported **nothing** across 17 km because a 62 m ramp at 6% was
+  buried inside a 9.8 km run averaging 1.2%. Smoothing costs accuracy in one direction: a true
+  6% reads as 5.3%. `docs/phase-6-progress.md` has the numbers.
+- **Gradient comes from the route, never from the fix.** GPS altitude is tens of metres out and
+  drifts standing still; differentiated, it swings ±20% and that is ±600 W of invented power.
+  `gradeAt` reads BRouter's own SRTM elevations over a ±60 m window. The corollary is that
+  power and recorded ascent are only meaningful on the route, and both are cleared the moment a
+  reroute replaces the geometry.
+- **The two ride overlays are achromatic, and that is a rule not a preference.** Six route hues
+  at C ≥ 45 already fill the usable circle under the ΔE ≥ 16 clearance floor. "Already ridden"
+  is neutral grey — it has stopped being a route — and "climb ahead" is a blurred halo in black
+  or white by theme, which is a *lightness* effect and so needs no clearance rule and works
+  over a line of any colour. Do not give either one a hue.
+- **The route library is IndexedDB, and neither of the other two stores would do.**
+  `localStorage` is ~5 MB per origin *shared with the plan, the theme and the basemap choice*,
+  so twenty 240 kB GPX documents evict all of them with a silent `QuotaExceededError`. OPFS is
+  the wrong shape — it exists to serve sync access handles to the engine Worker under a
+  one-handle-per-file registry, and routes want keyed records.
+- **Reversing a route must re-route it.** One-way streets and turn restrictions are not
+  symmetric: the test route measures 9.2 km / 140 m out and 10.1 km / 103 m back. Reversing the
+  drawn geometry would put a line on the map the rider cannot legally follow and quote the
+  wrong figures for it.
+- **`easeTo` already turns the short way round**, so do not write the arithmetic yourself:
+  MapLibre 6's `_normalizeBearing` picks the nearest equivalent of the target to the current
+  bearing. A `shortestTurn` helper was written here on the assumption that it interpolated
+  numerically, and it was simply wrong. What *is* still needed is `angleGap` — no two headings
+  may be compared with `Math.abs(a - b)`, which says 350° and 10° are 340° apart.
+- **Recentring and rotating must be one `easeTo`, not two effects.** `easeTo` stops whatever is
+  in flight and defaults its target centre to the *current* centre, so a rotation issued in the
+  same commit as a recentre cancels it before its first frame — the map turns to face the right
+  way and then never follows the rider. Both effects had `heading` in their dependencies, which
+  is what put them in the same commit.
+- **`DeviceOrientationEvent.requestPermission()` only resolves from a user gesture on iOS**, so
+  the compass cannot be asked for on mount. `useHeading.request()` is called from the course-up
+  button and from Start, both of which are taps. The GPS course is the fallback and is `null`
+  below a few km/h — which is every junction and every set of lights, hence wanting the compass
+  at all.
+- **Speech is sparse on purpose, and `speechSynthesis` fails silently in three ways.** The
+  first utterance needs a user gesture on iOS (hence `prime()` from Start), utterances queue
+  rather than replace (hence `cancel()` before each), and the voice list loads async (hence
+  never picking a voice). A fourth, caught in the browser: `prime()` must **not** check
+  `enabled`, because `riding` is still false in the render its closure came from — gating there
+  swallowed the one utterance that unlocks the rest of the session. The cue rules live in
+  `cues.ts`, are pure, and are tested by walking a real route: fourteen cues over 95 km. If you
+  add a cue, it has to change what the rider does in the next minute — an app that talks
+  constantly gets muted, and a muted app says nothing at all.
+- **A hidden browser tab never fires `requestAnimationFrame`, and MapLibre's style loader
+  awaits one.** The map then silently never loads: no `load` event, no `error`,
+  `isStyleLoaded()` false, `getStyle()` undefined, and **zero** sprite or glyph requests in
+  `performance.getEntriesByType('resource')`. `styleReady` never flips, so route layers are
+  never added and waypoint markers are never created — which looks exactly like a marker bug
+  and is not. Shim `requestAnimationFrame` to a `setTimeout` before the map is built when
+  driving the app from headless automation. Close cousin of the dead-worker trap above.
+- **iOS shake-to-undo cannot be refused, so the riding screen carries no text field.** A bike
+  on rough ground performs the gesture continuously, and WebKit offers a page no way to decline
+  the "Undo Typing" alert — there is no cancellable event. The only lever is an empty undo
+  stack, so a finished ride saves itself under its generated name and renaming happens in the
+  library. `RideView` also refuses `beforeinput` with `inputType: 'historyUndo'` while riding,
+  which does not stop the alert but stops it quietly reverting something off screen. The user's
+  own escape hatch is Settings → Accessibility → Touch → Shake to Undo.
+- **A recorded ride is not BRouter GPX, and must not be read as if it were.** It carries no
+  `track-length` summary, so `parseBrouterGpx` reports a route of length zero that the progress
+  bar then divides by. `parseTrackGpx` measures the distance from the track instead, and sums
+  ascent through the shared `ascent.ts` — one deadband constant, or the stats rail and the climb
+  list disagree about the same hill.
+- **A recorded track has heights only where it was following a route.** `RouteGeometry.hasElevation`
+  (and `hasHeights()` for a parsed route) is the gate: where it is false, the power column, the
+  lookahead graph, the elevation profile and the climb list are all *removed* rather than drawn
+  from zeros. A flat bar chart is not "no data" — it is a claim that the road ahead is level.
+- **`plan.chosen` can name something the engine cannot route.** Following a recorded track sets
+  it to the `recorded` pseudo-profile, which is deliberately not in `PROFILES`. Anything that
+  asks the engine for a profile must use `plan.rerouteProfile`, which falls back to the ticked
+  selection — otherwise a reroute fails at the exact moment a lost rider needs it. `style.test.ts`
+  iterates `ROUTE_PALETTE`, not `PROFILES`, so the extra colour is still held to the ΔE floor.
+- **The riding HUD's height is measured, not guessed.** Both sizes are absolutely positioned
+  layers that cross-fade, and a `ResizeObserver` on each drives a `height` transition on the
+  panel. A hard-coded collapsed height does not work: the climb line appears and disappears
+  inside the strip, so the strip's own height is not constant. `data-measured="no"` suppresses
+  the transition until both layers have been measured, or the panel animates once on arrival.
+  This is the one place the "don't animate a backdrop-filtered box's height" rule is knowingly
+  broken — one panel on a deliberate tap, not seven blurred buttons once a second.
+- **The rider's marker has two sizes and is switched by `setPositionEmphasis`.** One size served
+  both screens and measured 20 logical pixels on the road, which is a street label. Riding is
+  45 px of arrow over a 34 px halo; the arrow is drawn at 64 device pixels and scaled *down*,
+  and carries a white ring inside a dark hairline so one image works over both basemaps without
+  a repaint on a theme swap.
 - **The iOS Simulator reaches the Mac's `localhost`, which is a secure context** — so it needs
   no HTTPS and no trusted CA, unlike a physical device. `simctl` is not on PATH here:
   `xcode-select` points at CommandLineTools, so use

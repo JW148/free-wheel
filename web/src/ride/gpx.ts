@@ -23,6 +23,9 @@
  * that is a different function, and it should use a real parser.
  */
 
+import { filteredAscentM } from './ascent'
+import { haversineM } from './geo'
+
 export interface ParsedRoute {
   /** `[lon, lat]` pairs in GeoJSON order, ready to become a LineString. */
   coords: [number, number][]
@@ -57,12 +60,14 @@ const LON = /\blon="(-?[\d.]+)"/
 const LAT = /\blat="(-?[\d.]+)"/
 const TRACK_NAME = /<name>([^<]*)<\/name>/
 
-export function parseBrouterGpx(gpx: string): ParsedRoute {
-  // `Router.route` reports failure by returning a string, not by throwing, so this is a
-  // shape a caller can genuinely hand us. Parsing on would yield an empty route and draw
-  // nothing, which looks like a routing success with no road.
-  if (gpx.startsWith('error:')) throw new Error(gpx.slice('error:'.length).trim())
-
+/**
+ * The track points, in order, with a height per point.
+ *
+ * Shared by both parsers because it is the one thing the two documents agree about: a
+ * computed route and a recorded ride differ entirely in their summaries and not at all in
+ * the shape of a `<trkpt>`.
+ */
+function trackPoints(gpx: string): { coords: [number, number][]; elevations: number[] } {
   const coords: [number, number][] = []
   const elevations: number[] = []
 
@@ -74,6 +79,17 @@ export function parseBrouterGpx(gpx: string): ParsedRoute {
     coords.push([Number(lon[1]), Number(lat[1])])
     elevations.push(ele === undefined ? 0 : Number(ele))
   }
+
+  return { coords, elevations }
+}
+
+export function parseBrouterGpx(gpx: string): ParsedRoute {
+  // `Router.route` reports failure by returning a string, not by throwing, so this is a
+  // shape a caller can genuinely hand us. Parsing on would yield an empty route and draw
+  // nothing, which looks like a routing success with no road.
+  if (gpx.startsWith('error:')) throw new Error(gpx.slice('error:'.length).trim())
+
+  const { coords, elevations } = trackPoints(gpx)
 
   if (coords.length === 0) {
     throw new Error('the route came back with no track points')
@@ -92,6 +108,17 @@ export function parseBrouterGpx(gpx: string): ParsedRoute {
   }
 }
 
+/**
+ * Whether a parsed track carries real heights at all.
+ *
+ * False for a recorded ride with no route behind it, and the reason everything downstream of
+ * elevation has to be able to say "cannot answer". `RouteGeometry.hasElevation` is the same
+ * question asked of the built geometry; this is the one the UI asks of a route it has not
+ * built a geometry for yet.
+ */
+export const hasHeights = (route: ParsedRoute): boolean =>
+  route.elevations.some((e) => e !== 0)
+
 /** `2.0 km` / `940 m` — a rider reads one of those at a glance and not the other. */
 export function formatDistance(metres: number): string {
   return metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`
@@ -103,4 +130,47 @@ export function formatDuration(seconds: number | null): string {
   const minutes = Math.round(seconds / 60)
   if (minutes < 60) return `${minutes} min`
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+}
+
+/**
+ * Reads a *recorded* track back — one of our own `traceToGpx` documents.
+ *
+ * Separate from {@link parseBrouterGpx} rather than a flag on it, because the two documents
+ * disagree about everything except the track points. A recorded ride carries no
+ * `track-length` summary and no `time=`, so `parseBrouterGpx` reports a route of zero length
+ * that the progress bar then divides by; and its `<ele>` values are present only for the
+ * stretches where the app had a route to take a height from, which is the whole reason
+ * `RouteGeometry.hasElevation` exists.
+ *
+ * Distance is therefore *measured* here rather than read. That is the one figure BRouter
+ * normally hands over, and summing the trace is the only way to get it — the trace is thinned
+ * to 10 m, so the sum is a slight underestimate of the road but well inside what GPS knows.
+ *
+ * Still regexes, and still for the reason at the top of this file: this is our own output,
+ * one point per line, and it has to parse in a Worker and in plain Node. Foreign GPX is a
+ * different problem and still wants a real parser.
+ */
+export function parseTrackGpx(gpx: string): ParsedRoute {
+  const { coords, elevations } = trackPoints(gpx)
+
+  if (coords.length < 2) {
+    throw new Error('that recorded ride has no track to follow')
+  }
+
+  let distanceM = 0
+  for (let i = 1; i < coords.length; i++) distanceM += haversineM(coords[i - 1], coords[i])
+
+  // Ascent is summed here rather than read, with the same deadband and the same function the
+  // route geometry uses — so a loaded track's "climbing" figure and its climb list cannot
+  // disagree. It is zero for a ride recorded with no route to take heights from, which is
+  // correct: there is nothing to sum, and `hasHeights` is how the UI knows not to imply
+  // otherwise.
+  return {
+    coords,
+    elevations,
+    distanceM,
+    ascendM: filteredAscentM(elevations),
+    timeS: null,
+    name: TRACK_NAME.exec(gpx)?.[1] ?? null,
+  }
 }

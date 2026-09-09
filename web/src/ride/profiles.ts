@@ -79,4 +79,35 @@ export const PROFILES = [
 
 export type ProfileId = (typeof PROFILES)[number]['id']
 
-export const profileById = (id: string) => PROFILES.find((p) => p.id === id) ?? PROFILES[0]
+/**
+ * A track the rider recorded, put back on the map to be followed.
+ *
+ * Deliberately *not* a member of {@link PROFILES}: nothing routes with it, it must never
+ * appear in the comparison list, and ticking it would be meaningless. But it is drawn on the
+ * map and named in the sheet exactly like a route, so it needs a label and a colour, and
+ * `profileById` has to resolve it — the fallback to `PROFILES[0]` would otherwise label a
+ * ride you recorded last Sunday "Trekking" in amber.
+ *
+ * Orange, at C 72.7 and L* 66.2, clears every colour in both basemap palettes by ΔE 23.7 —
+ * comfortably past the ΔE 16 floor `style.test.ts` holds every route line to — and sits 19.8
+ * from its nearest neighbour in the palette, `mtb`. It is never on screen beside another
+ * route anyway: loading a track replaces whatever was drawn.
+ */
+export const RECORDED_TRACK = {
+  id: 'recorded',
+  label: 'Recorded ride',
+  note: 'A track you rode, followed exactly as it was ridden',
+  colour: '#ff7a3d',
+} as const
+
+/** Every colour a route line can take, which is what the clearance test has to cover. */
+export const ROUTE_PALETTE = [...PROFILES, RECORDED_TRACK]
+
+/** Whether an id names something the engine can actually route with. */
+export const isRoutableProfile = (id: string | null): boolean =>
+  id !== null && PROFILES.some((p) => p.id === id)
+
+export const profileById = (id: string) =>
+  id === RECORDED_TRACK.id
+    ? RECORDED_TRACK
+    : PROFILES.find((p) => p.id === id) ?? PROFILES[0]
