@@ -22,7 +22,7 @@ describe('segmentsForBbox', () => {
       // Edge case: antimeridian crossing (west > east)
       [170, 50, -170, 60],
       // Edge case: north polar region (lat > 80) should skip invalid tiles
-      [-5.0, 75.0, -2.0, 85.0],
+      [0, 85, 5, 90],
     ]
     for (const [west, south, east, north] of boxes) {
       expect(segmentsForBbox([west, south, east, north]))
