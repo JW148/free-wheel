@@ -17,6 +17,9 @@ export function buildManifest({ regions, segments, picker, generated }) {
     picker,
     segments,
     regions: regions.map((region) => {
+      if (!region.basemap || !region.basemap.url) {
+        throw new Error(`${region.id} has no basemap or basemap url. Run: npm run mirror:basemaps`)
+      }
       const needed = segmentsForBbox(region.bbox)
       const missing = needed.filter((name) => !segments[name])
       if (missing.length) {

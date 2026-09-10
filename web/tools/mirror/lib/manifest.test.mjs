@@ -40,6 +40,18 @@ describe('buildManifest', () => {
     expect(() => buildManifest({ regions, segments, picker: { bytes: 60959264 }, generated }))
       .toThrow(/picker.*url.*npm run mirror:basemaps/)
   })
+
+  it('throws a clear error when region basemap is missing', () => {
+    const noBasemap = [{ ...regions[0], basemap: undefined }]
+    expect(() => buildManifest({ regions: noBasemap, segments, picker, generated }))
+      .toThrow(/central-scotland.*basemap.*npm run mirror:basemaps/)
+  })
+
+  it('throws a clear error when region basemap has no url', () => {
+    const noBmUrl = [{ ...regions[0], basemap: { bytes: 86384407, hash: '1c9d4e77' } }]
+    expect(() => buildManifest({ regions: noBmUrl, segments, picker, generated }))
+      .toThrow(/central-scotland.*basemap.*url.*npm run mirror:basemaps/)
+  })
 })
 
 describe('assertPublishable', () => {
