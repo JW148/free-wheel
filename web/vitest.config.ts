@@ -9,6 +9,6 @@ export default defineConfig({
     // needing a Map or OPFS is verified on-device instead, per the project's rule that
     // desktop proves nothing about the device.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'tools/**/*.test.mjs'],
   },
 })
