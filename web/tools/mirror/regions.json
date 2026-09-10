@@ -1,0 +1,16 @@
+[
+  { "id": "highlands-islands", "name": "Highlands and Islands", "bbox": [-7.7, 56.3, -2.4, 58.7] },
+  { "id": "central-scotland", "name": "Central Scotland", "bbox": [-5.0, 55.4, -2.4, 56.4] },
+  { "id": "southern-scotland", "name": "Southern Scotland and the Borders", "bbox": [-5.0, 54.6, -1.9, 55.5] },
+  { "id": "north-east-england", "name": "North East England", "bbox": [-2.7, 54.0, -0.7, 55.5] },
+  { "id": "north-west-england", "name": "North West England and the Lakes", "bbox": [-3.7, 53.2, -2.0, 55.0] },
+  { "id": "yorkshire", "name": "Yorkshire", "bbox": [-2.6, 53.3, -0.1, 54.6] },
+  { "id": "north-wales", "name": "North Wales", "bbox": [-5.4, 52.4, -2.6, 53.5] },
+  { "id": "south-wales", "name": "South Wales", "bbox": [-5.4, 51.3, -2.6, 52.5] },
+  { "id": "midlands", "name": "The Midlands", "bbox": [-2.8, 52.0, -0.5, 53.4] },
+  { "id": "east-anglia", "name": "East Anglia", "bbox": [-0.6, 51.9, 1.8, 53.0] },
+  { "id": "south-west-england", "name": "South West England", "bbox": [-5.8, 50.0, -2.4, 51.5] },
+  { "id": "wessex", "name": "Wessex and the South Coast", "bbox": [-2.6, 50.5, -0.7, 51.6] },
+  { "id": "london-home-counties", "name": "London and the Home Counties", "bbox": [-1.0, 51.2, 0.6, 52.1] },
+  { "id": "kent-sussex", "name": "Kent and Sussex", "bbox": [-0.9, 50.6, 1.6, 51.5] }
+]
