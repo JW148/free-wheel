@@ -11,7 +11,7 @@ rider actually does with a phone on a handlebar was not fully anticipated.
 | iOS "Undo Typing" fires constantly on rough ground | ✅ no text field on the riding screen at all; naming moved to the library |
 | No way back to the ride summary after dismissing it | ✅ rides auto-save, and the library opens the same figures again |
 | The library does not distinguish planned from ridden | ✅ an All / Planned / Ridden filter over one list |
-| Want to follow a ride you recorded, and to record without a route | ✅ `parseTrackGpx`, a `recorded` pseudo-profile, and a Record entry point |
+| Want to follow a ride you recorded, and to record without a route | ✅ `parseTrackGpx` and a `recorded` pseudo-profile — the Record entry point was withdrawn on 2026-09-10, see §3 |
 | The position arrow is too small and too low-contrast | ✅ 45 px riding arrow, two-tone ring, and a mode-dependent size |
 | The graph card should minimise, smoothly | ✅ a two-layer HUD with a measured-height transition |
 
@@ -81,10 +81,18 @@ Two consequences worth knowing:
   drops the power column, the lookahead graph, the elevation profile and the climb list, and
   says why. A flat bar chart is not "no data" — it is a claim that the road ahead is level.
 
-**Record mode** is the same ride with the route-shaped half absent: `Just record` in the sheet,
-or the record button on the rail where no route is chosen. The HUD switches to what a bike
-computer shows — speed, ridden, elapsed — because "to go" and "arrive" are functions of a route
-and a permanent em dash reads as a broken app rather than a mode.
+**Record mode** was the same ride with the route-shaped half absent: `Just record` in the
+sheet, or the record button on the rail where no route was chosen. The HUD switched to what a
+bike computer shows — speed, ridden, elapsed — because "to go" and "arrive" are functions of a
+route and a permanent em dash reads as a broken app rather than a mode.
+
+> **Withdrawn on 2026-09-10.** Riding with nothing to follow was a second app inside this one:
+> a mode with its own figures, its own callout and its own reason for the panel not to fold,
+> for a job a dedicated bike computer already does. Both entry points are gone and with them
+> the `hasRoute` branch in `hud.ts` — every ride now follows a line, so the HUD is one shape.
+> What it existed to feed is unaffected: **rides recorded while following a route are still
+> saved**, and a saved ride's own track can still be put back on the map and followed, which is
+> the half of the feature that was actually asked for.
 
 ## 4. The rider's marker
 

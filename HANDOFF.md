@@ -47,8 +47,9 @@ navigation was right and six things about *using* it were not. Phase 7 is those 
 - **The ride summary is reachable again.** Rides auto-save, and a ride in the library opens the
   same figures, from the same component.
 - **The library filters** All / Planned / Ridden over one list.
-- **A recorded ride can be followed**, drawn as its own `recorded` pseudo-profile in orange —
-  and a ride can be recorded with no route at all (`Just record`).
+- **A recorded ride can be followed**, drawn as its own `recorded` pseudo-profile in orange.
+  (Recording a ride with *no* route was also built, and withdrawn on 2026-09-10 — see §3 of the
+  phase 7 notes. Rides recorded while following a route are still saved.)
 - **The rider's arrow** is 45 px with a two-tone ring while riding, from 20 px in one tone.
 - **The HUD folds** to a strip: three figures, the progress bar, and the climb line only when
   there is a climb inside 1.2 km.

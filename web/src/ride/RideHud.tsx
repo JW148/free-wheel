@@ -83,26 +83,28 @@ export default function RideHud({
   // the one number that must keep counting is the one that would stop.
   useTicker(record !== null)
 
-  const following = geometry !== null && progress !== null
+  // Geometry alone, not geometry *and* a fix: the seconds between Start and the first fix are
+  // a route being followed by a rider whose position is not known yet, and the honest way to
+  // draw that is the route's own figures reading em dashes — not a different panel.
+  const hasRoute = geometry !== null
   const hasElevation = geometry?.hasElevation ?? false
-  const figures = figuresFor({ hasRoute: following, hasElevation })
+  const figures = figuresFor({ hasElevation })
   const mini = compactFigures(figures)
   const value = figureValues({ speedMps, powerW, progress, arrivalAt, record })
 
   /**
-   * Whether the full panel is on screen.
+   * Whether the rider's place on the line is known yet.
    *
-   * Not simply the preference: with no route there is nothing to fold away — both sizes carry
-   * the same three figures — and the one thing only the full layer has is the line explaining
-   * that this is a recording with no route. A rider who collapsed the panel on their last
-   * ride would otherwise start a free ride with the explanation hidden and no chevron to
-   * reach it, because the chevron is not drawn when there is nothing to collapse.
+   * Everything drawn against the route — the lookahead, the progress bar, the callout — needs
+   * a snapped position, and there is none until the first fix arrives. The figures are drawn
+   * regardless: a dash where a number will be is a number waiting, and the status bar below
+   * says what it is waiting for.
    */
-  const open = expanded || !following
-  const shown = open ? 'full' : 'mini'
+  const tracking = hasRoute && progress !== null
+  const shown = expanded ? 'full' : 'mini'
   const full = useMeasuredHeight()
   const strip = useMeasuredHeight()
-  const height = (open ? full.height : strip.height) ?? undefined
+  const height = (expanded ? full.height : strip.height) ?? undefined
 
   return (
     <>
@@ -115,56 +117,53 @@ export default function RideHud({
         data-measured={full.height !== null && strip.height !== null ? 'yes' : 'no'}
         style={{ height }}
       >
-        <div className="hud-layer" ref={full.ref} data-shown={open ? 'yes' : 'no'} aria-hidden={!open}>
+        <div
+          className="hud-layer"
+          ref={full.ref}
+          data-shown={expanded ? 'yes' : 'no'}
+          aria-hidden={!expanded}
+        >
           <Figures keys={figures} value={value} />
 
           {/* The lookahead is a chart of heights, so a track without any renders as a flat
               band — which is not "no data", it is a claim that the road ahead is level. The
               overview bar survives, because progress along the line is still true. */}
-          {following && hasElevation && <RideProfile geometry={geometry} progress={progress} />}
-          {following && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
+          {tracking && hasElevation && <RideProfile geometry={geometry} progress={progress} />}
+          {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
 
-          {/* Only where there is a route to say something about. Riding with no route is a
-              legitimate state — recording your own line — and "nothing steep left on this
-              route" would be a claim about a route that does not exist. */}
-          {following && hasElevation && (
+          {tracking && hasElevation && (
             <Callout ahead={ahead} rest={rest} grade={progress.grade} />
           )}
-          {following && !hasElevation && (
+          {hasRoute && !hasElevation && (
             <p className="hud-callout">
               <span className="hud-callout-mark" style={{ '--tint': 'currentColor' } as React.CSSProperties} />
               No surveyed heights on this track, so no gradients or power.
             </p>
           )}
-          {!following && (
-            <p className="hud-callout">
-              <span className="hud-callout-mark" style={{ '--tint': 'currentColor' } as React.CSSProperties} />
-              Recording your own line. No route to follow.
-            </p>
-          )}
         </div>
 
-        <div className="hud-layer" ref={strip.ref} data-shown={open ? 'no' : 'yes'} aria-hidden={open}>
+        <div
+          className="hud-layer"
+          ref={strip.ref}
+          data-shown={expanded ? 'no' : 'yes'}
+          aria-hidden={expanded}
+        >
           <Figures keys={mini} value={value} compact />
-          {following && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
-          {following && calloutMatters(ahead, hasElevation) && (
+          {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
+          {tracking && calloutMatters(ahead, hasElevation) && (
             <Callout ahead={ahead} rest={null} grade={progress.grade} />
           )}
         </div>
 
-        {/* Nothing to fold away with no route: the strip and the panel would be the same
-            three figures, and a button that does nothing visible is worse than no button. */}
-        {following && (
-          <button
-            type="button"
-            className="hud-collapse"
-            onClick={() => onExpandedChange(!expanded)}
-            aria-expanded={expanded}
-            aria-label={expanded ? 'Hide the elevation graph' : 'Show the elevation graph'}
-          >
-            <ChevronIcon />
-          </button>
-        )}
+        <button
+          type="button"
+          className="hud-collapse"
+          onClick={() => onExpandedChange(!expanded)}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Hide the elevation graph' : 'Show the elevation graph'}
+        >
+          <ChevronIcon />
+        </button>
       </div>
 
       {offRoute && (
@@ -204,7 +203,7 @@ export default function RideHud({
 /**
  * A figure's label, its value, and whether it is modelled rather than measured.
  *
- * A table rather than a switch in the markup, because the same six figures are drawn twice —
+ * A table rather than a switch in the markup, because the same five figures are drawn twice —
  * once expanded, once on the strip — and a duplicated ternary chain is how the two sizes end
  * up disagreeing about what "to go" means.
  */
@@ -222,10 +221,6 @@ function figureValues(input: {
     togo: { unit: 'to go', text: progress ? formatAway(progress.remainingM) : '—' },
     arrive: { unit: 'arrive', text: formatClock(arrivalAt) },
     ridden: { unit: 'ridden', text: record ? formatDistance(record.distanceM) : '—' },
-    elapsed: {
-      unit: 'elapsed',
-      text: record ? formatElapsed((Date.now() - record.startedAt) / 1000) : '—',
-    },
   }
 }
 

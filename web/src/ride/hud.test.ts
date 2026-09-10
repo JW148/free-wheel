@@ -46,38 +46,29 @@ describe('calloutMatters', () => {
 
 describe('figuresFor', () => {
   it('carries the four riding figures on a route with heights', () => {
-    expect(figuresFor({ hasRoute: true, hasElevation: true })).toEqual([
-      'speed',
-      'power',
-      'togo',
-      'arrive',
-    ])
+    expect(figuresFor({ hasElevation: true })).toEqual(['speed', 'power', 'togo', 'arrive'])
   })
 
   it('drops power on a track with no heights rather than showing a permanent dash', () => {
-    const figures = figuresFor({ hasRoute: true, hasElevation: false })
+    const figures = figuresFor({ hasElevation: false })
     expect(figures).not.toContain('power')
     expect(figures).toContain('togo')
   })
 
-  it('shows a bike computer with no route: how far, how long', () => {
-    expect(figuresFor({ hasRoute: false, hasElevation: false })).toEqual([
-      'speed',
-      'ridden',
-      'elapsed',
-    ])
+  it('keeps four figures either way, because every ride has a route to measure against', () => {
+    expect(figuresFor({ hasElevation: true })).toHaveLength(4)
+    expect(figuresFor({ hasElevation: false })).toHaveLength(4)
   })
 })
 
 describe('compactFigures', () => {
   it('keeps three, and keeps the two that answer “how much further”', () => {
-    const compact = compactFigures(figuresFor({ hasRoute: true, hasElevation: true }))
+    const compact = compactFigures(figuresFor({ hasElevation: true }))
     expect(compact).toEqual(['speed', 'togo', 'arrive'])
   })
 
-  it('never drops below three, so the strip is not one lonely number', () => {
-    // With no route there is nothing to drop: filtering out `ridden` would leave two.
-    const compact = compactFigures(figuresFor({ hasRoute: false, hasElevation: false }))
-    expect(compact).toHaveLength(3)
+  it('drops distance ridden rather than the pair that says how much is left', () => {
+    const compact = compactFigures(figuresFor({ hasElevation: false }))
+    expect(compact).toEqual(['speed', 'togo', 'arrive'])
   })
 })

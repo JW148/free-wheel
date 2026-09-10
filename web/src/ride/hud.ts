@@ -40,20 +40,19 @@ export function calloutMatters(ahead: GradientAhead | null, hasElevation: boolea
 }
 
 /**
- * The four figures the expanded HUD carries, or the three it carries with no route.
+ * The four figures the expanded HUD carries.
  *
- * Riding with no route to follow is a real mode — `Record` starts one — and two of the four
- * figures are then permanently em dashes. "To go" and "arrive" are both functions of a route,
- * and a dash where a number belongs reads as a broken app rather than as a mode. What a rider
- * recording their own line wants instead is the pair a bike computer shows: how far, how long.
+ * Every ride follows a line — a computed route, or a track someone rode and saved — so "to go"
+ * and "arrive" always have an answer and the panel is always the same shape. It was not always
+ * so: riding with nothing to follow used to be a mode, and it carried the pair a bike computer
+ * shows instead. That mode is gone, and with it the branch.
  *
  * Returned as a list of keys rather than rendered here, so the HUD keeps its markup and this
  * keeps the decision.
  */
-export type FigureKey = 'speed' | 'power' | 'togo' | 'arrive' | 'ridden' | 'elapsed'
+export type FigureKey = 'speed' | 'power' | 'togo' | 'arrive' | 'ridden'
 
-export function figuresFor(input: { hasRoute: boolean; hasElevation: boolean }): FigureKey[] {
-  if (!input.hasRoute) return ['speed', 'ridden', 'elapsed']
+export function figuresFor(input: { hasElevation: boolean }): FigureKey[] {
   // Power is derived from the route's gradient, so a route with no heights cannot produce one
   // — and a watts column that is always a dash is worse than a column that is not there.
   return input.hasElevation
@@ -64,7 +63,7 @@ export function figuresFor(input: { hasRoute: boolean; hasElevation: boolean }):
 /** The three the collapsed strip keeps, from whichever set the expanded panel is showing. */
 export function compactFigures(figures: FigureKey[]): FigureKey[] {
   // Speed always, then the two that answer "how much further" — dropping whichever of power or
-  // distance-ridden is present, because neither changes a decision at a glance.
-  const kept = figures.filter((key) => key !== 'power' && key !== 'ridden')
-  return kept.length >= 3 ? kept.slice(0, 3) : figures.slice(0, 3)
+  // distance-ridden is present, because neither changes a decision at a glance. Either set
+  // leaves exactly three, which is what the strip has room for.
+  return figures.filter((key) => key !== 'power' && key !== 'ridden')
 }
