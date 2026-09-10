@@ -46,15 +46,12 @@ export default function RouteSheet({
   plan,
   sheet,
   onStart,
-  onRecord,
   onLoadSaved,
   onLoadTrack,
 }: {
   plan: Plan
   sheet: RouteSheetState
   onStart: () => void
-  /** Starts a ride with nothing to follow, recording where the rider goes. */
-  onRecord: () => void
   onLoadSaved: (entry: SavedRoute) => void
   onLoadTrack: (entry: SavedRide) => void
 }) {
@@ -143,24 +140,14 @@ export default function RouteSheet({
             <Drawer.Handle className="drawer-handle" />
             <div className="drawer-body">
               {sheet.view === 'library' ? (
-                <>
-                  <div className="drawer-head">
-                    <button
-                      type="button"
-                      className="drawer-back"
-                      onClick={() => sheet.setView('compare')}
-                      aria-label="Back to the route"
-                    >
-                      <ChevronLeftIcon />
-                    </button>
-                    <Drawer.Title className="drawer-title">Saved</Drawer.Title>
-                  </div>
-                  <RouteLibrary
-                    onLoad={onLoadSaved}
-                    onLoadTrack={onLoadTrack}
-                    reloadKey={librarySaves}
-                  />
-                </>
+                // No head here: the library draws its own, because it has two screens and
+                // only it knows whether the list or a ride's detail is showing.
+                <RouteLibrary
+                  onBack={() => sheet.setView('compare')}
+                  onLoad={onLoadSaved}
+                  onLoadTrack={onLoadTrack}
+                  reloadKey={librarySaves}
+                />
               ) : sheet.view === 'detail' && chosen && plan.chosen ? (
                 <>
                   <div className="drawer-head">
@@ -354,12 +341,6 @@ export default function RouteSheet({
                   <div className="sheet-actions">
                     <button type="button" onClick={sheet.showLibrary}>
                       Saved routes
-                    </button>
-                    {/* Riding with nothing planned. Here rather than only on the rail because
-                        this is the screen a rider is on when they decide they do not want a
-                        route today — and because the rail's icons cannot say "no route". */}
-                    <button type="button" onClick={onRecord}>
-                      Just record
                     </button>
                     <button
                       type="button"

@@ -578,22 +578,6 @@ export default function RideView({
   }, [locateOnce, map, courseUp, heading, announcer, voice])
 
   /**
-   * Starts a ride with nothing to follow.
-   *
-   * The same ride as any other — the same wake lock, the same recording, the same summary at
-   * the end — with the route-shaped half of the screen simply absent. It exists because the
-   * app was only useful once you had planned something, and half of riding is going out
-   * without a plan and wanting the line you took afterwards. The recorded track can then be
-   * loaded back out of the library and followed, which is the other half of the same feature.
-   *
-   * Offered only where there is no chosen route: with one chosen, Start already means "ride
-   * it", and a second button meaning "ride it but ignore it" is a question nobody is asking.
-   */
-  const record = useCallback(() => {
-    void startRiding()
-  }, [startRiding])
-
-  /**
    * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
    * the collapse animation can index off it — the travel and stagger are both functions of a
    * button's position in the stack, and hand-numbering them would rot the first time one moved.
@@ -613,16 +597,6 @@ export default function RideView({
       label: 'Saved routes and rides',
       onClick: sheet.showLibrary,
     },
-    ...(plan.chosen
-      ? []
-      : [
-          {
-            key: 'record',
-            icon: <RecordIcon />,
-            label: 'Record a ride without a route',
-            onClick: record,
-          },
-        ]),
     {
       key: 'theme',
       icon: theme === 'dark' ? <SunIcon /> : <MoonIcon />,
@@ -815,7 +789,6 @@ export default function RideView({
           plan={plan}
           sheet={sheet}
           onStart={() => void startRiding()}
-          onRecord={record}
           onLoadSaved={(entry) => {
             if (plan.loadSaved(entry)) {
               sheet.setView('detail')
@@ -896,20 +869,6 @@ function PinIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" />
       <circle cx="12" cy="10.4" r="2.4" />
-    </svg>
-  )
-}
-
-/**
- * A filled dot in a ring, for recording. The universally understood record button, and the
- * only icon in the rail with a solid centre — which is what makes it findable at a glance
- * among six outlines.
- */
-function RecordIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="4.6" fill="currentColor" stroke="none" />
     </svg>
   )
 }

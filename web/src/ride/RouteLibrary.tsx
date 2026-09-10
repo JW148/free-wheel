@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Drawer } from 'vaul'
 import { formatDistance, formatDuration } from './gpx'
 import { formatElapsed } from './format'
 import { profileById } from './profiles'
@@ -49,10 +50,13 @@ import { gpxFilename, shareGpx } from './share'
  * route in a list — far more than a name a rider did not bother to type.
  */
 export default function RouteLibrary({
+  onBack,
   onLoad,
   onLoadTrack,
   reloadKey,
 }: {
+  /** Leaves the library for the route. The head is drawn here, so the way out is too. */
+  onBack: () => void
   /** Puts a saved route back on the map, ready to ride. */
   onLoad: (entry: SavedRoute) => void
   /** Puts a recorded ride's own track back on the map, to be followed as it was ridden. */
@@ -112,7 +116,14 @@ export default function RouteLibrary({
     if (failure) setProblem(failure)
   }
 
-  if (entries === null) return <p className="section-label">Loading saved routes…</p>
+  if (entries === null) {
+    return (
+      <div className="library">
+        <LibraryHead title="Saved" onBack={onBack} backLabel="Back to the route" />
+        <p className="section-label">Loading saved routes…</p>
+      </div>
+    )
+  }
 
   const open = entries.find((entry) => entry.id === openRide && entry.kind === 'ride') as
     | SavedRide
@@ -136,6 +147,8 @@ export default function RouteLibrary({
 
   return (
     <div className="library">
+      <LibraryHead title="Saved" onBack={onBack} backLabel="Back to the route" />
+
       <div className="library-head">
         <p className="section-label">Routes and rides</p>
         <div className="segmented" role="group" aria-label="Show">
@@ -247,18 +260,20 @@ function RideDetail({
 
   return (
     <div className="library">
-      <div className="drawer-head">
-        <button type="button" className="drawer-back" onClick={onBack} aria-label="Back to the list">
-          <ChevronLeftIcon />
-        </button>
-        <div className="ride-detail-title">
-          <span className="library-name">{ride.name}</span>
-          <span className="library-figures">{rideWhen(ride.summary.startedAt)}</span>
-        </div>
+      <LibraryHead
+        title={
+          <span className="ride-detail-title">
+            <span className="library-name">{ride.name}</span>
+            <span className="library-figures">{rideWhen(ride.summary.startedAt)}</span>
+          </span>
+        }
+        onBack={onBack}
+        backLabel="Back to the saved list"
+      >
         <button type="button" className="primary" onClick={onRide}>
           Ride it
         </button>
-      </div>
+      </LibraryHead>
 
       <RideStats summary={ride.summary} />
 
@@ -320,6 +335,37 @@ function RideDetail({
           {problem}
         </p>
       )}
+    </div>
+  )
+}
+
+/**
+ * The library's own drawer head, in both of its states.
+ *
+ * It lives here rather than in `RouteSheet` because the library has two screens and only it
+ * knows which one is showing. When the sheet drew the head, a ride's detail arrived *under*
+ * the sheet's "Saved" bar and stacked two headers with two back chevrons — one going to the
+ * list, one to the route — which reads as an app that has lost track of where you are.
+ */
+function LibraryHead({
+  title,
+  onBack,
+  backLabel,
+  children,
+}: {
+  title: React.ReactNode
+  onBack: () => void
+  /** Where back goes, said out loud — it is a different place on each screen. */
+  backLabel: string
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="drawer-head">
+      <button type="button" className="drawer-back" onClick={onBack} aria-label={backLabel}>
+        <ChevronLeftIcon />
+      </button>
+      <Drawer.Title className="drawer-title">{title}</Drawer.Title>
+      {children}
     </div>
   )
 }

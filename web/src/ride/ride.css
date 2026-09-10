@@ -402,8 +402,8 @@
   pointer-events: none;
 }
 
-/* Bottom-right, over the callout row, which is the only row with space to spare — the
-   figures are hard against both edges by design. Deliberately quiet: it is reached once a
+/* Expanded, bottom-right over the callout row, which is the only row with space to spare —
+   the figures are hard against both edges by design. Deliberately quiet: it is reached once a
    ride, and a loud chevron beside four large numbers would read as one of them. */
 .hud-collapse {
   position: absolute;
@@ -436,6 +436,15 @@
   transform: rotate(180deg);
 }
 
+/* Collapsed there is no callout row to sit on — the strip is figures, a progress bar, and
+   sometimes a climb line — so bottom-right drops the chevron onto the progress bar with an
+   empty quarter of the row above it. On the strip it belongs beside the figures instead,
+   level with them, in the gutter `.hud-figures[data-compact='yes']` leaves for it. */
+.hud[data-mode='mini'] .hud-collapse {
+  top: 0.4rem;
+  bottom: auto;
+}
+
 .hud-figures {
   display: grid;
   grid-template-columns: repeat(var(--columns, 4), 1fr);
@@ -448,6 +457,18 @@
    the rider who folded the graph away has said they want the map instead. */
 .hud-figures[data-compact='yes'] {
   margin-bottom: 0.3rem;
+  /* Room for the chevron, which is level with this row on the strip. Reserved rather than
+     overlapped: the figures own the width they are given, and the button owns the rest. */
+  padding-right: 2.4rem;
+}
+
+/* The last figure hugs the gutter rather than the left edge of a cell wider than it needs.
+   Three equal columns of a phone's width are each half again as wide as "23:01", so a
+   left-aligned last figure ended a quarter of the row short of the chevron and left it
+   sitting alone in the gap. */
+.hud-figures[data-compact='yes'] div:last-child {
+  align-items: flex-end;
+  text-align: right;
 }
 
 .hud-figures[data-compact='yes'] dd {
@@ -464,12 +485,17 @@
   min-width: 0;
 }
 
-/* `clamp` rather than a media query: the four figures have to fit side by side on a 375px
-   phone and are allowed to grow on anything wider, and there is no breakpoint at which the
-   answer changes — it is a continuous function of the width. */
+/* `clamp` rather than a media query: the figures have to fit side by side on a 375px phone
+   and are allowed to grow on anything wider, and there is no breakpoint at which the answer
+   changes — it is a continuous function of the width.
+   Divided by the column count, because the width a figure gets is the row's width over the
+   number of figures in it, and a size that fits three does not fit four: at a flat 7.5vw the
+   four-up row rendered "5.6 km" into an 87px cell, and `overflow: hidden` clipped it hard
+   against the "23:01" beside it — two figures reading as one number, with the labels above
+   them looking adrift from the values they name. */
 .hud-figures dd {
   margin: 0;
-  font-size: clamp(1.25rem, 7.5vw, 1.75rem);
+  font-size: clamp(1.05rem, calc(22vw / var(--columns, 4)), 1.75rem);
   font-weight: 600;
   line-height: 1.05;
   letter-spacing: -0.03em;
