@@ -14,6 +14,9 @@ export function hashOf(buffer) {
  */
 export function decideSegmentAction({ status, upstreamHash, mirrored }) {
   if (status === 304) return { action: 'skip', reason: 'not-modified' }
+  if (!upstreamHash) {
+    throw new Error(`a ${status} response produced no hash — refusing to publish an unnamed object`)
+  }
   if (mirrored && mirrored.hash === upstreamHash) return { action: 'skip', reason: 'identical-bytes' }
   return { action: 'publish', hash: upstreamHash }
 }

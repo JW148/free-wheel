@@ -32,4 +32,15 @@ describe('decideSegmentAction', () => {
     expect(decideSegmentAction({ status: 200, upstreamHash: 'bbbb2222', mirrored }))
       .toEqual({ action: 'publish', hash: 'bbbb2222' })
   })
+
+  it('throws when a 200 response produces no hash and mirrored entry exists', () => {
+    const mirrored = { url: 'segments4/W5_N55-aaaa1111.rd5', bytes: 10, hash: 'aaaa1111', changed: '2026-08-24T00:00:00Z' }
+    expect(() => decideSegmentAction({ status: 200, upstreamHash: null, mirrored }))
+      .toThrow(/a 200 response produced no hash/)
+  })
+
+  it('throws when a 200 response produces no hash and no mirrored entry', () => {
+    expect(() => decideSegmentAction({ status: 200, upstreamHash: null, mirrored: undefined }))
+      .toThrow(/a 200 response produced no hash/)
+  })
 })
