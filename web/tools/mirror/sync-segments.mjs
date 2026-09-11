@@ -7,6 +7,10 @@
  * Must run after `cut-basemaps.mjs` has published at least one basemap for every region in
  * `regions.json` — this script carries basemap entries forward from the current manifest
  * rather than cutting them itself, and refuses to publish a region it has no basemap for.
+ *
+ * No retry around the fetches or the upload below: a transient failure fails the whole run
+ * loudly, brouter.de is untouched by it, and the job simply runs again next week. That is
+ * deliberate — a partial publish is worse than a skipped week.
  */
 import { readFileSync } from 'node:fs'
 import { segmentsForBbox } from './lib/geometry.mjs'

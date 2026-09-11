@@ -94,7 +94,9 @@ done
 ```
 
 Pass whatever date that prints as the argument to `npm run mirror:basemaps`. The cron line
-below does the same search inline so the monthly job never needs a human to pick a date.
+below does **not** do this search — it guesses `<current-year><current-month>01`, which is
+usually right but not guaranteed the moment cron fires at 03:41 on the 1st. See "Cron" below
+for what that means operationally.
 
 ## CORS
 
@@ -155,10 +157,14 @@ disagree about which is which.
 41 3 1 * *   cd /srv/free-wheel/web && npm run mirror:basemaps -- $(date +\%Y\%m01) >> /var/log/free-wheel-mirror.log 2>&1
 ```
 
-Weekly on Mondays, monthly on the 1st. The monthly line uses the 1st of the *current* month as
-its build date; by the time cron fires early on the 1st, Protomaps' build for that date is not
-guaranteed to exist yet. If the job logs a `pmtiles extract` failure, rerun it by hand with the
-date-search loop above rather than waiting for next month.
+Weekly on Mondays, monthly on the 1st. The monthly line is not self-healing: it guesses the
+1st of the current month as the build date, and Protomaps is not guaranteed to have published
+that day's build yet at 03:41. When it hasn't, `pmtiles extract` fails, the whole run fails
+loudly (see "no retry" in `cut-basemaps.mjs`'s own header comment), and the manifest is simply
+not republished that month. Check `/var/log/free-wheel-mirror.log` after the 1st, and if it
+failed, rerun by hand with the date-search loop above rather than waiting for next month —
+`manifest.json` still serves last month's regions in the meantime, which is stale but never
+broken.
 
 ## What is not done here
 
