@@ -21,9 +21,9 @@ web/tools/mirror/
   lib/manifest.mjs        buildManifest, assertPublishable
   lib/bootstrap.mjs       publishing on a bucket that has nothing on it yet
   s3.mjs                  the S3 calls, and the two cache-control policies
-  sync-segments.mjs       the weekly job: brouter.de -> the bucket, by hash
-  cut-basemaps.mjs        the monthly job: Protomaps -> region archives + the picker backdrop
-  README.md               bucket layout, CORS, cron, and the order the two jobs must run in
+  sync-segments.mjs       the cheap job: brouter.de -> the bucket, by hash
+  cut-basemaps.mjs        the expensive job: Protomaps -> region archives + the picker backdrop
+  README.md               bucket layout, CORS, refreshing, and the order the two jobs must run in
   regions.json            the 14-region list, cut to a byte budget
 web/src/data/
   regions.ts              regionState and downloadPlan — what a region costs, and if it is stale
@@ -164,8 +164,8 @@ a narrower test around the bug.
 response with no hash (an unexpected shape from brouter.de) falling through to "publish" and
 naming a bucket object `W5_N50-null.rd5`. Once for segments (Task 3), once for `buildManifest`
 guarding `region.basemap` the same way (Task 4) — the guard had been applied narrowly the first
-time and needed to be symmetric. Both now throw loudly. The cron has a log and can afford to
-skip a week; every client reading a null-named object could not.
+time and needed to be symmetric. Both now throw loudly. A run that fails in front of the person
+who started it can afford to be skipped; every client reading a null-named object could not.
 
 ### The Worker has no `localStorage`, and the manifest module now does
 
@@ -352,9 +352,15 @@ Consequently:
   take, not a working address. **There is no bucket public URL to record here.** Replace the
   constant once the first upload succeeds, and confirm with `curl -sI "$MANIFEST_URL" | head -1`
   expecting `HTTP/2 200`.
-- The VPS cron is written down (two lines, in `README.md`) but not installed anywhere. It
-  needs five environment variables the app itself never uses, because the app has none:
-  `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
+- **The scheduled job was dropped, on purpose.** The plan called for a weekly cron on a VPS;
+  there is no VPS, and standing one up to make eight conditional HTTP requests a week is more
+  infrastructure than the job is worth. Both scripts are run by hand instead, from a laptop with
+  the five environment variables the app itself never uses — `S3_ENDPOINT`, `S3_REGION`,
+  `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. This costs nothing in the app:
+  `regions.ts` decides staleness by comparing hashes, and no timestamp is ever shown to a rider,
+  so a manifest refreshed in March is indistinguishable from one refreshed nightly until the
+  bytes upstream actually change. The two cron lines survive as an appendix in the mirror's
+  `README.md` for whoever wants them later.
 - **Nothing in `RegionPicker` has ever run in a browser**, for the same reason — there is
   nothing to stream from. Every line above in "the browser verification checklist" is unrun.
 - **The on-device acceptance test — cold launch, tap a region, airplane mode, plan and follow —

@@ -11,8 +11,8 @@ const covers = (lon, lat) =>
  * A coarse outline of mainland Great Britain, traced roughly along the coast from Land's End
  * clockwise and back.
  *
- * Written out by hand rather than pulled from a dataset: this test runs on the VPS with no
- * network and nothing installed, and a shapefile would be a dependency the mirror does not
+ * Written out by hand rather than pulled from a dataset: this test runs with no network and
+ * nothing installed, and a shapefile would be a dependency the mirror does not
  * otherwise have. It is deliberately crude — a straight line across the Bristol Channel, the
  * Wash, the Moray Firth and the Firth of Forth means the test asks for coverage over some
  * water, which costs nothing because every region bbox is a rectangle that spills into the sea

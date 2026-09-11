@@ -1,5 +1,5 @@
 /**
- * Mirrors the BRouter segments Britain needs, weekly.
+ * Mirrors the BRouter segments Britain needs. Run by hand — see README.md.
  *
  * Roughly eight conditional requests to brouter.de. That is the entire load this project
  * puts on it, and it replaces one full download per new rider.
@@ -9,8 +9,8 @@
  * rather than cutting them itself, and refuses to publish a region it has no basemap for.
  *
  * No retry around the fetches or the upload below: a transient failure fails the whole run
- * loudly, brouter.de is untouched by it, and the job simply runs again next week. That is
- * deliberate — a partial publish is worse than a skipped week.
+ * loudly, brouter.de is untouched by it, and you run it again. That is deliberate — a partial
+ * publish is worse than a skipped run.
  */
 import { readFileSync } from 'node:fs'
 import { segmentsForBbox } from './lib/geometry.mjs'
@@ -56,14 +56,14 @@ for (const name of wanted) {
   console.log(`${name}: published ${url} (${body.byteLength} bytes)`)
 }
 
-// Region basemaps are cut by the monthly job; carry forward whatever it last published.
+// Region basemaps are cut by `cut-basemaps.mjs`; carry forward whatever it last published.
 //
 // A region with none yet is left out of this manifest rather than failing the run. It used to
 // throw, which meant that adding a region to `regions.json` stopped every routing-data update
-// until `cut-basemaps` next ran on the 1st: the segments above had already been fetched and
-// published, and then nothing was written to say so. Its segments are mirrored above
-// regardless — `wanted` is computed from every region in `regions.json` — so the monthly run
-// finds them waiting and publishes the region complete on its first pass.
+// until `cut-basemaps` next ran — which, unscheduled, may be months: the segments above had
+// already been fetched and published, and then nothing was written to say so. Its segments are
+// mirrored above regardless — `wanted` is computed from every region in `regions.json` — so the
+// next basemap run finds them waiting and publishes the region complete on its first pass.
 const { regions: withBasemaps, missingBasemap } = carryForwardBasemaps(regions, previous.regions)
 for (const id of missingBasemap) {
   console.log(`${id}: no basemap yet — left out of this manifest. Run: npm run mirror:basemaps`)

@@ -54,14 +54,15 @@ export function buildBootstrapManifest({ regions, segments, picker, generated })
 }
 
 /**
- * Pairs every region with the basemap the monthly job last published for it, and names the
+ * Pairs every region with the basemap `cut-basemaps.mjs` last published for it, and names the
  * ones that have none.
  *
  * `sync-segments.mjs` never cuts a basemap — only `cut-basemaps.mjs` does — so a region added
- * to `regions.json` between monthly runs has segments the weekly job can mirror and no map to
- * go with them. That region is named rather than published, and publishing stops for it alone:
- * refusing the whole run, which is what this replaced, meant that adding a region silently
- * stopped every *other* region's routing data from updating until the 1st of the month.
+ * to `regions.json` since the last basemap run has segments the segment sync can mirror and no
+ * map to go with them. That region is named rather than published, and publishing stops for it
+ * alone: refusing the whole run, which is what this replaced, meant that adding a region
+ * silently stopped every *other* region's routing data from updating until the next basemap
+ * run — which, with nothing scheduled, may be months.
  *
  * Order is preserved, so the picker's region order stays the one `regions.json` gives.
  */

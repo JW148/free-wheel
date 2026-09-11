@@ -2,7 +2,7 @@
  * BRouter segment names for a bounding box.
  *
  * Deliberately a second implementation of the geometry in `src/engine/tiles.ts` rather than
- * an import: this file runs under plain Node on the VPS with no TypeScript toolchain. The
+ * an import: this file runs under plain Node with no TypeScript toolchain. The
  * test asserts the two agree, which is what stops them drifting. The guards and antimeridian
  * handling mirror `tiles.ts` deliberately.
  */

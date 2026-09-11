@@ -86,8 +86,8 @@ a phone by hand exactly as before:
 
 **Standing the mirror up** is the next real step, and the code for it is already here:
 `web/tools/mirror/` holds `s3.mjs`, `sync-segments.mjs`, `cut-basemaps.mjs` and a `README.md`
-covering bucket layout, CORS, cron and — the part that matters on an empty bucket — the order
-the two jobs have to run in. What is missing is credentials. With them:
+covering bucket layout, CORS, how to refresh it by hand and — the part that matters on an
+empty bucket — the order the two jobs have to run in. What is missing is credentials. With them:
 
 ```bash
 cd web
@@ -185,7 +185,7 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
    Gradle composite build — that writes into the linked checkout.
 
 2. **The app downloads from our mirror, never from brouter.de.** Phase 6 replaced import-only
-   with a region picker that streams from a bucket a weekly VPS cron keeps in sync — the
+   with a region picker that streams from a bucket you refresh by hand, when you choose — the
    `Range`/`If-Range` resumable downloader mentioned in earlier revisions of this document
    was not thrown away, it is `web/src/engine/downloads.ts`, now load-bearing. Manual `.rd5`/
    `.pmtiles` import stays as the escape hatch. `brouter.de` still gets no direct traffic from

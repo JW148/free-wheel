@@ -1,17 +1,17 @@
 /**
- * Re-cuts the region basemaps and the picker's backdrop, monthly.
+ * Re-cuts the region basemaps and the picker's backdrop. Run by hand — see README.md.
  *
- * Monthly rather than weekly because a Protomaps daily build changes an extract's bytes
- * almost every time, so hashing does not damp basemap churn the way it damps segments. An
- * 86 MB re-download is not worth offering because a cafe moved.
+ * The expensive half of the mirror, and the one to run rarely: a Protomaps daily build changes
+ * an extract's bytes almost every time, so hashing does not damp basemap churn the way it damps
+ * segments. An 86 MB re-download is not worth offering because a cafe moved.
  *
  * Needs the `pmtiles` CLI on PATH and a recent dated build: the dated archives expire.
  *
  * No retry around the network calls or `pmtiles extract` below: a transient failure here
- * fails the whole run loudly rather than publishing a partial manifest, and the job simply
- * runs again next month (or by hand — see README.md). That is deliberate, not an oversight —
- * this box has nothing installed to build a retry policy out of, and a cron job that fails
- * loud is easier to reason about than one that silently retries into a half-published state.
+ * fails the whole run loudly rather than publishing a partial manifest, and you run it again.
+ * That is deliberate, not an oversight — a run that fails loud in front of the person who
+ * started it is easier to reason about than one that silently retries into a half-published
+ * state.
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
@@ -34,8 +34,8 @@ const regions = JSON.parse(readFileSync(new URL('regions.json', import.meta.url)
 const previous = (await readJson('manifest.json')) ?? { segments: {}, regions: [] }
 // Each extracted .pmtiles archive is tens to ~180 MB (Task 2's measurements) and there are 15
 // of them (14 regions plus the UK overview) every run. Cleaned up in the `finally` below so a
-// monthly cron doesn't leave up to a gigabyte behind on every run until someone notices a full
-// disk — this was left dangling in the plan's own reference code.
+// run doesn't leave up to a gigabyte behind in your temp directory — this was left dangling in
+// the plan's own reference code.
 const work = mkdtempSync(join(tmpdir(), 'free-wheel-cut-'))
 
 try {

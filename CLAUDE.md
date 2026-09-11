@@ -248,12 +248,15 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   pattern; the API has no published rate limits or ToS.
 - **Routing data comes from our mirror, never from brouter.de.** The app downloads regions
   from a bucket the mirror publishes to. The two scripts that fill it, their shared pure logic,
-  the bucket layout, the CORS rule, the cron lines and the five environment variables they need
-  all live in `web/tools/mirror/` — start at its `README.md`. They are written and tested; what
-  has never happened is the first upload, because that needs credentials (see
-  `docs/phase-6-progress.md`). A weekly cron on the VPS is the only thing that ever talks to
-  brouter.de, at roughly eight conditional requests a week. Never fetch from brouter.de in the
-  app: it sends no CORS header, so a browser could not anyway, and never route against its API.
+  the bucket layout, the CORS rule, the refresh commands and the five environment variables they
+  need all live in `web/tools/mirror/` — start at its `README.md`. They are written and tested;
+  what has never happened is the first upload, because that needs credentials (see
+  `docs/phase-6-progress.md`). **Nothing is scheduled**: both scripts are run by hand from a
+  laptop, and that run is the only thing that ever talks to brouter.de, at roughly eight
+  conditional requests per refresh. Cadence is not load-bearing — staleness is decided by
+  comparing hashes, never by a calendar, so the app cannot tell when the last run happened.
+  Never fetch from brouter.de in the app: it sends no CORS header, so a browser could not
+  anyway, and never route against its API.
   Manual `.rd5` and `.pmtiles` import stays as an escape hatch for a bucket outage and for
   testing custom extracts.
 - **Imported data goes stale, and the mirror is what tells you.** Every object in the bucket is

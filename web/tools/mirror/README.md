@@ -1,11 +1,12 @@
 # The mirror
 
 There is no backend (see the top-level `CLAUDE.md`). This directory is the one exception: two
-scripts that run under plain Node on a VPS, not in the app, and fill an S3-compatible bucket
-with the data the app streams from. They are the only thing in this project that ever talks to
-`brouter.de`, and at roughly eight conditional requests a week — one per distinct BRouter
-segment Britain's regions need (`regions.test.mjs` asserts each region needs at most two, and
-`regions.json` currently has 14 regions overlapping onto a small shared set of grid cells).
+scripts that run under plain Node on your own machine, not in the app, and fill an
+S3-compatible bucket with the data the app streams from. They are the only thing in this project
+that ever talks to `brouter.de`, and at roughly eight conditional requests per refresh — one
+per distinct BRouter segment Britain's regions need (`regions.test.mjs` asserts each region
+needs at most two, and `regions.json` currently has 14 regions overlapping onto a small shared
+set of grid cells).
 
 Nothing under `web/src` reads these scripts or their dependencies at build time. They exist
 purely to keep the bucket current; the app only ever reads `manifest.json` and the objects it
@@ -13,17 +14,17 @@ names, over plain HTTPS, and has no environment variables of its own.
 
 ## What the two jobs do
 
-- **`sync-segments.mjs`** (weekly): for every BRouter segment any region needs, makes a
+- **`sync-segments.mjs`** (the cheap one): for every BRouter segment any region needs, makes a
   conditional request to `brouter.de/brouter/segments4/`, and republishes it under a
   content-addressed name only if the bytes actually differ from what is already mirrored.
   `brouter.de` rebuilds every segment's file weekly regardless of whether the underlying map
   data changed, so comparing hashes rather than trusting `Last-Modified` is what stops a rider
   being told to re-download 137 MB of nothing new (`lib/decide.mjs`).
-- **`cut-basemaps.mjs`** (monthly): re-cuts the picker's UK-wide backdrop and each region's
-  street-level basemap from a dated Protomaps build, and republishes whichever ones changed.
-  Monthly rather than weekly because a Protomaps daily build's bytes churn on almost every
-  extract regardless of content, so hashing does not damp this the way it damps segments — an
-  86 MB re-download is not worth offering because a cafe moved.
+- **`cut-basemaps.mjs`** (the expensive one): re-cuts the picker's UK-wide backdrop and each
+  region's street-level basemap from a dated Protomaps build, and republishes whichever ones
+  changed. Run it far less often than the segment sync: a Protomaps daily build's bytes churn on
+  almost every extract regardless of content, so hashing does not damp this the way it damps
+  segments — an 86 MB re-download is not worth offering because a cafe moved.
 
 Both scripts end by writing a single `manifest.json`, which is the one document
 `web/src/data/manifest.ts` fetches and the one the app's `parseManifest` validates strictly
@@ -43,10 +44,11 @@ with no regions would replace a good one with an empty picker. So `cut-basemaps.
 first, at least once, before `sync-segments.mjs` can ever publish anything.
 
 Leaving one region out rather than failing the whole run matters after the first time too:
-adding a region to `regions.json` used to stop *every* region's weekly routing-data update
-until `cut-basemaps` next ran on the 1st of the month. The new region's segments are mirrored
-on the weekly pass regardless — the wanted-segment list is computed from every region in
-`regions.json` — so the monthly job finds them waiting and publishes the region complete.
+adding a region to `regions.json` used to stop *every* region's routing-data update until
+`cut-basemaps` next ran, which may be months. The new region's segments are mirrored by
+`sync-segments.mjs` regardless — the wanted-segment list is computed from every region in
+`regions.json` — so whenever `cut-basemaps.mjs` next runs it finds them waiting and publishes
+the region complete.
 
 `cut-basemaps.mjs` itself only ever publishes a region into `manifest.json` once every BRouter
 segment that region needs is *also* already mirrored (`lib/manifest.mjs`'s `buildManifest`
@@ -77,8 +79,8 @@ npm run mirror:segments
 
 ## Environment variables
 
-Read only on the VPS, by `s3.mjs`. The app itself has none — it only ever does plain,
-unauthenticated `fetch()` calls against the public bucket URL.
+Read only by `s3.mjs`, on whichever machine you run the scripts from. The app itself has none —
+it only ever does plain, unauthenticated `fetch()` calls against the public bucket URL.
 
 | Variable | Meaning |
 |---|---|
@@ -100,15 +102,15 @@ running the job:
 
 ```bash
 for days_ago in 0 1 2 3 4 5 6; do
-  d=$(date -u -d "-${days_ago} days" +%Y%m%d)
+  d=$(date -u -v-${days_ago}d +%Y%m%d)        # BSD date, i.e. macOS; GNU is -d "-${days_ago} days"
   if curl -sfI "https://build.protomaps.com/${d}.pmtiles" > /dev/null; then echo "$d"; break; fi
 done
 ```
 
-Pass whatever date that prints as the argument to `npm run mirror:basemaps`. The cron line
-below does **not** do this search — it guesses `<current-year><current-month>01`, which is
-usually right but not guaranteed the moment cron fires at 03:41 on the 1st. See "Cron" below
-for what that means operationally.
+Pass whatever date that prints as the argument to `npm run mirror:basemaps`. Running this by
+hand is the reason the date is never wrong: the appendix's cron line guesses
+`<current-year><current-month>01` instead, and Protomaps is not guaranteed to have published
+that day's build by the time it fires.
 
 ## CORS and public-read
 
@@ -178,21 +180,46 @@ here is worth checking.
 Both are exported from `s3.mjs` as `IMMUTABLE` and `MANIFEST_CACHE` so the two scripts cannot
 disagree about which is which.
 
-## Cron
+## Refreshing the mirror
 
-```cron
-17 4 * * 1   cd /srv/free-wheel/web && npm run mirror:segments >> /var/log/free-wheel-mirror.log 2>&1
-41 3 1 * *   cd /srv/free-wheel/web && npm run mirror:basemaps -- $(date +\%Y\%m01) >> /var/log/free-wheel-mirror.log 2>&1
+**Nothing is scheduled.** Both scripts run from your own machine, when you decide the data is
+worth refreshing. There is no VPS, no cron and no log to check — an appendix at the end of this
+file keeps the cron lines for whoever wants to automate it later.
+
+Refreshing the routing data is the cheap half, and the one worth doing more often:
+
+```bash
+cd web
+export S3_ENDPOINT=... S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
+npm run mirror:segments
 ```
 
-Weekly on Mondays, monthly on the 1st. The monthly line is not self-healing: it guesses the
-1st of the current month as the build date, and Protomaps is not guaranteed to have published
-that day's build yet at 03:41. When it hasn't, `pmtiles extract` fails, the whole run fails
-loudly (see "no retry" in `cut-basemaps.mjs`'s own header comment), and the manifest is simply
-not republished that month. Check `/var/log/free-wheel-mirror.log` after the 1st, and if it
-failed, rerun by hand with the date-search loop above rather than waiting for next month —
-`manifest.json` still serves last month's regions in the meantime, which is stale but never
-broken.
+Eight conditional requests to `brouter.de`, and an upload only for segments whose bytes
+actually differ. Most runs publish nothing at all, which is the point of `lib/decide.mjs`.
+
+Refreshing the basemaps is the expensive half. Find a live Protomaps build date first (the loop
+above), then:
+
+```bash
+npm run mirror:basemaps -- 20260906
+npm run mirror:segments
+```
+
+Always run `mirror:segments` straight after `mirror:basemaps`, even though it is usually a
+no-op: if you added a region to `regions.json` since the last basemap cut, the manifest
+`cut-basemaps.mjs` just wrote is one the app deliberately rejects, and only `sync-segments.mjs`
+fills the new region in. See "Ordering" above.
+
+**What that second command costs on a laptop:** fifteen `pmtiles extract` runs, each reading
+ranges out of a 137 GB remote archive, then roughly 1.8 GB uploaded to the bucket. It is bounded
+by your broadband, not by the scripts, and the first run is the worst one. Budget an evening for
+it and minutes for a segment sync.
+
+**How often is often enough?** Monthly-ish for segments, once or twice a year for basemaps.
+Running either more often mostly produces no-ops: a rider is only ever offered a re-download
+when the bytes actually differ, so a refresh that changes nothing changes nothing on the phone
+either. Going much longer is safe but visible — riders keep routing on the data they have, and
+are simply never told an update exists.
 
 ## What is not done here
 
@@ -201,3 +228,20 @@ credentials, and the first real upload plus the CORS check against a live bucket
 repo owner's to run — see the commands in "Ordering" and "CORS" above. Once that first run
 succeeds, `web/src/data/origin.ts`'s `DATA_ORIGIN` (currently a placeholder) needs updating to
 the real bucket's public URL.
+
+## Appendix: automating it later
+
+Not installed anywhere, and deliberately so — nothing owns these credentials but your machine.
+If that ever changes, these are the two lines, and the caveat that comes with them:
+
+```cron
+17 4 * * 1   cd /srv/free-wheel/web && npm run mirror:segments >> /var/log/free-wheel-mirror.log 2>&1
+41 3 1 * *   cd /srv/free-wheel/web && npm run mirror:basemaps -- $(date +\%Y\%m01) >> /var/log/free-wheel-mirror.log 2>&1
+```
+
+Weekly on Mondays, monthly on the 1st. The monthly line is not self-healing: it guesses the 1st
+of the current month as the build date rather than searching for a live one, and Protomaps is
+not guaranteed to have published that day's build by 03:41. When it hasn't, `pmtiles extract`
+fails, the whole run fails loudly (see "no retry" in `cut-basemaps.mjs`'s own header comment),
+and the manifest is not republished that month. That failure is silent unless someone reads
+`/var/log/free-wheel-mirror.log` — which is the main thing running it by hand buys you.
