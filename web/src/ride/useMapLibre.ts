@@ -244,6 +244,13 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         remoteRef.current = url
         setStatus('ready')
       } catch (e) {
+        // The same test as the success path, and it belongs on both arms: a loan cancelled
+        // while its header was in flight has no standing to report anything. Without this, a
+        // slow mirror that eventually fails stamps `error` and `status: 'error'` on the map
+        // the rider was *given back* — a permanent alert quoting a fetch for an archive they
+        // are not looking at, over a map that is working, with nothing on the ride screen
+        // that can clear it.
+        if (generation !== loanGeneration.current) return
         setError(e instanceof Error ? e.message : String(e))
         setStatus('error')
       }
@@ -329,18 +336,36 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
    * papered over with `no-basemap`.
    */
   const discardMap = useCallback((outcome: 'nothing-installed' | 'unavailable'): Handback => {
-    map.current?.remove()
+    // Refs first, map second, and the order is load-bearing. `remove()` is the one line here
+    // that can throw, and with the old order a throw left `remoteRef` set — so the caller
+    // reported a failed handback while the borrowed archive was still recorded as on screen,
+    // and "Carry on anyway" then opened the gate onto exactly the state this whole round
+    // exists to prevent. Clearing first means a throw can cost the pixels but not the
+    // invariant.
+    const doomed = map.current
     map.current = null
     remoteRef.current = null
-    displacedRef.current = null
     activeRef.current = null
     setActive(null)
     setStyleReady(false)
+    // Kept through a fault: the archive this loan displaced is still the best hint for a
+    // retry, and losing it to a failure that had nothing to do with it makes the second
+    // attempt worse than the first. Dropped when nothing is installed, where it names an
+    // archive that is not there.
     if (outcome === 'nothing-installed') {
+      displacedRef.current = null
       setStatus('no-basemap')
       // Nothing is installed, which is a state rather than a failure. A message left over
       // from an earlier attempt would read as one.
       setError(null)
+    }
+    try {
+      doomed?.remove()
+    } catch {
+      // A teardown that fails has already been accounted for above: nothing points at this
+      // instance any more, so it cannot be drawn on or reported on. Swallowed rather than
+      // rethrown so this function is *total* — every caller of it may state that the loan is
+      // closed, which is the guarantee the failure screen is built on.
     }
     return outcome
   }, [])
@@ -358,12 +383,19 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
    */
   const openLocal = useCallback(
     async (preferences: (string | null)[]): Promise<Handback> => {
-      const plan = handbackPlan(await refresh(), preferences)
-      if (plan.action === 'discard') return discardMap(plan.outcome)
-      // `show` reports rather than throws, and during a loan a failure here would otherwise
-      // leave the *streamed* archive up: it only removes the old map once the new one has
-      // mounted.
-      if (await show(plan.name)) return 'restored'
+      try {
+        const plan = handbackPlan(await refresh(), preferences)
+        if (plan.action === 'discard') return discardMap(plan.outcome)
+        // `show` reports rather than throws, and during a loan a failure here would otherwise
+        // leave the *streamed* archive up: it only removes the old map once the new one has
+        // mounted.
+        if (await show(plan.name)) return 'restored'
+      } catch {
+        // Neither `refresh` nor `show` is supposed to reach this — both report instead of
+        // throwing. It is here so the function is total anyway: a caller that is told the
+        // handback failed may rely on the map having been taken down, and an escaping throw
+        // is the one way that promise could have been broken.
+      }
       return discardMap('unavailable')
     },
     [discardMap, refresh, show],
@@ -383,6 +415,11 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
    * Storage is re-read rather than trusting what was there when the loan began: the borrowing
    * screen's whole purpose is to change what is installed, and a rider may have imported a
    * basemap by hand while it was up. The displaced archive is only the *preference*.
+   *
+   * **Total, and callers depend on it.** Every path either mounts a local archive or goes
+   * through {@link discardMap}, which cannot throw — so a caller told the handback failed may
+   * state, on screen, that the rider is not looking at a borrowed map. Anything added above
+   * `openLocal` that can throw breaks that promise silently.
    */
   const endRemote = useCallback(async (): Promise<Handback> => {
     // Cancels any loan still loading, so a slow header cannot land after this returns.

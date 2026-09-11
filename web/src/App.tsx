@@ -90,8 +90,16 @@ export default function App() {
         // ever borrows the map.
         setStandDown(true)
       } catch {
-        // Leave the gate where it is: a storage failure says nothing new about what is
-        // installed, and the picker's own screen reports it better than this can.
+        // The gate stays where it is. A storage fault says nothing new about what is
+        // installed, and standing the picker down on an answer that never arrived could put a
+        // rider on the ride screen with nothing to ride on.
+        //
+        // It is not, however, free of silence — and the comment here used to claim otherwise.
+        // When the picker is showing its list, its own storage read having succeeded earlier,
+        // Done just looks inert: nothing on screen says the check failed. Recorded as an open
+        // item. The fix is to hand this fault to the picker's failure surface, which now
+        // exists; adding a fifth, unexercised route into that surface in the last round is
+        // the wrong trade.
       }
     })()
   }, [askStorage])

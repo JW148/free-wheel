@@ -232,20 +232,26 @@ export default function RegionPicker({
     setStandingDown(true)
     setHandbackFailed(false)
     try {
-      const outcome = await endRemote()
+      // `endRemote` is total, and the failure screen below is built on that: every path
+      // through it either mounts a local archive or goes via `discardMap`, which takes any
+      // borrowed one off the screen and cannot throw. So on the failure branch "the map is
+      // already down" is something this screen may promise the rider rather than hope for.
+      // The `.catch` is not a second way in with that promise
+      // unmet — the only statement in `endRemote` above the teardown is a ref increment, so
+      // it is unreachable — it is here so a future edit above that line cannot quietly open
+      // the gate on a handback nobody can vouch for.
+      const outcome = await endRemote().catch(() => 'unavailable' as const)
       if (!mayStandDown(outcome)) {
         setHandbackFailed(true)
         return
       }
-      onDone()
-    } catch {
-      // `endRemote` reports rather than throws, and if that ever stops being true the rule is
-      // the same: do not open the gate onto a handback nobody can vouch for.
-      setHandbackFailed(true)
     } finally {
       standingDownRef.current = false
       setStandingDown(false)
     }
+    // Outside the try: once the gate is open this screen is unmounting, and nothing that
+    // happens afterwards should be able to put its failure state back up.
+    onDone()
   }, [endRemote, onDone])
 
   /**
@@ -394,9 +400,10 @@ export default function RegionPicker({
             <button type="button" className="primary" onClick={() => void leave()}>
               {handback.retry}
             </button>
-            {/* Not a dead end, even here. The map is already down, so this lands on a ride
-                screen that reports the same fault rather than on a borrowed one pretending to
-                be theirs. */}
+            {/* Not a dead end, even here — and it needs no teardown of its own. Every route
+                to this screen has been through `discardMap`, so the borrowed map is already
+                off; this lands on a ride screen that reports the same fault rather than on a
+                streamed backdrop pretending to be the rider's own. */}
             <button type="button" className="picker-plain" onClick={onDone}>
               {handback.carryOn}
             </button>
