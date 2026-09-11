@@ -66,7 +66,8 @@ vi.mock('./opfsVfs', () => {
   }
 })
 
-const { importTileFile, installedTiles, SEGMENT_DIR } = await import('./tileStore')
+const { importTileFile, installedTiles, SEGMENT_DIR, importBasemapFile, installedBasemaps, BASEMAP_DIR } =
+  await import('./tileStore')
 const { writePartialHash, readPartialHash } = await import('./partials')
 
 beforeEach(async () => {
@@ -94,5 +95,29 @@ describe('importTileFile clears a stale partial-hash entry', () => {
     expect(await readPartialHash(path)).toBeNull()
     const tiles = await installedTiles()
     expect(tiles.map((t) => t.tile)).toContain('W5_N50')
+  })
+})
+
+describe('importBasemapFile clears a stale partial-hash entry', () => {
+  it('lets a hand import replace the target a died-mid-basemap region download left behind', async () => {
+    const path = `${BASEMAP_DIR}/wessex.pmtiles`
+
+    // A region download died partway through this exact basemap, recording the mirror
+    // snapshot's target byte count — the entry outlives the failed attempt by design, and
+    // nothing else has cleared it.
+    await writePartialHash(path, { hash: 'old-mirror-hash', bytes: 90000000 })
+
+    // The rider gives up and imports a complete archive by hand instead, at a name that
+    // happens to collide with the region's own path. Deliberately a different size, which is
+    // what used to make `isTruncated` say true forever — and now that `installedBasemaps()`
+    // also consults `isTruncated`, this path is live rather than theoretical.
+    const bytes = new Uint8Array(2000).fill(7)
+    const file = new File([bytes], 'wessex.pmtiles')
+
+    await importBasemapFile(file)
+
+    expect(await readPartialHash(path)).toBeNull()
+    const basemaps = await installedBasemaps()
+    expect(basemaps.map((b) => b.name)).toContain('wessex.pmtiles')
   })
 })

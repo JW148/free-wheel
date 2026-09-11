@@ -191,6 +191,13 @@ export async function importBasemapFile(
   if (offset !== file.size) {
     throw new Error(`${file.name}: expected ${file.size} bytes, wrote ${offset}`)
   }
+
+  // Same reasoning as importTileFile: a region basemap download that died mid-file leaves a
+  // partial-hash entry recording the mirror's target byte count, and a hand-imported archive
+  // at the same path is essentially never that exact size. Left in place, `isTruncated` would
+  // hide this complete, correct import from `installedBasemaps()` forever.
+  await clearPartialHash(path)
+
   onProgress?.({ tile: file.name, received: offset, total: offset, state: 'complete' })
   return file.name
 }
