@@ -3,7 +3,6 @@
 import * as Comlink from 'comlink'
 import {
   installVfsBridge,
-  markPending,
   openHandle,
   provisionOpfs,
   provisionedFiles,
@@ -25,16 +24,14 @@ import type { ProvisionProgress } from './opfsVfs'
 import type { ByteSink, RegionProgress } from './downloads'
 import { downloadPlan } from '../data/regions'
 import {
-  clearPartialHash,
+  completeRegionDownload,
   deleteRegionFiles,
-  pathForItem,
+  markDownloading,
   readPartialHash,
   readRecords,
-  recordAfterDownload,
   recordsAfterRemoval,
   runRegionDownload,
   serializeRegionOp,
-  writePartialHash,
   writeRecords,
 } from './regionStore'
 // `import type` is load-bearing here: this file runs in a Worker, which has no `localStorage`,
@@ -226,12 +223,10 @@ const engineApi = {
    * The per-item resume/restart/skip loop lives in `regionStore.runRegionDownload`, tested there
    * without OPFS — this is thin wiring around it plus the bookkeeping that has to happen once
    * for the whole region: reading and writing `regions.json`, and only then clearing the
-   * partial-hash entries `runRegionDownload` deliberately leaves behind (see its doc comment).
+   * download markers `runRegionDownload` deliberately leaves behind (see its doc comment).
    *
    * The whole call is serialized through `serializeRegionOp` against every other
-   * `downloadRegion`/`removeRegion` call, and `records` is re-read immediately before
-   * `recordAfterDownload` rather than reusing the snapshot from the top of this function —
-   * belt and braces on top of the queue, not a substitute for it.
+   * `downloadRegion`/`removeRegion` call.
    */
   async downloadRegion(
     region: RegionEntry,
@@ -249,23 +244,16 @@ const engineApi = {
         {
           openSink,
           refreshSize,
-          markPending,
+          markDownloading,
           readPartialHash,
-          writePartialHash,
           recordSegmentWritten: (name, bytes) => recordTileInstalled(name, bytes, Date.now()),
         },
         onProgress,
       )
 
-      const fresh = await readRecords()
-      const updated = recordAfterDownload(fresh, region, manifest, Date.now())
-      await writeRecords(updated)
-
-      // Only now, with the region durably recorded as installed, are the partial-hash entries
-      // safe to forget — see `runRegionDownload`'s doc comment.
-      for (const item of plan.items) {
-        await clearPartialHash(pathForItem(region.id, item))
-      }
+      // Records the region, and only then forgets its download markers — see
+      // `completeRegionDownload`, and `runRegionDownload`'s doc comment for why not sooner.
+      const updated = await completeRegionDownload(region, manifest, plan.items, Date.now())
 
       // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
       await installedTiles()

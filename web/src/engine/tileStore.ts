@@ -1,5 +1,5 @@
 import { listDirectoryEntries, openHandle, refreshSize, removeFile } from './opfsVfs'
-import { clearPartialHash, isTruncated } from './partials'
+import { clearDownloading, isTruncated } from './partials'
 
 /**
  * Tile storage — **import only**.
@@ -139,12 +139,14 @@ export async function importTileFile(
   manifest[tile] = { bytes: offset, importedAt: Date.now() }
   await writeManifest(manifest)
 
-  // A hand import can land on the same path a previously interrupted download left a partial
-  // entry for — brouter.de rebuilds weekly, so an import is essentially never byte-identical
-  // to whatever the mirror snapshot the entry recorded. Left in place, `isTruncated` would
-  // compare this complete, correct file against that unrelated target forever and hide it from
-  // `installedTiles()` regardless of how it got here.
-  await clearPartialHash(path)
+  // A hand import can land on the same path a previously interrupted download was writing
+  // toward — brouter.de rebuilds weekly, so an import is essentially never byte-identical to
+  // whatever the mirror snapshot the markers recorded. Left in place, they would measure this
+  // complete, correct file against that unrelated target forever: `isTruncated` would keep it
+  // out of `installedTiles()` across restarts, and the registry's `targetSize` would make the
+  // VFS bridge answer BRouter "no such file" for the rest of the session even while the UI
+  // listed it as installed. `clearDownloading` is what makes the import the last word.
+  await clearDownloading(path)
 
   onProgress?.({ tile, received: offset, total: offset, state: 'complete' })
   return tile
@@ -192,11 +194,11 @@ export async function importBasemapFile(
     throw new Error(`${file.name}: expected ${file.size} bytes, wrote ${offset}`)
   }
 
-  // Same reasoning as importTileFile: a region basemap download that died mid-file leaves a
-  // partial-hash entry recording the mirror's target byte count, and a hand-imported archive
-  // at the same path is essentially never that exact size. Left in place, `isTruncated` would
-  // hide this complete, correct import from `installedBasemaps()` forever.
-  await clearPartialHash(path)
+  // Same reasoning as importTileFile: a region basemap download that died mid-file leaves both
+  // markers recording the mirror's target byte count, and a hand-imported archive at the same
+  // path is essentially never that exact size. Left in place, they would hide this complete,
+  // correct import from `installedBasemaps()` — across restarts and within this session.
+  await clearDownloading(path)
 
   onProgress?.({ tile: file.name, received: offset, total: offset, state: 'complete' })
   return file.name
@@ -224,7 +226,7 @@ export async function installedBasemaps(): Promise<{ name: string; bytes: number
 export async function deleteTile(tile: string): Promise<void> {
   const path = `${SEGMENT_DIR}/${tile}.rd5`
   await removeFile(path)
-  await clearPartialHash(path)
+  await clearDownloading(path)
   const manifest = await readManifest()
   delete manifest[tile]
   await writeManifest(manifest)
@@ -290,7 +292,7 @@ export async function resetTileStorage(): Promise<string[]> {
   for (const name of names) {
     const path = `${SEGMENT_DIR}/${name}`
     await removeFile(path)
-    await clearPartialHash(path)
+    await clearDownloading(path)
     const match = /^([EW]\d{1,3}_[NS]\d{1,2})\.rd5$/.exec(name)
     if (match) removed.push(match[1])
   }

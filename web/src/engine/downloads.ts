@@ -26,6 +26,18 @@ export interface ByteSink {
 export interface DownloadOptions {
   from?: number
   fetchImpl?: typeof fetch
+  /**
+   * Awaited once, after the response is in hand and immediately before the first byte of the
+   * sink is touched — the truncate as much as the writes, since a truncate on its own already
+   * destroys whatever was there.
+   *
+   * It exists so a caller can record "this file is now being disturbed" durably *before* it is,
+   * and — just as important — not record it at all when the download never gets this far. A
+   * connection that drops before the first response leaves the file exactly as it was, which
+   * may be a complete, valid older segment, and marking that file as pending would hide a file
+   * nobody has touched. See `regionStore.runRegionDownload`.
+   */
+  onWillWrite?: () => void | Promise<void>
   onProgress?: (received: number, total: number) => void
 }
 
@@ -94,6 +106,11 @@ export async function downloadInto(
   // zero, the same safe fallback the plain-`200` case takes.
   const trustedResume = response.status === 206 && contentRangeStart(response.headers.get('Content-Range')) === from
   let offset = trustedResume ? from : 0
+
+  // Last moment at which this file is still untouched, and the first at which it is certain to
+  // be disturbed. Awaited, so a caller's durable record of that lands before the truncate does.
+  await options.onWillWrite?.()
+
   if (offset === 0) sink.truncate(0)
 
   const reader = response.body.getReader()

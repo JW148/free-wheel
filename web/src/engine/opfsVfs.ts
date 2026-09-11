@@ -64,9 +64,21 @@ interface FileEntry {
    * past what is really there into whatever the rest of the file used to be.
    *
    * Deliberately does not touch, close, or remove the handle: a resume already in flight, or
-   * about to retry, still needs it. And nothing has to explicitly clear this once the write
-   * finishes — `isPending` compares against the entry's live `size`, so a `refreshSize` call
-   * that brings `size` up to `targetSize` resolves it on its own.
+   * about to retry, still needs it.
+   *
+   * **Every path that sets this must name the path that clears it.** A marker that outlives the
+   * write it describes hides a file that is perfectly fine, which is a worse failure than the
+   * one it exists to prevent — the file is *there*, complete and correct, and BRouter is told it
+   * is not. Set only in {@link markPending}, from `regionStore.runRegionDownload`'s
+   * `markDownloading`, and only once a response is in hand and the bytes are about to land.
+   * Cleared by:
+   *
+   * - {@link clearPending} — via `partials.clearDownloading`, on a completed region download, a
+   *   hand import over the same path, a tile delete, a storage reset, or a region removal.
+   * - {@link removeFile} — the whole entry goes, marker with it.
+   * - a Worker restart — this is in-memory only, and a fresh registry has no markers at all.
+   * - reaching the target: `isPending` compares against the entry's live `size`, so a
+   *   `refreshSize` that brings `size` up to `targetSize` resolves it without anyone asking.
    */
   targetSize?: number
 }
@@ -333,12 +345,37 @@ export function markPending(path: string, bytes: number): void {
 }
 
 /**
+ * Forgets that a path was ever mid-write, so the VFS bridge judges it on its own bytes again.
+ *
+ * The counterpart {@link markPending} needs and did not have. Waiting for the file to reach
+ * `targetSize` is not a clearing path for the case that matters: a rider whose region download
+ * died mid-segment and who then hand-imports that segment from brouter.de, which rebuilds
+ * weekly and so is essentially never the byte count the abandoned mirror snapshot recorded. If
+ * the import is the smaller of the two — a coin flip — the stale marker hides a complete,
+ * correct file for the rest of the session while the UI cheerfully lists it as installed.
+ *
+ * Always called through `partials.clearDownloading`, which clears the persistent half in the
+ * same breath. The two markers describe one fact and must not be able to drift apart.
+ */
+export function clearPending(path: string): void {
+  const entry = files.get(normalise(path))
+  if (entry) delete entry.targetSize
+}
+
+/**
  * Walks down to a path's parent directory without creating anything along the way.
  *
  * Deliberately distinct from `directoryFor`, which passes `{ create: true }` because callers
  * that reach it are about to write. `peekFileSize` is a read-only glance — a path that doesn't
  * exist yet should stay that way, not get a directory created as a side effect of asking about
- * it. Returns `null` if any segment of the path is missing.
+ * it. Returns `null` only for a directory that genuinely is not there.
+ *
+ * `NotFoundError` and nothing else, deliberately — the same convention the `getFile()` half of
+ * `peekFileSize` settled on. A blanket `catch` here would fold every other reason the walk
+ * could fail (a lock held by a second tab, a file sitting where a directory should be) into
+ * "absent", and absent is not a neutral answer: `isTruncated` reads a `-1` size as *short of
+ * target* and hides the file. A directory we could not read must not be able to hide a tile
+ * that is fine.
  */
 async function directoryForPeek(path: string): Promise<FileSystemDirectoryHandle | null> {
   const parts = path.split('/').filter(Boolean)
@@ -347,7 +384,8 @@ async function directoryForPeek(path: string): Promise<FileSystemDirectoryHandle
   for (const part of parts) {
     try {
       dir = await dir.getDirectoryHandle(part)
-    } catch {
+    } catch (error) {
+      if ((error as DOMException)?.name !== 'NotFoundError') throw error
       return null
     }
   }
@@ -385,7 +423,8 @@ export async function peekFileSize(path: string): Promise<number> {
   let fileHandle: FileSystemFileHandle
   try {
     fileHandle = await dir.getFileHandle(name)
-  } catch {
+  } catch (error) {
+    if ((error as DOMException)?.name !== 'NotFoundError') throw error
     return -1 // no such file
   }
 
@@ -434,6 +473,10 @@ export async function provisionOpfs(
       asset.bytes !== undefined ? currentSize === asset.bytes : currentSize > 0
 
     if (complete) {
+      // Re-registering drops any `targetSize` the entry carried, which is correct and is worth
+      // naming: both `files.set` calls in this function run only on a file just proved complete
+      // (either it already matched `asset.bytes`, or the length check below passed), so there is
+      // nothing left to hide. A marker must never be dropped anywhere the file is still short.
       files.set(path, { handle, size: currentSize })
       registerDirectories(path)
       onProgress?.({ path, received: currentSize, total: currentSize, state: 'skipped' })

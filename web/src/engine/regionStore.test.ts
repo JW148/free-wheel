@@ -1,17 +1,37 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DataManifest, InstalledRegion } from '../data/manifest'
 import type { DownloadItem } from '../data/regions'
 import type { ByteSink, RegionProgress } from './downloads'
 import type { PartialTarget } from './partials'
+import { installFakeOpfs } from './fakeOpfs'
 import {
   basemapFileFor,
+  completeRegionDownload,
+  deleteRegionFiles,
+  markDownloading,
   pathForItem,
+  readPartialHash,
+  readRecords,
   recordAfterDownload,
   recordsAfterRemoval,
   runRegionDownload,
   serializeRegionOp,
   type DownloadLoopDeps,
 } from './regionStore'
+import { BASEMAP_DIR, SEGMENT_DIR } from './tileStore'
+import { closeOpfs } from './opfsVfs'
+
+/**
+ * Most of this file needs no storage — the record functions are pure and the download loop runs
+ * on injected deps. `deleteRegionFiles` is the exception, so the fake OPFS from `fakeOpfs.ts`
+ * backs the real `opfsVfs.ts` for those tests rather than mocking the module out.
+ */
+const opfs = installFakeOpfs()
+
+beforeEach(() => {
+  closeOpfs()
+  opfs.reset()
+})
 
 const manifest: DataManifest = {
   version: 1,
@@ -112,14 +132,20 @@ describe('recordsAfterRemoval', () => {
 
 // --- runRegionDownload -------------------------------------------------------------------
 
-function fakeSink(initial = new Uint8Array(0)): ByteSink & { readonly bytes: Uint8Array } {
+function fakeSink(
+  initial = new Uint8Array(0),
+  log: string[] = [],
+  name = '',
+): ByteSink & { readonly bytes: Uint8Array } {
   let bytes = initial
   return {
     size: () => bytes.length,
     truncate: (to) => {
+      log.push(`truncate:${name}`)
       bytes = bytes.slice(0, to)
     },
     write: (chunk, at) => {
+      log.push(`write:${name}`)
       if (at + chunk.length > bytes.length) {
         const grown = new Uint8Array(at + chunk.length)
         grown.set(bytes)
@@ -144,32 +170,35 @@ const decode = (sink: ByteSink & { bytes: Uint8Array }) => new TextDecoder().dec
  */
 function fakeDownloadEnv() {
   const sinks = new Map<string, ByteSink & { bytes: Uint8Array }>()
+  /** The durable `/downloads.json` half of the marker. */
   const partials = new Map<string, PartialTarget>()
-  const recorded: { name: string; bytes: number }[] = []
+  /** The in-memory `targetSize` half. Set and cleared together with the durable one. */
   const pending = new Map<string, number>()
+  const recorded: { name: string; bytes: number }[] = []
   const refreshSizeCalls: string[] = []
+  /** Marking and sink mutations in the order they happened — see the ordering test. */
+  const log: string[] = []
 
   const deps: DownloadLoopDeps = {
     openSink: async (path) => {
-      if (!sinks.has(path)) sinks.set(path, fakeSink())
+      if (!sinks.has(path)) sinks.set(path, fakeSink(new Uint8Array(0), log, path))
       return sinks.get(path)!
     },
     refreshSize: (path) => {
       refreshSizeCalls.push(path)
     },
-    markPending: (path, bytes) => {
-      pending.set(path, bytes)
+    markDownloading: async (path, target) => {
+      log.push(`mark:${path}`)
+      partials.set(path, target)
+      pending.set(path, target.bytes)
     },
     readPartialHash: async (path) => partials.get(path) ?? null,
-    writePartialHash: async (path, target) => {
-      partials.set(path, target)
-    },
     recordSegmentWritten: async (name, bytes) => {
       recorded.push({ name, bytes })
     },
   }
 
-  return { sinks, partials, recorded, pending, refreshSizeCalls, deps }
+  return { sinks, partials, recorded, pending, refreshSizeCalls, log, deps }
 }
 
 describe('runRegionDownload', () => {
@@ -267,10 +296,36 @@ describe('runRegionDownload', () => {
     expect(decode(sinks.get(pathB)!)).toBe('efghijklmn')
   })
 
-  it('brings the registry back in line on a failed attempt, not just a completed one', async () => {
+  it('marks a file before it disturbs it, and in both halves at once', async () => {
+    const item: DownloadItem = { kind: 'segment', key: 'W5_N50', url: 'https://example/w.rd5', bytes: 6, hash: 'hw' }
+    const path = pathForItem('region', item)
+    const { deps, log, partials, pending } = fakeDownloadEnv()
+    const fetchImpl = vi.fn(async () => new Response(text('abcdef'), { status: 200 }))
+
+    await runRegionDownload('region', [item], 6, { ...deps, fetchImpl: fetchImpl as unknown as typeof fetch })
+
+    // Ordering, not just occurrence. The truncate is what destroys whatever was there, so a
+    // marker written after it would leave a window in which a crash orphans a half-file with
+    // nothing recording that it is one — and `installedTiles()` would hand it to BRouter.
+    expect(log.indexOf(`mark:${path}`)).toBeGreaterThanOrEqual(0)
+    expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`truncate:${path}`))
+    expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`write:${path}`))
+
+    // Both halves, from one call: the durable entry a restart reads, and the registry marker
+    // this session reads. Neither is allowed to be set without the other.
+    expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 6 })
+    expect(pending.get(path)).toBe(6)
+  })
+
+  it('marks nothing when the attempt dies before it touches the file', async () => {
+    // The instant drop: no response, so the bytes on disk are untouched — and they may be a
+    // complete, valid older segment the rider has been routing on for weeks. Marking here
+    // would hide a file nobody touched, and the durable half of that marker outlives the
+    // session, so it would keep hiding it until the segment was re-imported or deleted.
     const item: DownloadItem = { kind: 'segment', key: 'W5_N50', url: 'https://example/w.rd5', bytes: 10, hash: 'hw' }
     const path = pathForItem('region', item)
-    const { deps, pending, refreshSizeCalls } = fakeDownloadEnv()
+    const { deps, partials, pending, refreshSizeCalls, sinks } = fakeDownloadEnv()
+    sinks.set(path, fakeSink(text('a complete older segment')))
 
     const fetchImpl = vi.fn(async () => {
       throw new Error('network down')
@@ -280,15 +335,118 @@ describe('runRegionDownload', () => {
       runRegionDownload('region', [item], 10, { ...deps, fetchImpl: fetchImpl as unknown as typeof fetch }),
     ).rejects.toThrow('network down')
 
-    // Marked pending before the write started, so anything reading through the VFS bridge
-    // during the attempt — or after it fails, in the same session — sees this path as not yet
-    // present rather than whatever size or content it held before this attempt began.
+    expect(partials.has(path)).toBe(false)
+    expect(pending.has(path)).toBe(false)
+    // Nothing was written, so there is nothing stale to re-measure either.
+    expect(refreshSizeCalls).not.toContain(path)
+    expect(decode(sinks.get(path)!)).toBe('a complete older segment')
+  })
+
+  it('marks, and re-measures, a file an attempt did start writing before it failed', async () => {
+    const item: DownloadItem = { kind: 'segment', key: 'W5_N50', url: 'https://example/w.rd5', bytes: 10, hash: 'hw' }
+    const path = pathForItem('region', item)
+    const { deps, partials, pending, refreshSizeCalls } = fakeDownloadEnv()
+
+    let pulls = 0
+    const droppedFetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1
+              if (pulls === 1) controller.enqueue(text('efgh'))
+              else controller.error(new Error('connection dropped'))
+            },
+          }),
+          { status: 200 },
+        ),
+    )
+
+    await expect(
+      runRegionDownload('region', [item], 10, { ...deps, fetchImpl: droppedFetch as unknown as typeof fetch }),
+    ).rejects.toThrow('connection dropped')
+
+    // This file really is short now, and both markers say so — the durable one so a restart
+    // keeps it out of `installedTiles()`, the registry one so the VFS bridge answers absent for
+    // the rest of this session.
+    expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 10 })
     expect(pending.get(path)).toBe(10)
 
-    // And the registry's cached size is refreshed even though the attempt failed. Without
-    // this, a file that previously held a full, different segment would keep answering with
-    // that old size for the rest of the session — a `read()` past what a truncated-and-partly-
-    // rewritten file actually contains, instead of an honest short length.
+    // And the cached size is brought back in line: a file that previously held a full,
+    // different segment would otherwise keep answering with that old size, letting a read run
+    // past what the truncated-and-partly-rewritten file actually contains.
     expect(refreshSizeCalls).toContain(path)
+  })
+})
+
+describe('completeRegionDownload', () => {
+  const items: DownloadItem[] = [
+    { kind: 'basemap', key: 'wessex', url: 'https://example/basemap.pmtiles', bytes: 10, hash: '1111aaaa' },
+    { kind: 'segment', key: 'W5_N50', url: 'https://example/W5_N50.rd5', bytes: 6, hash: 'bbbb2222' },
+  ]
+
+  /** Both of the region's files downloaded but not yet committed: on disk, and marked. */
+  async function downloaded(): Promise<string[]> {
+    const paths = items.map((item) => pathForItem('wessex', item))
+    for (const [i, path] of paths.entries()) {
+      opfs.write(path, items[i].bytes)
+      await markDownloading(path, { hash: items[i].hash, bytes: items[i].bytes })
+    }
+    return paths
+  }
+
+  it('records the region and then forgets every marker it set', async () => {
+    const paths = await downloaded()
+
+    const records = await completeRegionDownload(manifest.regions[0], manifest, items, 1)
+
+    expect(records).toEqual([wessex])
+    // The state a fresh Worker would read back, not just the value returned.
+    expect(await readRecords()).toEqual([wessex])
+    for (const path of paths) expect(await readPartialHash(path)).toBeNull()
+  })
+
+  it('leaves the markers alone until it is called', async () => {
+    // A region commits nothing until every item is down, so a failure on the last item has to
+    // leave the earlier ones recognisable — a retry reads these markers to skip them rather
+    // than re-fetching 90 MB it already has.
+    const paths = await downloaded()
+    for (const path of paths) expect(await readPartialHash(path)).not.toBeNull()
+  })
+
+  it('replaces the previous record for the same region rather than appending', async () => {
+    await downloaded()
+    await completeRegionDownload(manifest.regions[0], manifest, items, 1)
+    await completeRegionDownload(manifest.regions[0], manifest, items, 2)
+
+    const records = await readRecords()
+    expect(records).toHaveLength(1)
+    expect(records[0].installedAt).toBe(2)
+  })
+})
+
+describe('deleteRegionFiles', () => {
+  it('takes the basemap\'s markers with the basemap', async () => {
+    // The order this runs in on a real removal: the file goes, and anything still claiming the
+    // file is mid-download would outlive it and hide whatever lands at that path next.
+    const path = `${BASEMAP_DIR}/wessex.pmtiles`
+    opfs.write(path, 500)
+    await markDownloading(path, { hash: 'mirror', bytes: 90000000 })
+
+    await deleteRegionFiles([], 'wessex.pmtiles')
+
+    expect(await readPartialHash(path)).toBeNull()
+    expect(opfs.read(path)).toBeNull()
+  })
+
+  it('takes a segment\'s markers with the segment', async () => {
+    const path = `${SEGMENT_DIR}/W5_N50.rd5`
+    opfs.write(path, 500)
+    await markDownloading(path, { hash: 'mirror', bytes: 143654912 })
+
+    await deleteRegionFiles(['W5_N50'], '')
+
+    expect(await readPartialHash(path)).toBeNull()
+    expect(opfs.read(path)).toBeNull()
   })
 })

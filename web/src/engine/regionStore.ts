@@ -2,10 +2,11 @@
  * What a phone has installed, region by region, and the download loop that gets it there.
  *
  * The pure record functions (`recordAfterDownload`, `recordsAfterRemoval`) and the download
- * loop (`runRegionDownload`) are the parts worth testing in isolation: none of them touch OPFS
- * directly, so they run identically under vitest and inside the engine Worker. The OPFS-backed
- * reader/writer functions around them are thin and untested here — OPFS does not exist under
- * vitest — and are exercised for real only through the engine Worker.
+ * loop (`runRegionDownload`) take no OPFS dependency at all: the first two are pure, and the
+ * loop reaches storage only through `DownloadLoopDeps`, so a test can hand it a fake sink and a
+ * fake fetch. The OPFS-backed functions around them — `readRecords`, `deleteRegionFiles`,
+ * `completeRegionDownload` — are tested against `fakeOpfs.ts`, which fakes the browser's OPFS
+ * API underneath the real `opfsVfs.ts` rather than mocking `opfsVfs` itself.
  */
 
 import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
@@ -13,13 +14,13 @@ import type { DownloadItem } from '../data/regions'
 import { downloadInto, resumeDecision, type ByteSink, type RegionProgress } from './downloads'
 import { openHandle, refreshSize, removeFile } from './opfsVfs'
 import { BASEMAP_DIR, deleteTile, SEGMENT_DIR } from './tileStore'
-import type { PartialTarget } from './partials'
+import { clearDownloading, type PartialTarget } from './partials'
 
-// Re-exported so code that already imports the partial-hash store from here — the shape this
-// module had before it grew a `partials.ts` sibling — keeps working. `tileStore.ts` imports
-// straight from `./partials` instead, which is the whole reason that module exists: it cannot
-// import this one without a cycle (this file imports `tileStore` for `deleteTile`).
-export { clearPartialHash, readPartialHash, writePartialHash } from './partials'
+// Re-exported so a caller assembling `DownloadLoopDeps` has one import for the loop and the
+// store it reads. `tileStore.ts` imports straight from `./partials` instead, which is the whole
+// reason that module exists: it cannot import this one without a cycle (this file imports
+// `tileStore` for `deleteTile`).
+export { clearDownloading, markDownloading, readPartialHash } from './partials'
 export type { PartialTarget } from './partials'
 
 /** Where the region records live. Beside the tile manifest, not inside it. */
@@ -139,11 +140,23 @@ export async function writeRecords(records: InstalledRegion[]): Promise<void> {
  * Segments go through `tileStore.deleteTile` rather than a bare `removeFile`, because that is
  * also what removes the segment's entry from `/segments4/.imported.json` — otherwise a deleted
  * segment's stale age would linger in a manifest nothing else ever cleans up. Basemaps have no
- * equivalent age-tracking manifest, so a plain `removeFile` is enough for those.
+ * equivalent age-tracking manifest, but they do have download markers, so those are cleared
+ * here explicitly.
+ *
+ * Clearing the basemap's markers is arguably unreachable — a region is only recorded, and so
+ * only removable, after a download that cleared them — but "arguably unreachable" is the
+ * reasoning that produced three rounds of this same bug. A re-download of an already-installed
+ * region that dies mid-basemap sets them again while the old record is still in place, and then
+ * this is the path that removes the file they describe. A marker whose file is gone must go with
+ * it.
  */
 export async function deleteRegionFiles(deleteSegments: string[], deleteBasemap: string): Promise<void> {
   for (const name of deleteSegments) await deleteTile(name)
-  if (deleteBasemap) await removeFile(`${BASEMAP_DIR}/${deleteBasemap}`)
+  if (deleteBasemap) {
+    const path = `${BASEMAP_DIR}/${deleteBasemap}`
+    await removeFile(path)
+    await clearDownloading(path)
+  }
 }
 
 /**
@@ -156,13 +169,14 @@ export interface DownloadLoopDeps {
   /** Re-reads a file's size into whatever registry the real implementation keeps. */
   refreshSize(path: string): void
   /**
-   * Marks `path` as not yet reaching `bytes`, so the same-session VFS bridge treats it as
-   * absent until the real size catches up — see `opfsVfs.markPending`. A no-op for the fake
-   * deps in tests that don't model the bridge at all.
+   * Records that `path` is being written toward `target` — durably and in the live registry,
+   * so a file left short is hidden from BRouter either way. See `partials.markDownloading`.
+   *
+   * Called from inside `downloadInto`'s `onWillWrite` hook, never before it: until a response
+   * is in hand, the file on disk is untouched and may be a complete, valid older segment.
    */
-  markPending(path: string, bytes: number): void
+  markDownloading(path: string, target: PartialTarget): Promise<void>
   readPartialHash(path: string): Promise<PartialTarget | null>
-  writePartialHash(path: string, target: PartialTarget): Promise<void>
   /**
    * Called only for a segment actually (re)written during this call — never for one skipped
    * because it was already current. Lets a downloaded segment's age be recorded the same way
@@ -186,7 +200,19 @@ export interface DownloadLoopDeps {
  * call starts fresh, so a previous attempt's partial or over-long file is judged on what is
  * actually there rather than assumed.
  *
- * A partial-hash entry is deliberately left in place after an item completes, not cleared here:
+ * ## When an item is marked, and when it is not
+ *
+ * Marking happens inside `downloadInto`'s `onWillWrite` hook — after the response is in hand,
+ * immediately before the truncate or first write. Not before the fetch, which is where it used
+ * to be: a download that fails before a single byte lands (an instant network drop, a 404, a
+ * server that refuses the range) leaves the file on disk exactly as it was, and that file may be
+ * a complete, perfectly good older segment the rider has been routing on for weeks. Marking it
+ * would hide it — from BRouter, which would then honestly report no data for an area it has
+ * data for, and from `installedTiles()`, which would stop listing it. A file nobody has touched
+ * must never be hidden. `start` and `resume` alike disturb the file once bytes flow, so both are
+ * marked at that same moment; `done` never touches it and never marks.
+ *
+ * A marker is deliberately left in place after an item completes, not cleared here:
  * clearing is the caller's job, done only once the whole region is durably recorded as
  * installed. A multi-item region — a basemap plus several segments — commits nothing to
  * `regions.json` until every item is down, so a failure on the last item must not make the
@@ -212,6 +238,9 @@ export async function runRegionDownload(
     // byte count otherwise — never a hardcoded 0 for an item that may have fetched most of
     // itself before failing.
     let lastReceived = 0
+    // Whether this item's bytes were ever disturbed. Drives the failure branch below: there is
+    // nothing to re-measure on a file no write ever reached.
+    let touched = false
 
     try {
       const sink = await deps.openSink(path)
@@ -222,14 +251,15 @@ export async function runRegionDownload(
       )
 
       if (decision.action !== 'done') {
-        await deps.writePartialHash(path, { hash: item.hash, bytes: item.bytes })
-        // Same-session guard: until this write finishes, the file must not answer as present
-        // and full-length to anything reading through the VFS bridge in *this* session — see
-        // `opfsVfs.markPending`.
-        deps.markPending(path, item.bytes)
         await downloadInto(sink, item.url, item.bytes, {
           from: decision.action === 'resume' ? decision.at : 0,
           fetchImpl: deps.fetchImpl,
+          // Called once the response is in hand and the file is certain to be disturbed, and
+          // never if the attempt dies before that. See the doc comment above.
+          onWillWrite: async () => {
+            await deps.markDownloading(path, { hash: item.hash, bytes: item.bytes })
+            touched = true
+          },
           onProgress: (received) => {
             lastReceived = received
             onProgress?.({
@@ -253,13 +283,16 @@ export async function runRegionDownload(
         overallReceived: doneBytes, overallTotal: totalBytes, state: 'complete',
       })
     } catch (error) {
-      // A failed attempt may have truncated-and-partly-rewritten a file that previously held a
-      // full, different version — refreshing brings the registry's cached size back in line
-      // with what is actually on disk, so the rest of this session sees an honest (possibly
-      // still-pending) size rather than the stale, too-large one from before this attempt.
-      // `markPending` above already keeps the bridge from treating a short file as present at
-      // all; this is what makes that comparison correct once the size itself is stale too.
-      deps.refreshSize(path)
+      // A failed attempt that got as far as writing may have truncated-and-partly-rewritten a
+      // file that previously held a full, different version — refreshing brings the registry's
+      // cached size back in line with what is actually on disk, so the rest of this session
+      // sees an honest (possibly still-pending) size rather than the stale, too-large one from
+      // before this attempt. `markDownloading` keeps the bridge from treating a short file as
+      // present at all; this is what makes that comparison correct once the size is stale too.
+      //
+      // Guarded by `touched` for the same reason the marking is: an attempt that never reached
+      // a write left the file alone, and the registry's size for it is not stale.
+      if (touched) deps.refreshSize(path)
       onProgress?.({
         key: item.key, kind: item.kind, received: lastReceived, total: item.bytes,
         overallReceived: doneBytes + lastReceived, overallTotal: totalBytes, state: 'failed',
@@ -267,4 +300,43 @@ export async function runRegionDownload(
       throw error
     }
   }
+}
+
+/**
+ * Forgets every download marker a region's plan set, now that the region is durably recorded.
+ *
+ * Separate from `runRegionDownload` because the timing is the whole point: a region commits
+ * nothing until *every* item is down, so clearing an item's marker the moment that item
+ * finishes would make a retry after a late failure restart the items that were already fine.
+ * Clearing has to wait for the region-level write, which is the caller's to do — but it must
+ * not be forgotten there either, so it is a named function with a test rather than a loop
+ * inlined in the Worker API where nothing can reach it.
+ */
+export async function clearRegionMarkers(regionId: string, items: DownloadItem[]): Promise<void> {
+  for (const item of items) await clearDownloading(pathForItem(regionId, item))
+}
+
+/**
+ * Commits a finished region download: records the region, then forgets its download markers.
+ *
+ * That order is the point, and it is why this is a function rather than three lines in the
+ * Worker API where no test can reach it. The markers are what keep a half-written file away
+ * from BRouter, so they may only be dropped once `regions.json` durably says the region is
+ * installed. Cleared first and interrupted, the phone would hold a truncated segment that
+ * nothing marks as truncated and no record accounts for — a file BRouter would happily open
+ * and read as corrupt data.
+ */
+export async function completeRegionDownload(
+  region: RegionEntry,
+  manifest: DataManifest,
+  items: DownloadItem[],
+  at: number,
+): Promise<InstalledRegion[]> {
+  // Re-read rather than reusing the caller's snapshot: belt and braces on top of
+  // `serializeRegionOp`, not a substitute for it.
+  const fresh = await readRecords()
+  const updated = recordAfterDownload(fresh, region, manifest, at)
+  await writeRecords(updated)
+  await clearRegionMarkers(region.id, items)
+  return updated
 }
