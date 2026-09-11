@@ -155,7 +155,7 @@ const engineApi = {
   },
 
   /**
-   * Imports user-supplied `.rd5` files — the only way tiles enter the app.
+   * Imports user-supplied `.rd5` files — the escape hatch beside the region download.
    *
    * `File` survives structured cloning, so the picker can live on the main thread while the
    * OPFS writing stays here, where sync access handles exist.

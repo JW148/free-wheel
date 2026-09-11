@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Polygon } from 'geojson'
 import type { RegionEntry } from '../data/manifest'
 import { chroma, deltaE2000 } from '../map/colour'
 import { PALETTES } from '../map/style'
@@ -34,14 +35,14 @@ const regions: RegionEntry[] = [
 describe('regionsGeoJson', () => {
   it('closes each ring, which an unclosed polygon renders as a sliver', () => {
     const [feature] = regionsGeoJson(regions, {}).features
-    const ring = (feature.geometry as GeoJSON.Polygon).coordinates[0]
+    const ring = (feature.geometry as Polygon).coordinates[0]
     expect(ring).toHaveLength(5)
     expect(ring[0]).toEqual(ring[4])
   })
 
   it('winds the ring anticlockwise from the south-west corner', () => {
     const [feature] = regionsGeoJson(regions, {}).features
-    const ring = (feature.geometry as GeoJSON.Polygon).coordinates[0]
+    const ring = (feature.geometry as Polygon).coordinates[0]
     expect(ring[0]).toEqual([-5.0, 55.4])
     expect(ring[1]).toEqual([-2.4, 55.4])
     expect(ring[2]).toEqual([-2.4, 56.4])

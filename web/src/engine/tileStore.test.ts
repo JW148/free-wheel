@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
+import { downloadPlan, regionState } from '../data/regions'
 import { installFakeOpfs } from './fakeOpfs'
 
 /**
@@ -28,6 +30,7 @@ const {
   SEGMENT_DIR,
 } = await import('./tileStore')
 const { clearDownloading, markDownloading, readPartialHash } = await import('./partials')
+const { readRecords, writeRecords } = await import('./regionRecords')
 const { closeOpfs, installVfsBridge, openHandle, refreshSize } = await import('./opfsVfs')
 
 const TILE_PATH = `${SEGMENT_DIR}/W5_N50.rd5`
@@ -154,6 +157,98 @@ describe('resetTileStorage', () => {
     await importTileFile(segmentFile(2000))
     expect((await installedTiles()).map((t) => t.tile)).toEqual(['W5_N50'])
     expect(bridge().exists(TILE_PATH)).toBe(true)
+  })
+})
+
+/**
+ * The records in `/regions.json` are claims about files, and deleting a file that a claim
+ * names has to retract the claim — otherwise the phone believes it has road data it does not
+ * have, which is the one state the picker offers no way out of. Asserted through
+ * `regionState` and `downloadPlan` rather than by reading the record, because those two are
+ * what the screens actually ask.
+ */
+describe('a delete against the region records', () => {
+  const manifest: DataManifest = {
+    version: 1,
+    generated: '2026-09-11T04:00:00Z',
+    picker: { url: 'basemap/uk-z10-aaaa.pmtiles', bytes: 60959264 },
+    segments: {
+      W5_N50: { url: 'segments4/W5_N50-seg.rd5', bytes: 137527412, hash: 'seg', changed: '2026-09-01' },
+    },
+    regions: [],
+  }
+  const wessex: RegionEntry = {
+    id: 'wessex',
+    name: 'Wessex and the South Coast',
+    bbox: [-2.6, 50.5, -0.7, 52.1],
+    basemap: { url: 'regions/wessex-map.pmtiles', bytes: 90000000, hash: 'map', built: '2026-09-01' },
+    segments: ['W5_N50'],
+  }
+  // Two regions sharing W5_N50, which is the case that made the stale claim invisible: the
+  // plan skips a segment as soon as *any* record claims it, so one leftover record is enough
+  // to keep every region from re-fetching the file that is actually gone.
+  const installed: InstalledRegion[] = [
+    { id: 'wessex', basemapHash: 'map', segmentHashes: { W5_N50: 'seg' }, installedAt: 1 },
+    { id: 'south-west-england', basemapHash: 'sw', segmentHashes: { W5_N50: 'seg' }, installedAt: 2 },
+  ]
+
+  it('leaves both regions asking for the segment again, and nothing else', async () => {
+    opfs.write(TILE_PATH, 137527412)
+    await writeRecords(installed)
+
+    await deleteTile('W5_N50')
+
+    const records = await readRecords()
+    expect(records.map((r) => r.segmentHashes)).toEqual([{}, {}])
+    // The basemap claim is untouched: the .pmtiles is still on disk, and re-downloading 90 MB
+    // because a segment went missing would be a lie in the other direction.
+    expect(records.map((r) => r.basemapHash)).toEqual(['map', 'sw'])
+
+    expect(regionState(wessex, records[0], true, manifest.segments)).toBe('road-data-outdated')
+    const plan = downloadPlan(wessex, manifest, records)
+    expect(plan.items.map((i) => i.key)).toEqual(['W5_N50'])
+  })
+
+  it('is what resetTileStorage does across the board', async () => {
+    opfs.write(TILE_PATH, 137527412)
+    await writeRecords(installed)
+
+    await resetTileStorage()
+
+    const records = await readRecords()
+    expect(records.map((r) => r.segmentHashes)).toEqual([{}, {}])
+    expect(regionState(wessex, records[0], true, manifest.segments)).toBe('road-data-outdated')
+  })
+
+  it('does not rewrite the records when no region claimed the tile', async () => {
+    await writeRecords(installed)
+    opfs.write(`${SEGMENT_DIR}/E10_N40.rd5`, 1000)
+
+    await deleteTile('E10_N40')
+
+    expect(await readRecords()).toEqual(installed)
+  })
+})
+
+describe('readPartialHash', () => {
+  it('reads a marker from a build that predates `started` as not started', async () => {
+    // The shape the first version of this mechanism wrote. Left un-normalised, the type says
+    // `started: boolean` while the value is `undefined`, and a reader that trusted the type
+    // would resume onto bytes belonging to an older download.
+    const handle = await openHandle('/downloads.json')
+    const legacy = new TextEncoder().encode(
+      JSON.stringify({ [TILE_PATH]: { hash: 'old-mirror-hash', bytes: 143654912 } }),
+    )
+    handle.truncate(0)
+    handle.write(legacy, { at: 0 })
+    handle.flush()
+    refreshSize('/downloads.json')
+
+    expect(await readPartialHash(TILE_PATH)).toEqual({
+      hash: 'old-mirror-hash',
+      bytes: 143654912,
+      started: false,
+    })
   })
 })
 

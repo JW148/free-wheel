@@ -13,6 +13,7 @@ import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifes
 import type { DownloadItem } from '../data/regions'
 import { downloadInto, resumeDecision, type ByteSink, type RegionProgress } from './downloads'
 import { openHandle, peekFileSize, refreshSize, removeFile } from './opfsVfs'
+import { readRecords, writeRecords } from './regionRecords'
 import { BASEMAP_DIR, deleteTile, recordTileInstalled, SEGMENT_DIR } from './tileStore'
 import { clearDownloading, markDownloading, readPartialHash, type PartialTarget } from './partials'
 
@@ -23,8 +24,10 @@ import { clearDownloading, markDownloading, readPartialHash, type PartialTarget 
 export { clearDownloading, markDownloading, readPartialHash } from './partials'
 export type { PartialTarget } from './partials'
 
-/** Where the region records live. Beside the tile manifest, not inside it. */
-const RECORDS_PATH = '/regions.json'
+// Re-exported for the same reason: `/regions.json` is read and written from `regionRecords.ts`
+// so that `tileStore.ts` can strip a deleted segment out of the records without importing this
+// module, which would be a cycle. Callers of the region API keep one import.
+export { readRecords, writeRecords } from './regionRecords'
 
 /** A region's basemap on this phone. The hash lives in the record, not the file name. */
 export const basemapFileFor = (id: string) => `${id}.pmtiles`
@@ -63,9 +66,6 @@ export function pathForItem(regionId: string, item: Pick<DownloadItem, 'kind' | 
     ? `${BASEMAP_DIR}/${basemapFileFor(regionId)}`
     : `${SEGMENT_DIR}/${item.key}.rd5`
 }
-
-const decoder = new TextDecoder()
-const encoder = new TextEncoder()
 
 export function recordAfterDownload(
   records: InstalledRegion[],
@@ -109,29 +109,6 @@ export function recordsAfterRemoval(
     deleteSegments: Object.keys(going.segmentHashes).filter((name) => !stillNeeded.has(name)),
     deleteBasemap: basemapFileFor(id),
   }
-}
-
-export async function readRecords(): Promise<InstalledRegion[]> {
-  const handle = await openHandle(RECORDS_PATH)
-  const size = handle.getSize()
-  if (size === 0) return []
-  const buffer = new Uint8Array(size)
-  handle.read(buffer, { at: 0 })
-  try {
-    const parsed: unknown = JSON.parse(decoder.decode(buffer))
-    return Array.isArray(parsed) ? (parsed as InstalledRegion[]) : []
-  } catch {
-    return [] // a corrupt record costs a re-download, not a crash
-  }
-}
-
-export async function writeRecords(records: InstalledRegion[]): Promise<void> {
-  const handle = await openHandle(RECORDS_PATH)
-  const bytes = encoder.encode(JSON.stringify(records))
-  handle.truncate(0)
-  handle.write(bytes, { at: 0 })
-  handle.flush()
-  refreshSize(RECORDS_PATH)
 }
 
 /**

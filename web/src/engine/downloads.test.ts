@@ -145,14 +145,81 @@ describe('downloadInto: untrustworthy 206 responses', () => {
     expect(new TextDecoder().decode(sink.bytes)).toBe('ABCDEFGHIJ')
   })
 
-  it('restarts from zero when a 206 has no Content-Range header at all', async () => {
+  it('asks again without a Range header when a 206 has no readable Content-Range', async () => {
+    // The live case, and it is not a server bug: a cross-origin bucket that omits
+    // `Access-Control-Expose-Headers: Content-Range` hides the header from JS while sending a
+    // perfectly correct partial response. The bytes below are the *tail*, as a real 206's
+    // would be — writing them at zero would make a 10-byte file that is wrong from byte 0.
     const sink = fakeSink(body('abcd'))
-    const fetchImpl = vi.fn(async () => new Response(body('ABCDEFGHIJ'), { status: 206 }))
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const range = (init?.headers as Record<string, string> | undefined)?.Range
+      return range
+        ? new Response(body('efghij'), { status: 206 })
+        : new Response(body('ABCDEFGHIJ'), { status: 200 })
+    })
+
     await downloadInto(sink, 'https://example/x', 10, {
       from: 4,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })
+
+    // The prefix is discarded and the whole file re-fetched: one wasted transfer, rather than
+    // the endless oscillation that writing the tail at zero used to produce.
     expect(new TextDecoder().decode(sink.bytes)).toBe('ABCDEFGHIJ')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[1][1]).not.toMatchObject({ headers: { Range: expect.anything() } })
+  })
+
+  it('hands a deferred sink the offset it will actually write at, not the one it asked for', async () => {
+    // The sink source is what marks and truncates the file, so it has to be told that this
+    // turned into a restart. Told `4`, it would mark the download as already started and
+    // leave the old prefix in place.
+    const offered: number[] = []
+    const sink = fakeSink(body('abcd'))
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) =>
+      (init?.headers as Record<string, string> | undefined)?.Range
+        ? new Response(body('efghij'), { status: 206 })
+        : new Response(body('ABCDEFGHIJ'), { status: 200 }),
+    )
+
+    await downloadInto(
+      async (at) => {
+        offered.push(at)
+        return sink
+      },
+      'https://example/x',
+      10,
+      { from: 4, fetchImpl: fetchImpl as unknown as typeof fetch },
+    )
+
+    expect(offered).toEqual([0])
+  })
+
+  it('refuses a partial response to a request that asked for the whole file', async () => {
+    // Nothing to retry here — we sent no Range header, so a second identical request would
+    // get the same unplaceable fragment. Failing says so instead of writing a tail at zero.
+    const sink = fakeSink()
+    const fetchImpl = vi.fn(async () => new Response(body('efghij'), { status: 206 }))
+
+    await expect(
+      downloadInto(sink, 'https://example/x', 10, { fetchImpl: fetchImpl as unknown as typeof fetch }),
+    ).rejects.toThrow('partial response to a request for the whole file')
+    expect(sink.bytes.length).toBe(0)
+  })
+
+  it('gives up when even the no-Range retry answers with an unplaceable partial', async () => {
+    const sink = fakeSink(body('abcd'))
+    const fetchImpl = vi.fn(async () => new Response(body('efghij'), { status: 206 }))
+
+    await expect(
+      downloadInto(sink, 'https://example/x', 10, {
+        from: 4,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow('answered a request for the whole file with another one')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    // Untouched: two unplaceable responses must not cost the rider the bytes already down.
+    expect(new TextDecoder().decode(sink.bytes)).toBe('abcd')
   })
 })
 

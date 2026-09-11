@@ -149,15 +149,12 @@ export async function mountBasemap(name: string) {
  * kilobytes out of a 61 MB archive, which is why the first screen does not have to wait for a
  * download to show a real map.
  */
-export async function mountRemoteBasemap(url: string) {
+export async function mountRemoteBasemap(url: string): Promise<{ maxZoom: number }> {
   registerPmtilesProtocol()
   const archive = new PMTiles(url)
   const header = await archive.getHeader()
-  return {
-    name: url,
-    bytes: 0,
-    minZoom: header.minZoom,
-    maxZoom: header.maxZoom,
-    center: [header.centerLon, header.centerLat] as [number, number],
-  }
+  // Only the max zoom, because only the max zoom is used: the picker opens at a fixed centre
+  // and zoom of its own, and the archive is streamed rather than stored, so it has no size
+  // or name worth reporting. `mountBasemap` above is the one that describes a local archive.
+  return { maxZoom: header.maxZoom }
 }

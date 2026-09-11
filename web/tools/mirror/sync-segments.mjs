@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs'
 import { segmentsForBbox } from './lib/geometry.mjs'
 import { decideSegmentAction, hashOf } from './lib/decide.mjs'
 import { buildManifest, assertPublishable } from './lib/manifest.mjs'
+import { carryForwardBasemaps } from './lib/bootstrap.mjs'
 import { IMMUTABLE, MANIFEST_CACHE, listKeys, putObject, readJson } from './s3.mjs'
 
 const UPSTREAM = 'https://brouter.de/brouter/segments4/'
@@ -56,13 +57,23 @@ for (const name of wanted) {
 }
 
 // Region basemaps are cut by the monthly job; carry forward whatever it last published.
-const withBasemaps = regions.map((region) => {
-  const existing = previous.regions?.find((r) => r.id === region.id)
-  if (!existing?.basemap) {
-    throw new Error(`${region.id} has no basemap yet. Run: npm run mirror:basemaps`)
-  }
-  return { ...region, basemap: existing.basemap }
-})
+//
+// A region with none yet is left out of this manifest rather than failing the run. It used to
+// throw, which meant that adding a region to `regions.json` stopped every routing-data update
+// until `cut-basemaps` next ran on the 1st: the segments above had already been fetched and
+// published, and then nothing was written to say so. Its segments are mirrored above
+// regardless — `wanted` is computed from every region in `regions.json` — so the monthly run
+// finds them waiting and publishes the region complete on its first pass.
+const { regions: withBasemaps, missingBasemap } = carryForwardBasemaps(regions, previous.regions)
+for (const id of missingBasemap) {
+  console.log(`${id}: no basemap yet — left out of this manifest. Run: npm run mirror:basemaps`)
+}
+
+// Every region unready is the brand-new-bucket case, and there is nothing useful to publish:
+// a manifest with no regions would replace whatever is there with an empty picker list.
+if (withBasemaps.length === 0) {
+  throw new Error('no region has a basemap yet — run `npm run mirror:basemaps` first')
+}
 
 const manifest = buildManifest({
   regions: withBasemaps,

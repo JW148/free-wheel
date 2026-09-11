@@ -37,9 +37,16 @@ parser is worse than no manifest — see "Ordering" below for why the write is a
 
 On a brand new bucket there is no `manifest.json` yet, so nothing has been mirrored at all.
 `sync-segments.mjs` reads the current manifest to find each region's *basemap* (it never cuts
-one itself) and refuses outright — `"<region> has no basemap yet. Run: npm run
-mirror:basemaps"` — if a region has none. So `cut-basemaps.mjs` has to run first, at least once,
-before `sync-segments.mjs` can ever complete.
+one itself), and a region with none is left out of the manifest it writes, named on stdout. If
+*no* region has one — the brand new bucket — it refuses the run outright, because a manifest
+with no regions would replace a good one with an empty picker. So `cut-basemaps.mjs` has to run
+first, at least once, before `sync-segments.mjs` can ever publish anything.
+
+Leaving one region out rather than failing the whole run matters after the first time too:
+adding a region to `regions.json` used to stop *every* region's weekly routing-data update
+until `cut-basemaps` next ran on the 1st of the month. The new region's segments are mirrored
+on the weekly pass regardless — the wanted-segment list is computed from every region in
+`regions.json` — so the monthly job finds them waiting and publishes the region complete.
 
 `cut-basemaps.mjs` itself only ever publishes a region into `manifest.json` once every BRouter
 segment that region needs is *also* already mirrored (`lib/manifest.mjs`'s `buildManifest`
@@ -47,12 +54,16 @@ enforces this for every caller, and is tested doing so — a manifest must never
 the bucket does not have). On the very first run, or the moment a new region is added to
 `regions.json`, that is not yet true for any region. `cut-basemaps.mjs` handles this by
 publishing those regions anyway, with an empty `segments` list and a log line naming them —
-never with a segment list `buildManifest` has not verified. The manifest it writes is therefore
-always valid by the parser's own rules, just temporarily short of routing data for a region
-whose basemap has never been paired with a segment sync. Running `mirror:segments`
-immediately afterwards fills every region in on the same pass and republishes a complete
-manifest. On every run after the first, both scripts see a bucket that already has everything
-the other one needs, and this whole paragraph is a no-op.
+never with a segment list `buildManifest` has not verified.
+
+**That manifest is one the app deliberately rejects.** `parseManifest` refuses a region with an
+empty `segments` list, because a phone that accepted one would price the region as
+basemap-only, download it, record it, and then report it as current with nothing for BRouter to
+route on. So a manifest written by `cut-basemaps.mjs` alone is a bucket-side stepping stone,
+not something to leave up: a phone fetching it falls back to its cached copy, or fails saying
+so. Run `mirror:segments` immediately afterwards — it fills every region in on the same pass
+and republishes a manifest the app accepts. On every run after the first, both scripts see a
+bucket that already has everything the other one needs, and this whole section is a no-op.
 
 Bootstrap a brand new bucket in this order:
 
@@ -125,7 +136,11 @@ cookies or credentials involved, so being permissive about the calling origin do
 anything a direct `curl` of the same URL would not.
 
 If `Content-Range` is missing from a response, the streamed picker cannot work — it will read
-as a hang or a full-archive download rather than an error. Verify with (needs a live bucket and
+as a hang or a full-archive download rather than an error. Resumable downloads degrade rather
+than break: `downloadInto` cannot place a `206` whose `Content-Range` it cannot read, so it
+asks again with no `Range` header and takes the whole file, discarding whatever had already
+come down. Every interrupted download then restarts from zero, which for a 137 MB segment is
+worth fixing in the bucket rather than living with. Verify with (needs a live bucket and
 the real public URL, so this is unrun until then):
 
 ```bash

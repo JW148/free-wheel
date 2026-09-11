@@ -5,7 +5,6 @@ import type { ByteSink, RegionProgress } from './downloads'
 import type { PartialTarget } from './partials'
 import { installFakeOpfs } from './fakeOpfs'
 import {
-  basemapFileFor,
   completeRegionDownload,
   deleteRegionFiles,
   markDownloading,

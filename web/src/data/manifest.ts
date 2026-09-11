@@ -120,6 +120,21 @@ export function parseManifest(value: unknown): DataManifest {
     if (!Array.isArray(raw.segments) || raw.segments.some((s) => typeof s !== 'string')) {
       throw new Error(`${id}: segments must be a list of names`)
     }
+    // A region with no road data is not a region, it is a map. The mirror publishes exactly
+    // this shape on purpose while bootstrapping — `tools/mirror/lib/bootstrap.mjs` carries a
+    // region whose segments are not mirrored yet forward with an empty list, so that
+    // `cut-basemaps` can publish at all on an empty bucket — and a phone that fetched that
+    // manifest would price the region as basemap-only, download it, record it, and then read
+    // `current` from `regionState` while BRouter had nothing to route on.
+    //
+    // Rejecting the whole manifest rather than dropping the region is deliberate: the state
+    // is transient (the next `mirror:segments` run fills it in), and a phone that has a
+    // cached copy keeps using it and reports every region as `unknown`, which is true. A
+    // silently shortened region list would instead be a permanent-looking answer to a
+    // temporary condition.
+    if (raw.segments.length === 0) {
+      throw new Error(`${id}: has no segments, so it has no road data — the mirror is mid-bootstrap`)
+    }
     for (const name of raw.segments as string[]) {
       if (!segments[name]) throw new Error(`${id} needs segment ${name}, which the manifest does not describe`)
     }

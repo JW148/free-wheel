@@ -98,6 +98,22 @@ function contentRangeStart(header: string | null): number | null {
   return match ? Number(match[1]) : null
 }
 
+/**
+ * Where a response's bytes belong, or `null` if there is no way to know.
+ *
+ * A `200` is the whole file, so it goes at zero — that is the safe reading of a server that
+ * ignored our `Range` header. A `206` is a fragment, and the only thing that says which
+ * fragment is `Content-Range`: if it names the byte we asked to resume from, the bytes go
+ * there, and in every other case — no header, an unparseable one, or one naming a different
+ * offset — the response is a fragment we cannot place. That is `null`, never zero: writing a
+ * tail at offset zero produces a file of exactly the right length and wrong from its first
+ * byte, which is the one corruption the length check below cannot see.
+ */
+function placementOf(response: Response, asked: number): number | null {
+  if (response.status !== 206) return 0
+  return contentRangeStart(response.headers.get('Content-Range')) === asked ? asked : null
+}
+
 export async function downloadInto(
   sink: ByteSinkSource,
   url: string,
@@ -106,25 +122,50 @@ export async function downloadInto(
 ): Promise<void> {
   const doFetch = options.fetchImpl ?? fetch
   const from = options.from ?? 0
-  const response = await doFetch(url, from > 0 ? { headers: { Range: `bytes=${from}-` } } : {})
 
-  if (!response.ok) {
-    throw new Error(`${url}: server returned ${response.status}`)
-  }
-  if (!response.body) {
-    throw new Error(`${url}: response had no body`)
+  const request = async (at: number): Promise<Response & { body: ReadableStream<Uint8Array> }> => {
+    const result = await doFetch(url, at > 0 ? { headers: { Range: `bytes=${at}-` } } : {})
+    if (!result.ok) {
+      throw new Error(`${url}: server returned ${result.status}`)
+    }
+    if (!result.body) {
+      throw new Error(`${url}: response had no body`)
+    }
+    return result as Response & { body: ReadableStream<Uint8Array> }
   }
 
-  // A server that ignores Range answers 200 with the whole file. Writing that at the resume
-  // offset would produce a file the right length and wrong throughout — and the length check
-  // can't catch it, because the length comes out right. A `206` has the same failure mode if
-  // its `Content-Range` doesn't actually start where we asked: trusting the status code alone
-  // leaves that hole open, so the header is parsed and checked against `from` before the
-  // response is trusted as a genuine partial-content answer. Anything else — no `206`, no
-  // header, or a header that starts somewhere else — is treated as a full response from byte
-  // zero, the same safe fallback the plain-`200` case takes.
-  const trustedResume = response.status === 206 && contentRangeStart(response.headers.get('Content-Range')) === from
-  let offset = trustedResume ? from : 0
+  let response = await request(from)
+  let offset = placementOf(response, from)
+
+  // An unplaceable partial, which in practice means a cross-origin `206` whose `Content-Range`
+  // the browser will not show us: a bucket that omits `Access-Control-Expose-Headers:
+  // Content-Range` hides the header from JS even though the server sent it, and the fetch
+  // itself is perfectly healthy. So the fix is to stop asking for a range and take the whole
+  // file, which is what the plain-`200` path already does safely.
+  //
+  // Throwing instead was the alternative. It was rejected because the condition never clears
+  // by itself: the header is a property of someone else's bucket configuration, so every
+  // retry from the phone would hit it again, and the rider would be stuck on a region that
+  // can never finish downloading. Before this, the code wrote the tail at offset zero, hit
+  // the length check, and left a *shorter* file for the next attempt to resume from — an
+  // oscillation that re-fetched most of a 137 MB segment every time while the screen promised
+  // it was picking up where it stopped. One discarded prefix is the cheaper failure.
+  if (offset === null) {
+    await response.body.cancel().catch(() => {})
+    if (from === 0) {
+      // We never asked for a range, so a partial answer is not something a retry can improve.
+      throw new Error(`${url}: server sent a partial response to a request for the whole file`)
+    }
+    response = await request(0)
+    offset = placementOf(response, 0)
+    if (offset === null) {
+      await response.body.cancel().catch(() => {})
+      throw new Error(
+        `${url}: server sent an unplaceable partial response, and answered a request for ` +
+          `the whole file with another one`,
+      )
+    }
+  }
 
   // The last moment at which the target is still untouched, and the first at which bytes are
   // certain to land on it. A deferred sink is acquired here and nowhere earlier, so a caller

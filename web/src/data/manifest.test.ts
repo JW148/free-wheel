@@ -61,6 +61,16 @@ describe('parseManifest', () => {
     expect(() => parseManifest(broken)).toThrow(/W0_N55/)
   })
 
+  it('rejects a region with no segments, which would price as a map with no road data', () => {
+    // The shape the mirror publishes while bootstrapping: `buildBootstrapManifest` carries a
+    // region whose segments are not mirrored yet forward with an empty list, so that
+    // `cut-basemaps` can publish on an empty bucket at all. Downloaded, it would install a
+    // basemap, record itself, and read `current` with nothing for BRouter to route on.
+    const broken = structuredClone(good)
+    broken.regions[0].segments = []
+    expect(() => parseManifest(broken)).toThrow(/central-scotland: has no segments/)
+  })
+
   it('rejects a zero-byte asset, which means a failed upload', () => {
     const broken = structuredClone(good)
     broken.regions[0].basemap.bytes = 0

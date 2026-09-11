@@ -1,5 +1,6 @@
 import { listDirectoryEntries, openHandle, refreshSize, removeFile } from './opfsVfs'
 import { clearDownloading, isTruncated } from './partials'
+import { forgetSegments } from './regionRecords'
 
 /**
  * Tile storage — records of what has landed in OPFS, for both ways a tile gets there.
@@ -222,7 +223,16 @@ export async function installedBasemaps(): Promise<{ name: string; bytes: number
   return result
 }
 
-/** Removes a tile from OPFS and forgets it. */
+/**
+ * Removes a tile from OPFS and forgets it — in all three places that remember it.
+ *
+ * `/segments4/.imported.json` holds its age, `/downloads.json` may hold a download marker, and
+ * `/regions.json` holds a hash for it in every region that needs it. The last one is the one
+ * that bites: a record outliving its file claims bytes that are not there, so the region reads
+ * `current`, the picker stops offering it, and `downloadPlan` skips the segment because some
+ * record still claims it — while BRouter reports no segment directory. See
+ * `regionRecords.forgetSegments`.
+ */
 export async function deleteTile(tile: string): Promise<void> {
   const path = `${SEGMENT_DIR}/${tile}.rd5`
   await removeFile(path)
@@ -230,6 +240,7 @@ export async function deleteTile(tile: string): Promise<void> {
   const manifest = await readManifest()
   delete manifest[tile]
   await writeManifest(manifest)
+  await forgetSegments([tile])
 }
 
 /**
@@ -297,5 +308,11 @@ export async function resetTileStorage(): Promise<string[]> {
     if (match) removed.push(match[1])
   }
   await writeManifest({})
+
+  // Every region record now claims road data this phone no longer has, and `'all'` rather
+  // than `removed` on purpose: the point of a reset is to leave nothing behind, including a
+  // claim on a segment whose file was already missing before it ran. Each region keeps its
+  // basemap hash, so it reads `road-data-outdated` and re-fetches only the .rd5 files.
+  await forgetSegments('all')
   return removed
 }

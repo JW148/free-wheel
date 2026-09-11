@@ -52,3 +52,29 @@ export function buildBootstrapManifest({ regions, segments, picker, generated })
 
   return { manifest, pending: notReady.map((region) => region.id) }
 }
+
+/**
+ * Pairs every region with the basemap the monthly job last published for it, and names the
+ * ones that have none.
+ *
+ * `sync-segments.mjs` never cuts a basemap — only `cut-basemaps.mjs` does — so a region added
+ * to `regions.json` between monthly runs has segments the weekly job can mirror and no map to
+ * go with them. That region is named rather than published, and publishing stops for it alone:
+ * refusing the whole run, which is what this replaced, meant that adding a region silently
+ * stopped every *other* region's routing data from updating until the 1st of the month.
+ *
+ * Order is preserved, so the picker's region order stays the one `regions.json` gives.
+ */
+export function carryForwardBasemaps(regions, previousRegions) {
+  const ready = []
+  const missingBasemap = []
+  for (const region of regions) {
+    const existing = previousRegions?.find((r) => r.id === region.id)
+    if (!existing?.basemap) {
+      missingBasemap.push(region.id)
+      continue
+    }
+    ready.push({ ...region, basemap: existing.basemap })
+  }
+  return { regions: ready, missingBasemap }
+}

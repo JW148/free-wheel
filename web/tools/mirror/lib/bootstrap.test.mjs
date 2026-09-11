@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildBootstrapManifest, partitionByReadiness } from './bootstrap.mjs'
+import { buildBootstrapManifest, carryForwardBasemaps, partitionByReadiness } from './bootstrap.mjs'
 import { buildManifest } from './manifest.mjs'
 
 const segments = {
@@ -87,5 +87,47 @@ describe('buildBootstrapManifest', () => {
   it('still throws a clear picker error, same as buildManifest, rather than swallowing it', () => {
     expect(() => buildBootstrapManifest({ regions: [centralScotland], segments, picker: null, generated }))
       .toThrow(/picker.*npm run mirror:basemaps/)
+  })
+})
+
+describe('carryForwardBasemaps', () => {
+  const published = [
+    { id: 'central-scotland', basemap: centralScotland.basemap },
+    { id: 'wessex', basemap: wessex.basemap },
+  ]
+  // What the weekly job is handed: regions.json entries, with no basemap of their own.
+  const listed = [
+    { id: 'central-scotland', name: centralScotland.name, bbox: centralScotland.bbox },
+    { id: 'wessex', name: wessex.name, bbox: wessex.bbox },
+    { id: 'kent-sussex', name: kentSussex.name, bbox: kentSussex.bbox },
+  ]
+
+  it('pairs each region with the basemap the monthly job published for it', () => {
+    const { regions, missingBasemap } = carryForwardBasemaps(listed.slice(0, 2), published)
+    expect(regions).toEqual([
+      { ...listed[0], basemap: centralScotland.basemap },
+      { ...listed[1], basemap: wessex.basemap },
+    ])
+    expect(missingBasemap).toEqual([])
+  })
+
+  it('names a newly added region instead of stopping the other regions publishing', () => {
+    // The fix this exists for: a region in regions.json that cut-basemaps has not reached yet
+    // used to throw here, so the whole weekly run published nothing and routing data stopped
+    // updating everywhere until the 1st of the month.
+    const { regions, missingBasemap } = carryForwardBasemaps(listed, published)
+    expect(regions.map((r) => r.id)).toEqual(['central-scotland', 'wessex'])
+    expect(missingBasemap).toEqual(['kent-sussex'])
+  })
+
+  it('reports every region as missing when the bucket has no manifest at all', () => {
+    const { regions, missingBasemap } = carryForwardBasemaps(listed, undefined)
+    expect(regions).toEqual([])
+    expect(missingBasemap).toEqual(['central-scotland', 'wessex', 'kent-sussex'])
+  })
+
+  it('keeps regions.json order rather than the published order', () => {
+    const { regions } = carryForwardBasemaps([listed[1], listed[0]], published)
+    expect(regions.map((r) => r.id)).toEqual(['wessex', 'central-scotland'])
   })
 })

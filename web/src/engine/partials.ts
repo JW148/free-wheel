@@ -42,30 +42,42 @@ export interface PartialTarget {
    *
    * So the marker goes down as `false` and is flipped to `true` once the truncate has
    * succeeded, and only a `true` here lets `downloads.resumeDecision` resume (or skip). Not
-   * optional in the type, so no writer can forget it; a marker read back from `/downloads.json`
-   * as written by an older build has no such field at all, and anything that is not `true` is
-   * read as not started. That costs a restart and never a splice.
+   * optional in the type, so no writer can forget it — and {@link readPartialHash} normalises
+   * what it reads, so the type is not lying about a marker written by an older build, which
+   * has no such field at all. Anything that is not exactly `true` is read as not started:
+   * that costs a restart and never a splice.
    */
   started: boolean
 }
 
+/**
+ * What `/downloads.json` actually holds — which is not quite a {@link PartialTarget}.
+ *
+ * The file is JSON parsed out of OPFS, so it is whatever some earlier build of this app
+ * wrote, and `started` postdates the first shipped version of the marker. Typing the stored
+ * shape separately is what keeps {@link readPartialHash}'s return type honest: it normalises
+ * on the way out, so nothing downstream has to remember that a field the type calls required
+ * might be missing.
+ */
+type StoredTarget = Omit<PartialTarget, 'started'> & { started?: boolean }
+
 const decoder = new TextDecoder()
 const encoder = new TextEncoder()
 
-async function readPartials(): Promise<Record<string, PartialTarget>> {
+async function readPartials(): Promise<Record<string, StoredTarget>> {
   const handle = await openHandle(PARTIALS_PATH)
   const size = handle.getSize()
   if (size === 0) return {}
   const buffer = new Uint8Array(size)
   handle.read(buffer, { at: 0 })
   try {
-    return JSON.parse(decoder.decode(buffer)) as Record<string, PartialTarget>
+    return JSON.parse(decoder.decode(buffer)) as Record<string, StoredTarget>
   } catch {
     return {}
   }
 }
 
-async function writePartials(partials: Record<string, PartialTarget>): Promise<void> {
+async function writePartials(partials: Record<string, StoredTarget>): Promise<void> {
   const handle = await openHandle(PARTIALS_PATH)
   const bytes = encoder.encode(JSON.stringify(partials))
   handle.truncate(0)
@@ -74,8 +86,18 @@ async function writePartials(partials: Record<string, PartialTarget>): Promise<v
   refreshSize(PARTIALS_PATH)
 }
 
+/**
+ * The marker for a path, normalised — the one place a stored marker becomes a
+ * {@link PartialTarget}.
+ *
+ * `started` is forced to a boolean here rather than defended against at each reader, because
+ * an older build's marker genuinely has no such field and every reader treating `undefined`
+ * as "not started" independently is one reader away from a splice.
+ */
 export async function readPartialHash(path: string): Promise<PartialTarget | null> {
-  return (await readPartials())[path] ?? null
+  const stored = (await readPartials())[path]
+  if (!stored) return null
+  return { hash: stored.hash, bytes: stored.bytes, started: stored.started === true }
 }
 
 async function writePartialHash(path: string, target: PartialTarget): Promise<void> {

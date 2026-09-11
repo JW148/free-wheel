@@ -1,3 +1,4 @@
+import type { FeatureCollection } from 'geojson'
 import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 import type { RegionEntry } from '../data/manifest'
 import type { RegionState } from '../data/regions'
@@ -42,7 +43,7 @@ export const REGION_LINE_LAYER = 'regions-line'
 export function regionsGeoJson(
   regions: RegionEntry[],
   states: Record<string, RegionState>,
-): GeoJSON.FeatureCollection {
+): FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: regions.map(({ id, name, bbox: [west, south, east, north] }) => ({
@@ -137,7 +138,7 @@ export function removeRegionLayers(map: MapLibreMap): void {
   if (map.getSource(REGION_SOURCE)) map.removeSource(REGION_SOURCE)
 }
 
-export function setRegionData(map: MapLibreMap, collection: GeoJSON.FeatureCollection): void {
+export function setRegionData(map: MapLibreMap, collection: FeatureCollection): void {
   const source = map.getSource(REGION_SOURCE) as GeoJSONSource | undefined
   source?.setData(collection)
 }
