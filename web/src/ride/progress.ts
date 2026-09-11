@@ -1,0 +1,553 @@
+import { haversineM } from './geo'
+import { ASCENT_DEADBAND_M } from './ascent'
+import { hasHeights, type ParsedRoute } from './gpx'
+
+/**
+ * Where the rider is *on the route*, rather than where they are on the earth.
+ *
+ * Everything the ride screen wants to say — how far is left, when you will arrive, what the
+ * gradient is under the wheels, whether you have come off the route — is a function of one
+ * number: distance along the polyline. So this module computes that number and nothing else
+ * depends on a map, a fix, or React.
+ *
+ * ## Why snapping, and not just "distance to the finish"
+ *
+ * Air distance to the last waypoint is wrong in the two situations that matter. It shrinks
+ * while you ride *away* from the finish along a valley, and it stops shrinking on a switchback
+ * where you are making excellent progress. A rider reads a number that disagrees with the road
+ * and stops trusting the screen. Distance along the line always agrees with the road, because
+ * it *is* the road.
+ *
+ * ## Why a local flat projection
+ *
+ * Snapping is a per-segment point-to-line projection, and doing that on a sphere means either
+ * great-circle cross-track formulas per segment or a projection. Segments here are a few tens
+ * of metres, so an equirectangular projection about the query point is accurate to far better
+ * than a GPS fix and is a handful of multiplies. Cumulative *distances* still come from
+ * {@link haversineM}, because those accumulate over 100 km and the error would not stay small.
+ */
+
+const EARTH_R = 6_371_000
+const DEG = Math.PI / 180
+
+
+export interface RouteGeometry {
+  coords: [number, number][]
+  /** Metres from the start at each coordinate. Same length as {@link coords}. */
+  cumulativeM: number[]
+  /**
+   * Metres of *climbing* done by each coordinate — descent contributes nothing, and a rise
+   * smaller than {@link ASCENT_DEADBAND_M} contributes nothing either.
+   *
+   * The gain is credited in a lump at the vertex where it crosses the band rather than being
+   * spread over the vertices that earned it, so `ascentBy` between two points is slightly
+   * steppy. That costs nothing: it is read as "how much is left", where a metre either way is
+   * invisible, and the alternative is a second pass to redistribute it.
+   */
+  cumulativeAscentM: number[]
+  elevations: number[]
+  totalM: number
+  /**
+   * Whether this track carries real heights at all.
+   *
+   * True for anything BRouter computed — it stamps an SRTM height on every point. False for a
+   * *recorded* ride, whose heights were only ever the route's own and are therefore absent
+   * wherever the rider was off route, and completely absent for a ride recorded with no route
+   * to follow. Everything downstream that is a function of height — the gradient, the power
+   * estimate, the climb callout, the elevation profile — has to say it cannot answer rather
+   * than answer from zeros, which is a flat road and a plausible-looking wattage.
+   */
+  hasElevation: boolean
+}
+
+/**
+ * Cached by route identity.
+ *
+ * Three separate places want the geometry of the same route at the same moment — the ride
+ * telemetry, the elevation chart and the climb list — and each had its own `useMemo`, so the
+ * work was done three times over. A `WeakMap` keyed on the parsed route means it is done once
+ * and collected with the route, without any of the three having to know about the others.
+ */
+const geometryCache = new WeakMap<ParsedRoute, RouteGeometry | null>()
+
+/**
+ * Precomputes everything that is a function of the route alone.
+ *
+ * Built once per route and reused for every fix. A 76 km route is ~5,000 points, and redoing
+ * 5,000 haversines at 1 Hz for the length of a ride is the kind of waste that shows up as a
+ * warm phone and a flat battery, which on this app is a correctness problem rather than a
+ * performance one.
+ *
+ * Returns `null` for a route with nothing to travel along.
+ */
+export function routeGeometry(route: ParsedRoute): RouteGeometry | null {
+  const cached = geometryCache.get(route)
+  if (cached !== undefined) return cached
+  const built = buildGeometry(route)
+  geometryCache.set(route, built)
+  return built
+}
+
+function buildGeometry(route: ParsedRoute): RouteGeometry | null {
+  if (route.coords.length < 2) return null
+
+  const cumulativeM = new Array<number>(route.coords.length)
+  const cumulativeAscentM = new Array<number>(route.coords.length)
+  cumulativeM[0] = 0
+  cumulativeAscentM[0] = 0
+  // The height the next rise is measured from. It follows the route down as well as up, or a
+  // long descent would leave it stranded at the summit and credit the whole way back.
+  let reference = route.elevations[0] ?? 0
+
+  for (let i = 1; i < route.coords.length; i++) {
+    cumulativeM[i] = cumulativeM[i - 1] + haversineM(route.coords[i - 1], route.coords[i])
+
+    const here = route.elevations[i] ?? 0
+    let climbed = cumulativeAscentM[i - 1]
+    if (here - reference >= ASCENT_DEADBAND_M) {
+      climbed += here - reference
+      reference = here
+    } else if (reference - here >= ASCENT_DEADBAND_M) {
+      reference = here
+    }
+    cumulativeAscentM[i] = climbed
+  }
+
+  return {
+    coords: route.coords,
+    cumulativeM,
+    cumulativeAscentM,
+    elevations: route.elevations,
+    // Any non-zero height means the data is real. A route genuinely at sea level for its whole
+    // length would read as having none, which is the same answer either way: there is no
+    // gradient to report.
+    hasElevation: hasHeights(route),
+    totalM: cumulativeM[cumulativeM.length - 1],
+  }
+}
+
+export interface RoutePosition {
+  /** The segment the rider is on, identified by its first vertex. */
+  index: number
+  /** Metres from the start of the route to the snapped point. */
+  alongM: number
+  /** How far the fix is from the line, in metres. The off-route signal. */
+  offsetM: number
+  /** The snapped point itself, `[lon, lat]`, for drawing. */
+  point: [number, number]
+  /** Interpolated height at the snapped point, metres. */
+  elevM: number
+  /** The direction the route is heading here, degrees clockwise from true north. */
+  bearing: number
+}
+
+/**
+ * How far either side of the previous position to look before giving up and scanning it all.
+ *
+ * A cyclist covers at most ~25 m between 1 Hz fixes, but fixes drop out in cuttings and under
+ * trees, so the forward window is generous. Backwards is much tighter: you can stop and roll
+ * back a few metres, but a match 500 m behind is a mis-snap, not a rider reversing.
+ */
+const WINDOW_AHEAD_M = 600
+const WINDOW_BEHIND_M = 120
+
+/**
+ * How far off the line the windowed match may be before the hint is judged stale.
+ *
+ * Deliberately large, and it was 45 m at first, which did not work. A bad windowed match has
+ * two quite different causes and they separate by *magnitude*:
+ *
+ * - **The rider is off the line but near it** — a parallel path, a wide dual carriageway, a
+ *   poor fix. Tens of metres. The hint is still right: they did not teleport.
+ * - **The hint is stale** — a tunnel, a long signal loss, a route loaded with the rider
+ *   already halfway along it. Hundreds of metres or kilometres.
+ *
+ * With the threshold at 45 m the first case fell through to the global scan, and the global
+ * scan is a *superset* of the window, so it can never be worse — which meant the hint's
+ * protection evaporated exactly when it was needed. One 46 m fix on a parallel out-and-back
+ * moved `alongM` 280 m backwards onto the other leg, and since the answer becomes the next
+ * hint, the rider stayed there.
+ *
+ * At 250 m the first case keeps its hint and the second still recovers. A rider genuinely
+ * 150 m off route keeps a lagging but continuous position, which is the right answer for
+ * someone about to be rerouted anyway.
+ */
+const HINT_STALE_M = 250
+
+/**
+ * The point on the route nearest a fix.
+ *
+ * `hintAlongM` is the previous answer. It exists for two reasons and the second is the
+ * important one: it makes the common case O(window) instead of O(route), *and* it disambiguates
+ * a route that crosses itself. An out-and-back on the same road is two coincident lines, and a
+ * global nearest-point search picks between them by floating-point luck — so a rider on the way
+ * home would see the distance-remaining jump back to the full route length. The hint says which
+ * pass you are on; the global fallback is only reached when the hint has clearly gone stale.
+ */
+export function snapToRoute(
+  geometry: RouteGeometry,
+  point: [number, number],
+  hintAlongM: number | null = null,
+): RoutePosition {
+  const windowed =
+    hintAlongM === null
+      ? null
+      : scan(
+          geometry,
+          point,
+          hintAlongM - WINDOW_BEHIND_M,
+          hintAlongM + WINDOW_AHEAD_M,
+        )
+
+  if (windowed && windowed.offsetM <= HINT_STALE_M) return windowed
+
+  // The hint is no longer credible. Scan everything, and take the windowed answer only if it
+  // is still the better of the two — a tie goes to continuity, because a progress bar that
+  // jumps is worse than one that lags.
+  const global = scan(geometry, point, -Infinity, Infinity)!
+  return windowed && windowed.offsetM <= global.offsetM ? windowed : global
+}
+
+/** Nearest point over the segments overlapping `[fromM, toM]`, or null if that is empty. */
+function scan(
+  geometry: RouteGeometry,
+  point: [number, number],
+  fromM: number,
+  toM: number,
+): RoutePosition | null {
+  const { coords, cumulativeM } = geometry
+  const cosLat = Math.cos(point[1] * DEG)
+  const scaleX = EARTH_R * DEG * cosLat
+  const scaleY = EARTH_R * DEG
+
+  let bestIndex = -1
+  let bestT = 0
+  let bestSquared = Infinity
+
+  // Binary search to the window rather than walking to it. Skipping segments with `continue`
+  // still touched every one from the start of the route, so the hinted path — the one taken on
+  // every fix — was O(route) rather than the O(window) it exists to be.
+  const first = fromM === -Infinity ? 0 : segmentIndexAt(cumulativeM, Math.max(0, fromM))
+
+  for (let i = first; i < coords.length - 1; i++) {
+    // Keep a segment that straddles the near edge; stop past the far one.
+    if (cumulativeM[i + 1] < fromM) continue
+    if (cumulativeM[i] > toM) break
+
+    // The window is a *distance* range, so a segment that straddles its far edge must be
+    // considered only up to that edge. Including such a segment whole is what let a 900 m
+    // return leg be matched 450 m beyond the end of the window — which put the rider on the
+    // wrong leg of an out-and-back, the exact thing the hint exists to prevent. Infinite
+    // bounds fall out correctly: ±Infinity divided by a positive length clamps to 0 and 1.
+    const segmentM = cumulativeM[i + 1] - cumulativeM[i]
+    const low = segmentM > 0 ? clamp((fromM - cumulativeM[i]) / segmentM, 0, 1) : 0
+    const high = segmentM > 0 ? clamp((toM - cumulativeM[i]) / segmentM, 0, 1) : 0
+
+    const ax = (coords[i][0] - point[0]) * scaleX
+    const ay = (coords[i][1] - point[1]) * scaleY
+    const bx = (coords[i + 1][0] - point[0]) * scaleX
+    const by = (coords[i + 1][1] - point[1]) * scaleY
+    const dx = bx - ax
+    const dy = by - ay
+    const lengthSquared = dx * dx + dy * dy
+
+    // A zero-length segment — BRouter emits repeated points at some junctions — projects to
+    // its own endpoint rather than dividing by zero.
+    const t =
+      lengthSquared === 0 ? 0 : clamp(-(ax * dx + ay * dy) / lengthSquared, low, high)
+    const px = ax + t * dx
+    const py = ay + t * dy
+    const squared = px * px + py * py
+
+    if (squared < bestSquared) {
+      bestSquared = squared
+      bestIndex = i
+      bestT = t
+    }
+  }
+
+  if (bestIndex === -1) return null
+
+  const a = coords[bestIndex]
+  const b = coords[bestIndex + 1]
+  const segmentM = cumulativeM[bestIndex + 1] - cumulativeM[bestIndex]
+
+  return {
+    index: bestIndex,
+    alongM: cumulativeM[bestIndex] + segmentM * bestT,
+    offsetM: Math.sqrt(bestSquared),
+    point: [a[0] + (b[0] - a[0]) * bestT, a[1] + (b[1] - a[1]) * bestT],
+    elevM:
+      (geometry.elevations[bestIndex] ?? 0) +
+      ((geometry.elevations[bestIndex + 1] ?? 0) - (geometry.elevations[bestIndex] ?? 0)) * bestT,
+    bearing: bearingBetween(a, b),
+  }
+}
+
+/** Degrees clockwise from true north, matching what the Geolocation API reports. */
+export function bearingBetween(a: [number, number], b: [number, number]): number {
+  const φ1 = a[1] * DEG
+  const φ2 = b[1] * DEG
+  const Δλ = (b[0] - a[0]) * DEG
+  const y = Math.sin(Δλ) * Math.cos(φ2)
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+  return (Math.atan2(y, x) / DEG + 360) % 360
+}
+
+/**
+ * The direction of travel over the next `lookaheadM` of route, rather than of one segment.
+ *
+ * A single BRouter segment can be two metres long, and its bearing swings wildly at a
+ * junction — using it to orient the map produces a screen that lurches every time the road
+ * kinks. Averaging over a short distance ahead gives the direction the rider is actually
+ * about to go.
+ */
+export function routeBearingAhead(
+  geometry: RouteGeometry,
+  alongM: number,
+  lookaheadM = 40,
+): number {
+  const here = pointAt(geometry, alongM)
+  const there = pointAt(geometry, Math.min(alongM + lookaheadM, geometry.totalM))
+  if (here[0] === there[0] && here[1] === there[1]) {
+    // At the very end of the route, look backwards instead of returning an arbitrary zero.
+    const before = pointAt(geometry, Math.max(0, alongM - lookaheadM))
+    return bearingBetween(before, here)
+  }
+  return bearingBetween(here, there)
+}
+
+/** The `[lon, lat]` a given distance along the route, interpolated within its segment. */
+export function pointAt(geometry: RouteGeometry, alongM: number): [number, number] {
+  const { coords, cumulativeM } = geometry
+  const target = clamp(alongM, 0, geometry.totalM)
+  const i = segmentIndexAt(cumulativeM, target)
+  const segmentM = cumulativeM[i + 1] - cumulativeM[i]
+  const t = segmentM === 0 ? 0 : (target - cumulativeM[i]) / segmentM
+  return [
+    coords[i][0] + (coords[i + 1][0] - coords[i][0]) * t,
+    coords[i][1] + (coords[i + 1][1] - coords[i][1]) * t,
+  ]
+}
+
+/**
+ * The stretch of route between two distances, as coordinates ready to draw.
+ *
+ * Both ends are interpolated rather than snapped to the nearest vertex. That matters at the
+ * near end: the "already ridden" overlay is drawn from 0 to wherever the rider is, and
+ * snapping it to the last vertex would make it jump forward in 30 m steps rather than creeping
+ * along under the dot.
+ *
+ * Returns fewer than two points — and so nothing drawable — for an empty or reversed range.
+ */
+export function sliceAlong(
+  geometry: RouteGeometry,
+  fromM: number,
+  toM: number,
+): [number, number][] {
+  const from = clamp(Math.min(fromM, toM), 0, geometry.totalM)
+  const to = clamp(Math.max(fromM, toM), 0, geometry.totalM)
+  if (to - from <= 0) return []
+
+  const out: [number, number][] = [pointAt(geometry, from)]
+  const first = segmentIndexAt(geometry.cumulativeM, from)
+  const last = segmentIndexAt(geometry.cumulativeM, to)
+  for (let i = first + 1; i <= last; i++) {
+    if (geometry.cumulativeM[i] > from && geometry.cumulativeM[i] < to) {
+      out.push(geometry.coords[i])
+    }
+  }
+  out.push(pointAt(geometry, to))
+  return out
+}
+
+/** Interpolated height a given distance along the route, metres. */
+export function elevationAt(geometry: RouteGeometry, alongM: number): number {
+  const { cumulativeM, elevations } = geometry
+  const target = clamp(alongM, 0, geometry.totalM)
+  const i = segmentIndexAt(cumulativeM, target)
+  const segmentM = cumulativeM[i + 1] - cumulativeM[i]
+  const t = segmentM === 0 ? 0 : (target - cumulativeM[i]) / segmentM
+  return (elevations[i] ?? 0) + ((elevations[i + 1] ?? 0) - (elevations[i] ?? 0)) * t
+}
+
+/** Metres climbed by a given point along the route, interpolated. */
+export function ascentBy(geometry: RouteGeometry, alongM: number): number {
+  const { cumulativeM, cumulativeAscentM } = geometry
+  const target = clamp(alongM, 0, geometry.totalM)
+  const i = segmentIndexAt(cumulativeM, target)
+  const segmentM = cumulativeM[i + 1] - cumulativeM[i]
+  const t = segmentM === 0 ? 0 : (target - cumulativeM[i]) / segmentM
+  return cumulativeAscentM[i] + (cumulativeAscentM[i + 1] - cumulativeAscentM[i]) * t
+}
+
+/** Binary search for the segment containing a distance. Returns a *segment* index. */
+function segmentIndexAt(cumulativeM: number[], target: number): number {
+  let low = 0
+  let high = cumulativeM.length - 1
+  while (low < high - 1) {
+    const mid = (low + high) >> 1
+    if (cumulativeM[mid] <= target) low = mid
+    else high = mid
+  }
+  return Math.min(low, cumulativeM.length - 2)
+}
+
+/**
+ * The distance over which the gradient under the wheels is measured.
+ *
+ * ±60 m, so 120 m in total. Shorter and the number is dominated by SRTM's vertical noise —
+ * the elevation data is sampled on a ~30 m grid with metre-scale error, so a 20 m window can
+ * show 15% on a flat road. Longer and a genuine short ramp is averaged into nothing, which is
+ * the number a cyclist most wants.
+ */
+const GRADE_WINDOW_M = 60
+
+/** Gradient at a point as a ratio — 0.05 is 5% — smoothed over {@link GRADE_WINDOW_M}. */
+export function gradeAt(geometry: RouteGeometry, alongM: number): number {
+  const from = Math.max(0, alongM - GRADE_WINDOW_M)
+  const to = Math.min(geometry.totalM, alongM + GRADE_WINDOW_M)
+  const run = to - from
+  if (run < 1) return 0
+  return (elevationAt(geometry, to) - elevationAt(geometry, from)) / run
+}
+
+export interface RideProgress {
+  position: RoutePosition
+  /** 0 at the start, 1 at the finish. What the progress bar reads. */
+  fraction: number
+  remainingM: number
+  /** Climbing still to come, metres. The figure that decides whether to stop for food. */
+  remainingAscentM: number
+  /** Gradient under the wheels now, as a ratio. Positive uphill. */
+  grade: number
+}
+
+export function rideProgress(geometry: RouteGeometry, position: RoutePosition): RideProgress {
+  const remainingM = Math.max(0, geometry.totalM - position.alongM)
+  return {
+    position,
+    fraction: geometry.totalM === 0 ? 1 : clamp(position.alongM / geometry.totalM, 0, 1),
+    remainingM,
+    remainingAscentM: Math.max(
+      0,
+      geometry.cumulativeAscentM[geometry.cumulativeAscentM.length - 1] -
+        ascentBy(geometry, position.alongM),
+    ),
+    grade: gradeAt(geometry, position.alongM),
+  }
+}
+
+/**
+ * Seconds to the finish.
+ *
+ * Two estimates, blended. The **planned** pace is what the profile predicted for the whole
+ * route, and it already accounts for the hills, junctions and surfaces still ahead. The
+ * **observed** pace is the rider's recent average, which knows about the headwind, the loaded
+ * panniers and the fact that they are tired. Neither alone is good: planned pace never adapts,
+ * and observed pace extrapolates the last kilometre of descent across a route that finishes
+ * uphill.
+ *
+ * Weighting the observed pace by how much of the route has been ridden is what makes it
+ * settle: at the start it says almost nothing and the profile's estimate stands; by halfway
+ * the rider's own pace dominates. `null` when neither estimate exists — which is exactly the
+ * `shortest` profile, whose GPX carries no `time=` at all.
+ */
+export function etaSeconds(input: {
+  remainingM: number
+  /** Route length and predicted time, from the GPX summary. `null` time means no model. */
+  plannedM: number
+  plannedTimeS: number | null
+  /** Metres actually ridden and seconds actually spent moving, this ride. */
+  riddenM: number
+  movingS: number
+  fraction: number
+}): number | null {
+  const { remainingM, plannedM, plannedTimeS, riddenM, movingS, fraction } = input
+  const plannedPace = plannedTimeS !== null && plannedM > 0 ? plannedTimeS / plannedM : null
+  // Under a kilometre or a couple of minutes there is not enough signal to average, and a
+  // pace taken from a standing start at the traffic lights predicts arrival next Tuesday.
+  const observedPace = riddenM > 1000 && movingS > 120 ? movingS / riddenM : null
+
+  if (plannedPace === null && observedPace === null) return null
+  if (observedPace === null) return remainingM * plannedPace!
+  if (plannedPace === null) return remainingM * observedPace
+
+  const trust = clamp(fraction, 0, 1)
+  return remainingM * (observedPace * trust + plannedPace * (1 - trust))
+}
+
+/**
+ * The waypoints a rider has not reached yet, for rerouting from where they now are.
+ *
+ * The naive version — "keep everything except the start" — sends a rider who has already
+ * passed the second of three via points back to it, which is the single worst thing a
+ * navigation app can do and is exactly when it would do it. So each waypoint is snapped onto
+ * the route and kept only if it lies ahead.
+ *
+ * Three deliberate details. The **start is always dropped**, whatever the snapping says — the
+ * rider's current position takes its place, and routing back to where you set off from is
+ * never what "reroute" means. The **finish is always kept**, for the mirror-image reason: a
+ * route with no destination is not a route. And a via point fractionally *behind* the rider is
+ * kept — `PASSED_MARGIN_M` — because standing 15 m past one is not the same as having gone
+ * through it, and a GPS fix is not precise enough to tell the difference.
+ */
+const PASSED_MARGIN_M = 30
+
+export function waypointsAhead<T extends { lon: number; lat: number }>(
+  geometry: RouteGeometry,
+  waypoints: T[],
+  alongM: number,
+): T[] {
+  if (waypoints.length === 0) return []
+  const finish = waypoints[waypoints.length - 1]
+  const ahead = waypoints
+    .slice(1, -1)
+    .filter((w) => snapToRoute(geometry, [w.lon, w.lat]).alongM > alongM - PASSED_MARGIN_M)
+  return [...ahead, finish]
+}
+
+/**
+ * Whether the rider has left the route, tracked across fixes rather than decided per fix.
+ *
+ * A single fix is not evidence. Urban GPS routinely throws a 60 m outlier between two good
+ * fixes, and rerouting on one of those is how a navigation app earns a reputation for
+ * sending you the wrong way down a street you were already riding correctly. So: several
+ * consecutive fixes past a threshold that itself scales with the reported accuracy, because
+ * a ±50 m fix simply cannot tell you which of two parallel streets you are on.
+ *
+ * Recovery is deliberately asymmetric — one good fix clears it. Being wrong about "back on
+ * route" costs nothing; being wrong about "off route" costs a reroute.
+ */
+export interface OffRouteState {
+  /** Consecutive fixes seen off the line. */
+  strikes: number
+  /** Whether we have concluded the rider is off route. */
+  off: boolean
+  /** When that conclusion was first reached, so a reroute can be rate-limited. */
+  since: number | null
+}
+
+export const ON_ROUTE: OffRouteState = { strikes: 0, off: false, since: null }
+
+/** Below this, a rider on the correct road can still snap wide — a dual carriageway is 30 m. */
+const OFF_ROUTE_FLOOR_M = 40
+/** How many consecutive bad fixes before believing them. At 1 Hz that is a few seconds. */
+const OFF_ROUTE_STRIKES = 4
+
+export function trackOffRoute(
+  state: OffRouteState,
+  sample: { offsetM: number; accuracyM: number; at: number },
+): OffRouteState {
+  // A fix that cannot tell the difference is not allowed to claim there is one.
+  const threshold = Math.max(OFF_ROUTE_FLOOR_M, sample.accuracyM * 2)
+  if (sample.offsetM <= threshold) return state.off || state.strikes > 0 ? ON_ROUTE : state
+
+  const strikes = state.strikes + 1
+  if (strikes < OFF_ROUTE_STRIKES) return { strikes, off: false, since: null }
+  return { strikes, off: true, since: state.since ?? sample.at }
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return value < low ? low : value > high ? high : value
+}

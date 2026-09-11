@@ -16,12 +16,15 @@ this for where the work actually stands.
 | **Phase 3** — React/MapLibre PWA | ✅ Basemap renders with labels, offline |
 | **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. **Ridden 2026-09-06** |
 | **Phase 5** — basemap legibility | 🟡 Land cover, water and rail restyled after the ride. Tests green, not yet ridden |
-| **Phase 6** — region downloads | 🔴 Built and unit-tested (310/310); **the mirror bucket does not exist** — nobody has run the upload with real credentials, so `DATA_ORIGIN` is a placeholder host and the picker has never streamed anything in a browser. Manual import still works and is the only way onto a device today |
+| **Phase 6** — navigation | 🟡 Progress, climbs, power, rerouting, heading, recording, library. **Ridden 2026-09-08** |
+| **Phase 7** — the ride's feedback | 🟡 Six corrections from that ride. Tests green, driven in a browser, **not yet ridden** |
+| **Phase 8** — region downloads | 🟡 Built and unit-tested; **the mirror bucket now exists and is live** — CORS, public-read and a ranged `206` on `manifest.json` verified 2026-09-11. The picker has still never streamed anything in a browser, and nothing has been downloaded on a phone. Manual import survives as the escape hatch |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
-`docs/phase-5-progress.md`, `docs/phase-6-progress.md`. Each
+`docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
+`docs/phase-8-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -36,16 +39,56 @@ wrong.
 
 ## Where to pick up
 
-**The next action is a ride, in daylight.** The first ride (2026-09-06) worked but produced one
+**The next action is another ride.** Phase 6 was ridden on 2026-09-08 and it worked — the
+navigation was right and six things about *using* it were not. Phase 7 is those six things, and
+`docs/phase-7-progress.md` records each one with what was measured:
+
+- **iOS shake-to-undo** fired an "Undo Typing" alert every few seconds on rough ground. A page
+  cannot decline that alert, so the riding screen now carries no text field at all: a finished
+  ride saves itself and renaming moved to the library.
+- **The ride summary is reachable again.** Rides auto-save, and a ride in the library opens the
+  same figures, from the same component.
+- **The library filters** All / Planned / Ridden over one list.
+- **A recorded ride can be followed**, drawn as its own `recorded` pseudo-profile in orange.
+  (Recording a ride with *no* route was also built, and withdrawn on 2026-09-10 — see §3 of the
+  phase 7 notes. Rides recorded while following a route are still saved.)
+- **The rider's arrow** is 45 px with a two-tone ring while riding, from 20 px in one tone.
+- **The HUD folds** to a strip: three figures, the progress bar, and the climb line only when
+  there is a climb inside 1.2 km.
+
+What a desk cannot answer, in rough order of risk:
+
+0. **Does the "Undo Typing" alert actually stop?** The fix removes the only text field on the
+   riding path, on the inference that WebKit's undo stack is then empty. That inference is the
+   whole basis of the fix and it is undocumented.
+1. **Is the folded strip enough at 25 km/h**, and **does the fold animation judder** on a
+   backdrop-filtered panel over a moving map — the failure the control rail hit. Also whether
+   the 45 px arrow is now right or overcorrected: it is large, and it covers the road it sits
+   on at street zoom.
+2. **The compass.** `DeviceOrientationEvent.requestPermission()` only exists on iOS and only
+   resolves from a user gesture; desktop never prompts, so the whole permission path is
+   unexercised. Course-up falls back to the GPS course, which is `null` below a few km/h.
+3. **Does the power figure look sane?** Setup → Rider shows what the current setup predicts for
+   25 km/h flat and 10 km/h up 8%; the point of those two numbers is that a rider can check
+   them against what they know they hold. If they are wrong, the settings above them are the
+   thing to change, not the model.
+4. **Automatic rerouting on a real wrong turn**, including the 45 s cooldown feeling right
+   rather than either trigger-happy or absent.
+5. **Battery.** Wake lock, GPS at high accuracy, and a map that now redraws two extra GeoJSON
+   sources per fix.
+
+Then, and separately, the thing Phase 5 was waiting for:
+
+**The light theme in direct sunlight.** The first ride (2026-09-06) worked but produced one
 dominant complaint: the map was too monochromatic to orient by. Phase 5 fixed that — the
 archive already carried 43 distinct land kinds and the style was painting all of them one
 colour, at ΔE 2.4 from the earth beneath them. Land cover, water and railways are now
 restyled and every palette rule is asserted in `style.test.ts` rather than written down.
 
-What needs riding: **the light theme in direct sunlight.** That is the condition the light
-palette exists for and the one a desk and a Simulator cannot reproduce. Two things the rider
-asked for were deliberately *not* done — building footprints (2.6× archive size, declined) and
-an OpenCycleMap-style cycle network (impossible from this data — see below).
+That is the condition the light palette exists for and the one a desk and a Simulator cannot
+reproduce. Two things the rider asked for were deliberately *not* done — building footprints
+(2.6× archive size, declined) and an OpenCycleMap-style cycle network (impossible from this
+data — see below).
 
 The acceptance test, unchanged: airplane mode, cold launch from the Home Screen, plan a route,
 follow it.
@@ -54,7 +97,11 @@ What is known to work, and where:
 
 - **Desktop** — basemap, waypoints, routing, stats, GPX export, persistence across a cold
   reload. Edinburgh → Dalkeith on `trekking` returns 12.3 km / 40 min / 98 m, matching the GPX
-  header exactly.
+  header exactly. Phase 6 additionally: the ride HUD, progress and ETA, climb callouts, power,
+  automatic rerouting after going 1.2 km off the line, the ride summary, saving to the library,
+  and course-up matching the map bearing to the heading. Driven with `navigator.geolocation`
+  stubbed to walk the computed route — see `docs/phase-6-progress.md` for the method, and for
+  the `requestAnimationFrame` trap that makes a headless tab render no map at all.
 - **iOS 26.5 Simulator** — the app boots to the empty state, which is only reachable once
   `init()` resolves. That means the WasmGC engine loads, profiles provision into OPFS, and the
   VFS installs on real iOS WebKit. Nothing past that was exercised, because pushing a 34 MB
@@ -75,31 +122,35 @@ separate local checkout, and a static host's build machine has none of those. On
 `-PwasmDebug` sidecars (`.wasm.map`, `.teadbg`, the deobfuscator, `wasm-gc/src/`) stay
 ignored. Regenerate with Gradle and commit the result; do not hand-edit.
 
-**Region data is meant to come from the mirror, not from this Mac** — see *Routing data comes
-from our mirror* below — but the bucket it streams from does not exist yet. Until it does, or
-whenever a mirror outage or a custom extract calls for the escape hatch anyway, get files onto
-a phone by hand exactly as before:
+**Region data comes from the mirror, not from this Mac** — see *Routing data comes from our
+mirror* below. The escape hatch survives for a mirror outage or a custom extract, and works
+exactly as before:
 
 1. AirDrop `data/segments4/W5_N55.rd5` and `data/basemap/edinburgh.pmtiles` from this Mac.
 2. Save to Files on the phone.
 3. In the app: Setup → Maps and data → import each one.
 
-**Standing the mirror up** is the next real step, and the code for it is already here:
-`web/tools/mirror/` holds `s3.mjs`, `sync-segments.mjs`, `cut-basemaps.mjs` and a `README.md`
-covering bucket layout, CORS, how to refresh it by hand and — the part that matters on an
-empty bucket — the order the two jobs have to run in. What is missing is credentials. With them:
+**The mirror is up.** A Hetzner Object Storage bucket in Falkenstein was created, configured
+and filled on 2026-09-11, and `DATA_ORIGIN` in `web/src/data/origin.ts` points at it. CORS,
+public-read and a ranged `206` on `manifest.json` were verified with the `curl` in
+`web/tools/mirror/README.md`. **Nothing is scheduled** — both scripts are run by hand from this
+Mac; the README's "Refreshing the mirror" section is the whole operational story, and its
+appendix keeps cron lines for whoever wants them later.
+
+Refreshing it needs the five environment variables in `web/.env.local` (gitignored, and the
+secret key is not recoverable from Hetzner's console — regenerate it if it is ever lost):
 
 ```bash
-cd web
-export S3_ENDPOINT=... S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
-npm run mirror:basemaps -- <YYYYMMDD>   # a live protomaps build date; they expire
-npm run mirror:segments
+cd web && set -a && source .env.local && set +a
+npm run mirror:segments                            # minutes
+export PATH="$HOME/bin:$PATH"                      # `pmtiles` is not on PATH by default here
+npm run mirror:basemaps -- <YYYYMMDD>              # a live protomaps build date; they expire
+npm run mirror:segments                            # always follow a basemap cut with this
 ```
 
-Then check CORS against the live bucket (`README.md` has the exact `curl`), replace the
-placeholder in `web/src/data/origin.ts`'s `DATA_ORIGIN` with the bucket's real public endpoint,
-and confirm with `curl -sI "$MANIFEST_URL" | head -1` expecting `HTTP/2 200`. Neither script has
-ever been run, so treat the first pass as a test run and read its log.
+`S3_REGION` must be the Hetzner location code (`fsn1`), **not** the `eu-central-1` that
+`s3.mjs` falls back to — SigV4 signs the region, so the wrong one fails as
+`SignatureDoesNotMatch`, which reads like bad credentials rather than bad config.
 
 ## Environment — the parts that will waste your time
 
@@ -184,7 +235,7 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
    it applied**, so an upstream change fails the build rather than silently reverting. Never a
    Gradle composite build — that writes into the linked checkout.
 
-2. **The app downloads from our mirror, never from brouter.de.** Phase 6 replaced import-only
+2. **The app downloads from our mirror, never from brouter.de.** Phase 8 replaced import-only
    with a region picker that streams from a bucket you refresh by hand, when you choose — the
    `Range`/`If-Range` resumable downloader mentioned in earlier revisions of this document
    was not thrown away, it is `web/src/engine/downloads.ts`, now load-bearing. Manual `.rd5`/

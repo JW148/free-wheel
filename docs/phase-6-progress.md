@@ -1,390 +1,393 @@
-# Phase 6 — region downloads
+# Phase 6 — the ride knows where you are
 
-**Status: built and unit-tested, never run against a live mirror.** Tap a region on a map of
-Britain, watch it download, land on the ride screen with local data — that path exists in code,
-compiles clean, and is exercised end to end by 310 tests. None of it has been exercised in a
-browser, because the bucket it streams from does not exist. That gap, and the one below it, are
-the most important facts in this document; see "What is not done" before reading anything else
-as a success.
+Written 2026-09-08.
 
-This phase replaces "download two files by hand from brouter.de and import them through the
-Files app" with a picker: a streamed map of Britain, drawn from a small always-available PMTiles
-archive, with tappable region outlines. Choosing one downloads a basemap extract and the BRouter
-segments it needs from our own mirror, not from brouter.de directly.
+Phases 1–5 built an app that plans a route and draws a dot on it. This phase makes the app
+*navigate*: it knows where the rider is **on the route**, what is coming, how hard they are
+working, and whether they have come off it — and it remembers what happened afterwards.
 
-## What was built
+Six features were asked for. All six landed, plus four that fell out of the same machinery
+cheaply enough to be silly to leave out.
 
-```
-web/tools/mirror/
-  lib/geometry.mjs        segment-grid math, cross-checked against the app's own tiles.ts
-  lib/decide.mjs          hashOf, decideSegmentAction — the identical-bytes publish rule
-  lib/manifest.mjs        buildManifest, assertPublishable
-  lib/bootstrap.mjs       publishing on a bucket that has nothing on it yet
-  s3.mjs                  the S3 calls, and the two cache-control policies
-  sync-segments.mjs       the cheap job: brouter.de -> the bucket, by hash
-  cut-basemaps.mjs        the expensive job: Protomaps -> region archives + the picker backdrop
-  README.md               bucket layout, CORS, refreshing, and the order the two jobs must run in
-  regions.json            the 14-region list, cut to a byte budget
-web/src/data/
-  regions.ts              regionState and downloadPlan — what a region costs, and if it is stale
-  manifest.ts             DataManifest, RegionEntry, InstalledRegion, loadManifest (localStorage cache)
-  origin.ts               DATA_ORIGIN, MANIFEST_URL, assetUrl — see "What is not done"
-web/src/engine/
-  downloads.ts            resumable, streamed, length-checked writes into OPFS (Task 8)
-  partials.ts             the durable "this file is mid-download" marker (Tasks 9, 9b)
-  regionStore.ts          region install records, the download loop, the Worker-side API
-web/src/setup/
-  pickerModel.ts          everything the picker decides that doesn't need a browser
-  RegionPicker.tsx        the screen itself
-  regionLayers.ts         region outlines as a MapLibre GeoJSON source + fill/line layers
-```
-
-`web/src/ride/useMapLibre.ts` gained the ability to lend its one MapLibre instance to the picker
-(`showRemote`/`endRemote`) rather than the picker owning a second map — OPFS and MapLibre's own
-worker pool both make a second instance expensive, and Task 12 found out the hard way what goes
-wrong when a screen believes it owns a map it is only borrowing (below).
-
-## What was measured
-
-Protomaps build `20260906`, `--maxzoom=14`, one basemap archive per region:
-
-| region | archive size |
+| asked for | status |
 |---|---|
-| Britain, z0–10 (the picker's own backdrop) | 61 MB, measured |
-| Central Belt (probe, not shipped) | 86 MB, measured |
-| London (probe, not shipped) | 54 MB, measured |
-| South West England | 102 MB, measured |
-| The Midlands | 180 MB, measured |
-| Southern Scotland and the Borders | **≈ 110 MB, estimated** (49 MB measured at a smaller extent) |
-| London and the Home Counties | **≈ 155 MB, estimated** (128 MB measured at a smaller extent) |
+| Save and manage routes | ✅ IndexedDB library, routes and finished rides in one list |
+| Route progress while riding | ✅ snapped to the polyline, with distance left and an arrival clock |
+| Rerouting while riding | ✅ automatic (rate-limited) and manual |
+| Progress on the elevation graph | ✅ a magnified 3 km lookahead, plus a whole-route bar |
+| Map oriented to the device heading | ✅ compass where iOS grants it, GPS course otherwise |
+| Power output | ✅ the standard cycling power equation, from speed and the route's gradient |
+| *(added)* Ride recording and summary | ✅ with a GPX of what was actually ridden |
+| *(added)* Climb list when planning | ✅ same detection the HUD calls out on the road |
+| *(added)* Reverse the route | ✅ re-routed, because the way back is a different road |
+| *(added)* Storage persistence request | ✅ in Setup → Rider |
+| *(added)* Spoken climb cues | ✅ on-device speech, fourteen cues over a 95 km route |
 
-**Two of those figures are no longer measurements.** Closing the coverage holes (below) widened
-six regions — `highlands-islands`, `central-scotland`, `southern-scotland`, `east-anglia`,
-`wessex` and `london-home-counties` — and an archive's size follows its bbox. Re-measuring needs
-`pmtiles extract` against a dated Protomaps build, so the two that had a measurement are scaled
-from it by area instead: Southern Scotland gains 1.97 deg², including Edinburgh and the Forth,
-and London gains 0.72 deg² of semi-rural Essex. The other four were never measured at all. Every
-one of these is settled for real by the first `mirror:basemaps` run, which prints exact bytes per
-region — **check them against the 250 MB threshold then**, because that claim is now an estimate
-for six of the fourteen.
+## The shape of it
 
-London's 54 MB probe against the Central Belt's 86 MB, both roughly city-sized, is a 168 MB
-per square degree vs. 37 MB per square degree difference — city density costs far more per unit
-area than rural coverage, which is why the regions are cut on a byte budget rather than on
-equal-looking map area. Nothing needed splitting on bytes in the end. The two that did need
-splitting needed it for a different reason — see below.
+Everything interesting is **pure and tested**, and the React layer only sequences it. Seven
+modules, 255 assertions, no DOM:
 
-**First-download time on a phone was not measured.** There is no bucket to download from, so
-there is nothing to time. This is the single biggest hole in "what was measured" and it stays
-open until the first upload runs.
+```
+progress.ts    snap a fix to the route; distance along, remaining, gradient, ETA, off-route
+climbs.ts      the climbs and descents on a route, as named features
+power.ts       watts, from speed and gradient
+rider.ts       mass, drag area, rolling resistance — and what a rider actually knows
+recording.ts   what happened, accumulated one fix at a time
+cues.ts        what to say out loud, and when
+library.ts     saved routes and rides (IndexedDB)
+```
 
-## Where the plan turned out to be wrong
+`useRideTelemetry` is the only place they meet, and it is one effect rather than four,
+because they share an answer: power needs the gradient, which needs the snap; the record needs
+the height, which needs the snap; the ETA needs both the snap and the record. Four effects
+keyed on the same fix would recompute the snap four times and see each other's state one
+render late — so the ETA would describe the *previous* fix.
 
-### The region list's own bboxes broke the region list's own test
+## Three things that were wrong first, and how
 
-Task 2's brief supplied fourteen region bboxes verbatim. Two of them —
-`southern-scotland` and `south-west-england` — sat exactly on both a longitude and a latitude
-line of BRouter's 5°×5° segment grid, so each needed four segments rather than the ≤2 the
-brief's own test demanded. Mechanically splitting each region at the line it straddled "fixed"
-the test but made the geography worse: one split pulled in a Brittany segment for a Cornwall
-ride, the other was a 0.3°-wide sliver that existed only to justify an Irish-quadrant segment
-and a Highlands one neither region wanted. The real fix was to nudge the offending edges off the
-grid lines (south-west England's southern edge from 49.9° to 50.0°, southern Scotland's western
-edge from −5.3° to −5.0°) rather than cut at them. Final count: **14 regions**, all ≤2 segments.
+### 1. Climb detection: a plain threshold finds nothing or everything
 
-### And then the bboxes left six holes, with real towns in them
+The first version resampled the elevation to a 25 m grid, smoothed it, split it into monotonic
+runs, and pruned runs smaller than 8 m by persistence — absorbing the smallest run into its
+neighbours until nothing small was left. That part was right and still is: on London → Brighton
+it takes 259 raw runs down to 34 real ones.
 
-The test that was supposed to catch that named eleven cities and asserted each fell in some
-region. None of the eleven landed in a hole, so it passed — while Oxford, Cheltenham,
-Gloucester, Cirencester, Stroud, Witney, Bicester and Abingdon sat in a band between Wessex's
-north edge at 51.6, the Midlands' south edge at 52.0 and South West England's east edge at
-−2.4, and Aberdeen and Stonehaven sat east of the Highlands' −2.4. A friend in Oxford would
-have opened the picker with nothing to tap.
+What was wrong was what came next. Each surviving run was reported as one feature. On that
+route the merge produced a run rising **115 m over 9.8 km** — 1.2% overall, below the 1.5%
+threshold, so *nothing was reported at all* for that stretch. Buried inside it was a **62 m
+ramp at 6% between 27 and 28 km**, which is the single thing a rider on that road wants to
+know about. Seventeen kilometres of the route had no features listed and the ride's hardest
+kilometre was one of them.
 
-Sweeping properly — a 2 km grid over a hand-traced outline of mainland Britain, in
-`lib/regions.test.mjs` — found four more holes: Berwick-upon-Tweed and the Berwickshire coast,
-the Lincolnshire coast from Skegness to Grimsby, north Essex around Colchester, and the whole
-of Kintyre. The named-cities test could not have found any of them; the holes a list of
-rectangles leaves are between the places anyone thinks to name.
+The fix is to extract the best-scoring stretch *inside* each run and then recurse either side
+of it. The score is `gain² / length`, and it was chosen for one property above all others:
 
-All six are closed by widening a bbox, and every region still needs at most two segments, from
-the same five grid cells as before. Three of the closures are worth recording, the last of
-them found long afterwards:
+> For a constant gradient it must prefer the **whole** climb.
 
-- **Kintyre** took `central-scotland` from one segment to two. That is only tolerable because
-  the second is `W10_N55` at **5.5 MB** — by far the cheapest cell on the grid, being almost
-  all sea. The region gained Arran, Bute, Islay and Jura with it, and is renamed *Central
-  Scotland and Argyll*. `east-anglia` likewise becomes *East Anglia and Lincolnshire*.
-- **Orkney** came in free: the Highlands' north edge moved from 58.7 to 59.5, still inside the
-  same `N55` row of the grid.
-- **the Isle of Man** came in free too, later: `north-west-england`'s west edge moved from −3.7
-  to −4.9, which is still inside `W5_N50` — the region's only segment, and unchanged. It had
-  been uncovered the whole time and, unlike Scilly and Shetland, was not written down anywhere.
+`gain²/length` reduces to `grade² × length` at constant gradient, which grows with length — so
+a steady 4% climb is reported once rather than chopped into pieces. Two obvious alternatives
+fail that test outright: plain gain always takes the whole run including its flat approach, and
+plain gradient always takes the two steepest adjacent samples.
 
-Two accepted gaps remain, each one a bbox edge sitting on a grid line where the next nudge
-outward costs a whole extra segment:
+It splits only when the difference is dramatic. Worked through:
 
-- **the Lizard tip and the Isles of Scilly**, below 50.0°N — the next row down is `W5_N45` and
-  `W10_N45`, Brittany and the Bay of Biscay. `E0_N45` alone is 126 MB.
-- **the Rhins of Galloway** (Stranraer, Portpatrick), west of −5.0 — reaching them takes
-  `southern-scotland` from two segments to four.
+| case | whole | sub-stretch | winner |
+|---|---|---|---|
+| 1 km at 2% + 300 m at 12% | 2.41 | **4.32** | the wall, correctly |
+| 1 km at 5% + 300 m at 7% | **3.88** | 1.47 | the whole climb, correctly |
+| 9.8 km at 1.2% with a 1 km 6% ramp | 2.03 | **3.84** | the ramp, correctly |
 
-Both are declared in `regions.test.mjs`, which asserts both that no other mainland point is
-uncovered *and* that each declared gap is still real, so closing one without deleting its
-declaration fails the build. Offshore islands sit outside the mainland outline the sweep
-traces, so they are asserted by name in the same file: Wight, Anglesey, Man, Arran, Skye,
-Lewis and Orkney covered, Scilly and Shetland not.
+Result on London → Brighton: **29 features in 5 ms**, including the 27 km ramp, which is the
+point. Both failure modes of an unsmoothed threshold — zero features
+or hundreds — are asserted against in `climbs.test.ts`, along with a dead-flat towpath carrying
+±1.5 m of SRTM noise, which must produce nothing.
 
-**Shetland is out, and not for the reason this document used to give.** It said `W5_N60` would
-be a third segment for the Highlands. That is true only of the way it was imagined —
-stretching `highlands-islands` north to 61° pulls in `W10_N60` as well, so four segments — and
-it is not the way it would be done. A *standalone* Shetland region computes to exactly
-`W5_N55` + `W5_N60`, which passes the two-segment rule, and `W5_N60` is **327,756 bytes**: a
-third of a megabyte, which is why `docs/phase-2-progress.md` recorded adding Shetland as
-costing almost nothing. The real cost is a fifteenth region in the picker and a basemap cut of
-its own, and the size of that cut cannot be measured until the bucket exists. It is therefore
-an open product decision rather than a budget one, and `regions.test.mjs` no longer bans the
-cell — the test now checks that a region's segments fall inside the box the British Isles
-occupy, which lets a future Shetland region through while still rejecting Brittany, Biscay and
-the open Atlantic.
+There is a cost, and it is stated in the tests: smoothing rounds the shoulders of a climb, so a
+true 6% over 1 km reads as **5.3%**. That is the price of not reporting a canal towpath as two
+hundred climbs, and it is under 15%.
 
-### Task 1's geometry had the same clamp bug in two places, on purpose, and it was wrong in both
+### 2. Snapping needs a hint, or an out-and-back lies to you
 
-The mirror's `geometry.mjs` is deliberately a from-scratch reimplementation of the app's
-`tiles.ts`, cross-checked by a shared test corpus rather than shared code — so the bucket and
-the phone can never silently disagree about which segments a bbox needs. The plan's own
-reference snippet clamped high latitudes to N80 instead of skipping them, had no S90 guard, and
-no antimeridian split, and the cross-check test's own boundary cases didn't reach far enough
-north to catch it. Fixed by porting the app's guards into the mirror script instead of writing
-a narrower test around the bug.
+Distance along the route is computed by projecting the fix onto the polyline. Done globally —
+nearest point over the whole route — it is O(route) per fix *and wrong on any route that
+crosses itself*. An out-and-back on the same road is two coincident lines, and the nearest-point
+search picks between them by floating-point luck. A rider on the way home would see the
+distance remaining jump back to the full route length.
 
-### A null hash must never reach a bucket object's name
+So the previous answer is passed in as a hint and a window is searched first
+(−120 m to +600 m). Backwards is tight on purpose: you can stop and roll back a few metres, but
+a match 500 m behind is a mis-snap, not a rider reversing. If the windowed match is worse than
+45 m the whole route is scanned, which is what recovers the position after a tunnel, a long
+signal loss, or a route loaded with the rider already halfway along it. A tie goes to the
+window, because a progress bar that lags is better than one that jumps.
 
-`decideSegmentAction` was reviewed twice for the same class of defect: a non-304 upstream
-response with no hash (an unexpected shape from brouter.de) falling through to "publish" and
-naming a bucket object `W5_N50-null.rd5`. Once for segments (Task 3), once for `buildManifest`
-guarding `region.basemap` the same way (Task 4) — the guard had been applied narrowly the first
-time and needed to be symmetric. Both now throw loudly. A run that fails in front of the person
-who started it can afford to be skipped; every client reading a null-named object could not.
+### 3. Power must come from the route's gradient, never the phone's altitude
 
-### The Worker has no `localStorage`, and the manifest module now does
+GPS altitude is the worst channel a phone has — tens of metres of error, drifting while
+stationary. Differentiating it produces gradients that swing through ±20% standing still, and
+because power goes as `m·g·sin(θ)·v`, that is ±600 W of pure invention.
 
-`engineApi.ts` runs in a Worker. `manifest.ts`'s `loadManifest` reads `localStorage` to cache
-the manifest for offline use — fine on the main thread, fatal if it ever got pulled into the
-Worker bundle. The fix is `import type` everywhere the Worker touches manifest types, so nothing
-that touches `localStorage` is reachable from tree-shaking's perspective.
+The route's own `<ele>` values came from SRTM through BRouter, are smoothed over a ±60 m window,
+and do not move when the rider does. The cost is that power is only meaningful while on the
+route — which is exactly when it is shown, and it is cleared the moment a reroute replaces the
+geometry.
 
-### The download marker: designed once, corrected five times, corrected again
+The estimate's accuracy is deliberately **asymmetric**, and that asymmetry is the feature.
+CdA is the only genuinely uncertain input, uncertain by perhaps ±15%. Measured against the
+model itself:
 
-This is the deepest rabbit hole of the phase, in `web/src/engine/partials.ts` and
-`regionStore.ts`'s download loop. The mechanism exists because a region download can be
-interrupted mid-file, and an interrupted `.rd5` sitting at the real path must not look installed
-— to BRouter, to the tiles panel, or to a resumed download reading a stale hash.
+| | CdA 0.32 → 0.65 |
+|---|---|
+| 12 km/h up 8% | **+3%** |
+| 32 km/h on the flat | **+64%** |
 
-The initial review found three Important defects at once:
+Climbing is when a rider wants to know whether they are going too hard, and climbing is where
+gravity is 90% of the resistance and the aero guess barely matters. `RiderPanel` shows what the
+current setup predicts for 25 km/h flat and 10 km/h up 8%, because "CdA 0.40" is unfalsifiable
+and "215 W up an 8%" can be checked against what a rider knows they hold.
 
-1. An aborted download left a registered, size-0 file that both BRouter and the tiles panel
-   treated as real.
-2. Two overlapping `downloadRegion` calls could each snapshot and overwrite `regions.json`,
-   silently dropping a region — the shared-segment guarantee the whole task exists for.
-3. `removeRegion` deleted files before writing records, so a partial OPFS failure left a region
-   recorded but unopenable with no way out short of resetting storage.
+Two smaller details that are easy to get wrong: the drag term is **signed**, so a tailwind
+stronger than the rider pushes rather than resists (squaring without the sign reports someone
+being blown along as working hard); and freewheeling downhill returns **0 W**, not a negative
+number, because a rider understands 0 W instantly and −180 W not at all.
 
-Fixing those, plus lifting the whole download loop into `regionStore` so it could be tested at
-all, took five further review rounds, each closing what the last one opened one layer down: a
-stale `/downloads.json` entry that hid a complete, hand-imported segment as unroutable; the
-same entry's in-memory twin, `targetSize`, never cleared on the import path; a whole
-`isPending` mechanism that shipped with its logic inverted and no test able to tell; and finally,
-worst of the run — the marker was written *before* the file was opened, truncated and
-registered, so a fetch failing before its first byte either re-exposed a truncated orphan or (once
-the mark moved later to fix that) left a permanently-listed 0-byte segment. Moving the mark later
-still left one gap: it was written before an *awaited, throwable* `openSink` with nothing to roll
-it back, so a failed open recorded the **new** hash against the **old** file's bytes, and a retry
-saw hash-match-plus-short-length and resumed — appending the new download's tail onto the old
-file's prefix. The length check passed. BRouter would have routed on a spliced segment, exactly
-the corruption `resumeDecision`'s hash comparison exists to prevent.
+## Speech, and why it says so little
 
-That last finding was real and load-bearing enough that it went to a separate task (9b) rather
-than a sixth round on the same loop: the marker gained a `started` field, written `false` before
-the sink opens (hiding the file immediately) and flipped to `true` only after the truncate
-succeeds. `resumeDecision` now refuses both `resume` and `done` for anything not started, because
-an unstarted marker's hash describes the *fetch being attempted*, never the bytes on disk — a
-coincidentally-matching length does not mean a finished download. The fix is deliberately
-conservative: a failed open now hides a good file until the next retry restarts it cleanly,
-trading one wasted re-download for the corruption it used to permit.
+Every other feature on the riding screen needs a rider to look down, and looking down at
+25 km/h is the one thing a cycling app can ask for that has a real cost. The information that
+matters most — a wall in 400 m — is also the information you most want *before* you are on it.
+iOS carries its voices on-device, so this works in airplane mode like everything else.
 
-The pending-marker design itself — rather than a simpler stage-then-`FileSystemFileHandle.move()`
-scheme, which would delete the whole mechanism because a partial file would never exist at the
-real path — was kept rather than rewritten. Not because it's the better design in the abstract,
-but because it had already been through three rounds of scrutiny and `move()` support on iOS
-Safari's OPFS is unverified. Recorded for Phase 7 rather than decided now.
+Chattiness is the failure mode: an app that talks constantly gets muted, and a muted app says
+nothing at all. So the bar is that a cue must change what the rider does in the next minute.
+Five kinds survive it — a climb coming up, the top of a *hard* climb, a long descent, off
+route, and the finish. Deliberately absent: kilometre ticks, speed, power, and anything the
+screen already shows continuously.
 
-### The picker and the ride screen share one map, and for four rounds that was unsafe
+Walked over the London → Brighton fixture at 25 m steps — 3,800 positions — that yields
+**fourteen cues in 95 km**, roughly one every 7 km:
 
-Task 12 (the screen itself) took five review rounds after its initial review, all on the same
-structural question: `RegionPicker` deliberately draws over `RideView`'s live MapLibre instance
-rather than mounting a second one (a second instance means a second OPFS/MapLibre-worker
-footprint), which means the picker is *borrowing* a map the ride screen still, in some sense,
-owns. The initial review's Critical was the one that blocked everything else from mattering:
-the picker's region taps passed through to `RideView`'s own map click handler, because hiding
-`.ride-chrome` stops taps reaching buttons but not the map underneath — tapping a region stamped
-a waypoint on Britain and persisted it to `localStorage`. Fixed with a prop threaded through
-`App` so `RideView` suppresses its own tap handling while the picker is up.
+```
+ 5.3 km  Climb in 700 metres. 55 metres at 2 percent, steepening to 4 percent.
+10.8 km  Climb in 700 metres. 24 metres at 7 percent, steepening to 10 percent.
+26.3 km  Climb in 700 metres. 62 metres at 6 percent.
+31.5 km  Downhill in 700 metres, for 1.2 kilometres.
+...
+94.4 km  Finish in 500 metres.
+94.8 km  You have arrived.
+```
 
-Every round after that fixed what the previous one had found and surfaced the next adjacent
-hole:
+`cues.ts` is pure and the decision is tested by advancing a number, because "say this once,
+when this becomes true" is exactly the logic that silently regresses into saying it every
+second. `cues.test.ts` asserts the whole-ride sequence: more than five cues, fewer than forty,
+none repeated, and the finish last.
 
-- **Round 1** fixed the Critical and its accompanying Important, and found: standing down from
-  the picker left the ride screen showing the streamed Britain backdrop instead of handing the
-  map back.
-- **Round 2** fixed that, and found: the gate reopened one effect flush before the handback
-  actually completed.
-- **Round 3** fixed that, and found: `endRemote` could return successfully with the loan still
-  open when `refresh()` answered null, and `leave()` proceeded regardless — the ride screen
-  believed it had its map back when it did not.
-- **Round 4** went to a fresh implementer, per the escalation protocol, since three rounds in a
-  row had each closed one hole and opened the next one adjacent to it. It fixed round 3's
-  finding and found two more: a cancelled loan reported from its own catch arm, and one route to
-  the failure screen that skipped the closing guarantee the other routes had just earned.
-- **Round 5** fixed both, cleanly — the review that closed the task.
+Three things about `speechSynthesis` that had to be designed around, all of which fail
+*silently*:
 
-The structural property the task spent four rounds failing to hold — that the loan is closed in
-exactly one place, no matter which exit is taken — is now held by construction: `discardMap` is
-the only function that clears the map refs, `endRemote` states the contract by name, and every
-caller depends on it rather than repeating the teardown. The one crack in that guarantee found
-after Task 12 closed — `discardMap('unavailable')` inheriting its `error` status from whoever
-called it, rather than asserting it — is the carried-over one-line fix this task made in
-`useMapLibre.ts`, committed separately from the documentation changes.
+1. **The first utterance needs a user gesture** on iOS. `prime()` is called from the Start
+   button and says "Ride started", which both unlocks speech for the session and makes the
+   connection between the tap and the voice obvious — which is why the feature ships on by
+   default rather than muted-and-undiscovered.
+2. **Utterances queue.** Each cue cancels whatever is speaking, because cues are only issued
+   when they are worth interrupting for.
+3. **The voice list loads asynchronously**, so nothing here picks a voice; the default for the
+   document language is correct and immune to it.
 
-## The browser verification checklist
+There was a fourth, and it was a real bug caught in the browser: `prime()` originally checked
+`enabled`, which is `riding && voice` — and at the moment the Start handler runs, `riding` is
+still false in the render that closure came from. The one utterance that has to get through
+was silently swallowed, and with it every cue for the rest of the ride. The caller checks the
+mute setting instead, because the caller can see it correctly.
 
-Nothing in the picker has ever run in a browser, because `DATA_ORIGIN` names a bucket that does
-not exist. Task 12's report built up an ordered walkthrough across its five fix rounds; the
-workspace it lived in is deleted after this task, so it is reproduced here rather than lost.
-Run it in order once the mirror is live — later items depend on earlier ones holding.
+A review pass found five more of the same shape, all in the seam between the pure rules and
+the browser, and all fixed:
 
-1. `curl -sI "$MANIFEST_URL" | head -1` returns `200`, and the body parses through
-   `parseManifest`. Nothing below is meaningful until it does.
-2. Cold start, storage cleared, private window. The app opens on the picker, not the ride
-   screen.
-3. The backdrop draws: `showRemote` mounts `manifest.picker.url` over HTTP range, Britain
-   appears at zoom 4.6. If it does not, check the Network panel for range requests against the
-   picker archive before suspecting the style — a dead MapLibre worker looks identical (see
-   `CLAUDE.md` on the worker entry point).
-4. Region outlines appear, in the three `REGION_COLOURS` — proof `ensureRegionLayers` ran after
-   `styleReady` rather than before.
-5. A tap on a region selects it: the outline thickens, the sheet names it and states size in MB
-   above the button. Tap two regions in a row — the waypoint-leak bug (round 1, above) needed
-   two taps to be obvious.
-6. The attribution is visible and not hidden behind the sheet, in both the list state and the
-   detail state.
-7. A tap in the gap between the head and the sheet pans the map and does nothing else — must
-   not reach the ride screen's control rail or action bar.
-8. Download: the bar advances to 100%, the line names "the map" then "the road data", then
-   "Finishing up…", then the ride screen opens on that region's own archive.
-9. Reload: straight to the ride screen, no picker, no region outlines anywhere on its map.
-10. Throttle to offline mid-download, then Retry: the transfer resumes with a `Range` header on
-    the retried request, and the bar jumps to the resume offset rather than restarting at 0. If
-    it restarts at 0 instead, the bucket's CORS rule is missing
-    `Access-Control-Expose-Headers: Content-Range` — the downloader cannot place a `206` whose
-    range it cannot read, so it deliberately re-fetches the whole file rather than guess.
-11. Reload with the network off, having downloaded once: the head shows the saved-list note, and
-    any installed region reads `unknown`, not `current`.
-12. Clear `localStorage` only, go offline, reload: the "no list of regions" sheet appears, and
-    "Set up by hand" opens Setup *over* the picker rather than behind it.
-13. Home-screen app, iPhone, `(display-mode: standalone)`: the bottom of the sheet paints —
-    measure in pixels, not `getBoundingClientRect()` (see `CLAUDE.md` on `100lvh`).
+- **Un-muting mid-ride never spoke.** A rider who muted last session starts the next one with
+  the voice off, so Start never primes — and iOS will not speak from an effect it has not
+  first spoken from inside a gesture. The toggle is itself a tap, so it now says "Voice on",
+  which doubles as the unlock.
+- **The first cue could cancel the priming utterance.** `say()` cancels before every
+  utterance, and a cue on the first fix would therefore cancel a gesture-initiated utterance
+  *before it started speaking* — which is the moment that unlocks the session. There is now a
+  two-second grace after priming during which cues queue instead of interrupting.
+- **Muting forgot what had been said**, because the reset was keyed on `enabled` rather than
+  on the ride, so un-muting replayed every cue whose condition was still true — including a
+  climb you were halfway up, announced as though it were ahead.
+- **"Off route" was keyed to the route.** With automatic rerouting switched off — a supported
+  setting — the geometry never changes, so a second wrong turn was met with silence. It is
+  keyed to the off-route *episode* now.
+- **"Finish in 400 metres" could follow "You have arrived."** The finish branch had no lower
+  bound, so any fix that skipped the 500–60 m window in one step, or any drift back out after
+  arriving, counted down to a finish already announced. `arrived` and `finish` were also the
+  only unversioned keys, so a reroute after arriving left the new route with neither.
 
-Additional checks the fix rounds surfaced, folded in at the point they apply:
+The approach window also lost its lower bound. It was 250 m, on the reasoning that a rider
+almost on a climb can see it — true, and not the case it caught. Cues are said once, so the
+only rider it silenced was one who *started* inside the window. On the Edinburgh test route
+the first climb is 200 m in and was never mentioned at all.
 
-- **After 5:** check `localStorage` for `free-wheel`'s plan key being written — it must not be,
-  on a picker tap.
-- **After 9:** confirm no region outlines survive a reload straight to the ride screen.
-- **Around 8/12, the hand-import escape hatch, four separate walkthroughs:** from the no-list
-  state, open Setup, import a basemap and road data by hand, press Done — the picker must stand
-  itself down and the ride screen's map must carry no region boxes. Do the same importing only
-  road data, and separately only a basemap, each time confirming the rider lands on the **local**
-  archive, not on Britain at zoom 4.6, and that a route still plans and the theme button still
-  works (both were found silently dead in earlier rounds). With waypoints already on the map
-  before the picker appeared, confirm the S and F pins are present, tappable and draggable after
-  the exit — a route line with no pins on it is the marker fault. With a route already planned,
-  confirm the camera fits the route rather than sitting at the archive's own centre.
-- **"Carry on without a region" on an empty phone:** the map must tear down to the `no-basemap`
-  state with "No map on this phone yet" on the rail — not left showing a streamed Britain.
-  Double-tap it: one handback, no flicker of two maps, "Opening your map…" shown in between.
-- **Force a storage fault:** serve over plain HTTP on the LAN so `navigator.storage` is
-  `undefined` (per `CLAUDE.md`). The headline must be the storage fault, not "could not reach
-  the internet".
-- **Force an engine fault with a loan open:** picker up, Britain streaming, open a second Safari
-  tab on the same origin to collide the OPFS handles (or block the Wasm fetch), then hand-import
-  and press Done. Britain must disappear, the picker must stay up with a tidied explanation and
-  two buttons, and it must never reach the ride screen wearing Britain as its backdrop. Close
-  the second tab, press Try again: it must actually retry, not repeat the same stale fault.
-  From the fault, press Carry on anyway: the ride screen must open with no map and the engine's
-  own message on the rail, not "No map on this phone yet" (the wrong fault's copy).
-- **Slow-mirror cancellation:** throttle to "Slow 3G", make the picker archive fail after the
-  request starts, and take "Set up by hand instead" while it's in flight. After landing on the
-  local archive, no red alert banner may appear seconds later quoting the picker archive's URL —
-  this is `loanGeneration`, and as of this task it has still never run.
+## Colour: the two ride overlays are achromatic, on purpose
 
-Items 2, 5, 7, 8, 10, 12 and 13 above have no automated test behind them at all; they depend
-entirely on this walkthrough.
+`docs/phase-4-progress.md` establishes that every route colour must sit **ΔE ≥ 16** from every
+basemap colour, and six categorical hues at C ≥ 45 already use up the usable circle. The two
+new map overlays — the stretch already ridden, and the climb coming up — would each have needed
+a seventh and eighth hue threading the same needle, and a rider glancing down would then have
+to decide whether an orange stretch of line meant "this is the trekking route" or "this is the
+climb".
 
-## What is not done
+So neither carries an identity:
 
-**The bucket does not exist.** The scripts that fill it do: `web/tools/mirror/s3.mjs`,
-`sync-segments.mjs`, `cut-basemaps.mjs`, `lib/bootstrap.mjs` and `README.md` are all written,
-`npm run mirror:segments` and `mirror:basemaps` are wired into `web/package.json`, and every
-pure function they call — `hashOf`, `decideSegmentAction`, `buildManifest`, `assertPublishable`,
-`partitionByReadiness`, `carryForwardBasemaps`, `segmentsForBbox`, `regions.json` — has tests.
+- **Travelled** is a neutral grey painted over the route. What is behind you has stopped being
+  a route and become map furniture; it should look like it.
+- **Focus** — the climb ahead — is a blurred halo *under* the casing, in whichever of black or
+  white contrasts with the theme. A lightness effect, not a hue, which is why it needs no
+  clearance rule and why it works over a route line of any colour.
 
-What has never happened is the **first upload and the CORS check against a live bucket**. That
-needs Hetzner Object Storage credentials nobody here has, and it publishes to an external
-service, which is a decision for whoever holds those credentials rather than something to do
-speculatively. Neither script has been run at all, so nothing below the S3 client's first call
-has ever executed: read `web/tools/mirror/README.md`'s "Ordering" section before the first run,
-because the two jobs have to go in one particular order on an empty bucket.
+The gradient scale on the elevation strip *is* chromatic, because it is drawn on a panel we
+control rather than on terrain we do not. Its bands are the ones cyclists already think in — 3,
+6, 9, 12% — rather than an even split of the range, which would put three of five bands above
+12% where almost no British road goes. Descents get one band: a rider needs to know a break is
+coming, not five gradations of how steep it is.
 
-Consequently:
+## Storage: why IndexedDB, when the app already has two stores
 
-- `web/src/data/origin.ts`'s `DATA_ORIGIN` is a placeholder in Hetzner's endpoint-URL form,
-  `https://free-wheel.fsn1.your-objectstorage.com` — a guess at the shape the real host will
-  take, not a working address. **There is no bucket public URL to record here.** Replace the
-  constant once the first upload succeeds, and confirm with `curl -sI "$MANIFEST_URL" | head -1`
-  expecting `HTTP/2 200`.
-- **The scheduled job was dropped, on purpose.** The plan called for a weekly cron on a VPS;
-  there is no VPS, and standing one up to make eight conditional HTTP requests a week is more
-  infrastructure than the job is worth. Both scripts are run by hand instead, from a laptop with
-  the five environment variables the app itself never uses — `S3_ENDPOINT`, `S3_REGION`,
-  `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. This costs nothing in the app:
-  `regions.ts` decides staleness by comparing hashes, and no timestamp is ever shown to a rider,
-  so a manifest refreshed in March is indistinguishable from one refreshed nightly until the
-  bytes upstream actually change. The two cron lines survive as an appendix in the mirror's
-  `README.md` for whoever wants them later.
-- **Nothing in `RegionPicker` has ever run in a browser**, for the same reason — there is
-  nothing to stream from. Every line above in "the browser verification checklist" is unrun.
-- **The on-device acceptance test — cold launch, tap a region, airplane mode, plan and follow —
-  has not been attempted**, and could not have been: it needs both a live bucket and a physical
-  iPhone, neither in reach of this task. This remains the actual bar for calling Phase 6 done,
-  unchanged from every earlier phase's acceptance test.
+- **`localStorage`** holds the current plan and that is right: one small object, read
+  synchronously at startup, and losing it costs one re-tap. It cannot hold a library. A 95 km
+  route's GPX is 240 kB and WebKit's quota is ~5 MB *per origin, shared with everything else
+  the app keeps there*. Twenty saved routes would evict the plan, the theme and the basemap
+  choice along with themselves — and the failure would arrive as a silent `QuotaExceededError`
+  inside `savePlan`'s catch block.
+- **OPFS** is the wrong shape. It exists to serve `FileSystemSyncAccessHandle` reads from the
+  engine Worker, and the whole registry is built on the rule that exactly one handle may be open
+  per file. Routes want small keyed records, not byte ranges.
+- **IndexedDB** is what is left and is also simply right: async, main-thread-safe, quota shared
+  with OPFS at ~60% of the disk, durable in a home-screen PWA. The wrapper is ~60 lines because
+  nothing here needs more than get, put, delete and getAll.
 
-## Deferred to Phase 7, by the plan's own design
+The summary figures are denormalised onto each entry on write. Parsing twenty GPX documents to
+draw a list is work the phone can see, and the figures never change once saved.
 
-- Restructuring Setup into Regions / Preferences / About / Advanced.
-- The Diagnostics gesture.
-- Deleting `TilesPanel`'s size estimator and `npm run build-catalogue`, both superseded by the
-  manifest's own byte counts.
-- The `.setup-header` colour token.
+## Reversing a route re-routes it
 
-## Verified
+`waypoints.reverse()` and keep the line would be wrong. A cycle route is **not symmetric**:
+one-way streets, no-entry turns and BRouter's own cost model all mean the way home is a
+different road. Measured on the test route, Edinburgh centre → Straiton:
 
-- `cd web && npx vitest run` — 310 passing across 22 files (baseline before this phase: 98
-  across 8; the mirror's pure logic and scripts, the manifest parser, the resumable downloader,
-  the partial marker, `regionStore`, the picker's model, and the region-outline layer account
-  for the rest).
-- `npm run build` — clean, `tsc -b` and `vite build` both succeed, service worker precache
-  unaffected.
-- **Not verified: anything that needs a browser, a network, or a bucket.** See "What is not
-  done" above. Desktop Safari and the Simulator both diverge from real devices on storage, per
-  `CLAUDE.md`, so even once the bucket exists this phase still ends on a physical iPhone, not a
-  desk.
+| | distance | moving | climbing |
+|---|---|---|---|
+| outbound | 9.2 km | 37 min | 140 m |
+| reversed | 10.1 km | 32 min | 103 m |
+
+Nearly a kilometre longer and a quarter less climbing. Reversing the drawn geometry would have
+put a line on the map the rider cannot legally follow *and* reported the wrong figures for it.
+
+## What a second review pass found
+
+Everything above was written before the branch was reviewed. The review found eight more
+problems, and the pattern is worth recording: **not one was in the pure logic, and every one
+was on a boundary between a rule and the thing it was applied to.** The tests covered what each
+rule does; what they did not cover was the rule being applied at the wrong moment.
+
+- **A climb could vanish because the winning span failed the threshold.** `bestSpan` picked the
+  top-scoring stretch and `extract` then checked it against the thresholds — but `gain²/length`
+  is not monotone in gradient, so the winner is often a span that fails while a real climb sits
+  inside it. A 10 km drag at 1.2% with a 250 m ramp at 5.8% scores 1.44 for the whole and 0.84
+  for the ramp: the whole won, failed the 1.5% floor, and *nothing at all* was reported. This
+  is the same bug the extraction step was introduced to fix, one level down. The thresholds now
+  live inside the search, so it can only ever return something worth reporting.
+- **The snap hint stopped protecting anything above 45 m.** The global fallback is a *superset*
+  of the window, so it can never be worse — meaning "take the window only if it is better" was
+  a tie-break that essentially never fired. One 46 m fix on a pair of parallel legs 36 m apart
+  moved `alongM` 280 m onto the wrong leg, and because the answer becomes the next hint, it
+  stayed there. Two changes: the threshold is now 250 m (a bad windowed match is either *tens*
+  of metres — off the line but near it — or *hundreds* — a stale hint; they separate cleanly by
+  magnitude), and the projection is clamped to the window rather than whole segments being
+  included or excluded, which is what let a 900 m return leg be matched 450 m past the window's
+  edge.
+- **"Climbing still to come" contradicted "climbing" by 60%.** `cumulativeAscentM` summed every
+  positive step: 943 m on London → Brighton against BRouter's own filtered 592 m, displayed on
+  the same screen. A 6 m deadband — SRTM's stated vertical accuracy, not a fitted constant —
+  gives 589 m, and 0 m against BRouter's 1 m on the urban fixture.
+- **The library reported saves that had been rolled back.** `run` resolved on
+  `request.onsuccess`, which fires when the database *accepts* a request, not when the
+  transaction commits — and a quota overrun fails at commit. Worse, a failed commit fires
+  `abort` rather than `error`, so an abort with no prior request error left the promise
+  unsettled forever and the save button spinning. It settles on the transaction now.
+- **Average speed was assembled from two different definitions.** Distance was gated on
+  accuracy and moving time on a reported speed, and `summarise` divides one by the other: a fix
+  with no speed (iOS omits it below a few km/h) added distance but no time, and a vague fix
+  added time but no distance. They share their gates now, and where no speed is reported the
+  ground is used instead.
+- **Ascent had no teleport guard**, though distance did. A fix that snaps to another pass of the
+  route hands over tens of metres of height between two seconds; 2 m/s is four times the world
+  hour record for vertical ascent, so anything beyond that moves the reference without being
+  credited.
+- **A transient failure disabled the library until reload**, because `open ??=` caches a
+  rejected promise as happily as a resolved one.
+- **The "windowed" scan iterated from index 0**, so the hinted path — the one taken on every
+  fix — was O(route) rather than the O(window) its docstring claimed.
+
+A third pass over the UI wiring found nine more, in the same place — the join between a rule
+and the moment it runs:
+
+- **The map rotated but never followed.** Recentring and rotating were two effects, both with
+  `heading` in their dependencies, so both ran in the same commit. `easeTo` stops whatever is
+  in flight and defaults its target centre to the *current* centre, so the rotation cancelled
+  the recentre before its first frame. One effect, one `easeTo`, now.
+- **`shortestTurn` was solving a problem MapLibre does not have.** It was written on the
+  assumption that `easeTo` interpolates the bearing numerically; MapLibre 6's
+  `_normalizeBearing` already picks the nearest equivalent of the target. Deleted, and the note
+  about it in `CLAUDE.md` corrected — a wrong gotcha is worse than none.
+- **Panning spun the map to north-up.** The bearing reset treated "following is paused" the
+  same as "course-up is off", so looking ahead turned the map under your thumb and turned it
+  back twelve seconds later.
+- **A rejected engine call pinned the routing spinner.** `route()` reports a *routing* failure
+  by returning, but the call can still reject — a worker that would not spawn. Uncaught, that
+  skipped `setRouting(null)` and left Reroute reading "Routing…" for the rest of the ride with
+  no way to clear it.
+- **The compass never let go.** Deactivating cleared the smoothing accumulator but not the
+  reading, so `compass ?? courseDeg` returned a stale bearing on the next Follow — and, once
+  non-null, permanently vetoed the GPS-course fallback.
+- **`heading.request()` ran inside a state updater**, which StrictMode double-invokes: the
+  second `requestPermission()` rejects while the first prompt is open, and the catch marked the
+  compass denied even when the rider allowed it. Exactly the bug already fixed once in
+  `prime()`, in a second place.
+- **The mass fields bypassed their own limits.** `migrateRider` clamps on load, so 500 kg
+  skewed the power model for a session and then silently changed on the next launch. Clamping
+  on every keystroke is worse — typing "5" towards "55" snaps to the 30 kg floor — so the field
+  holds its own text and commits a clamped number on blur.
+- **The climb list, the elevation chart and the ride telemetry each computed `gradients()` for
+  the same route.** Five milliseconds three times over, synchronously, while the drawer opens.
+  Both `routeGeometry` and `gradients` are now cached in a `WeakMap` on the object they derive
+  from, so the three share one computation and none of them has to know about the others.
+- **"Downhill in 0 m"** — the descent callout ignored `inIt`, which the climb callout beside it
+  has always honoured.
+
+Two smaller ones in the CSS the branch inherited: `.drawer-body button:disabled` is later and
+more specific than `.primary:disabled`, so the disabled-primary fix reached only the sheet bar
+and not the drawer — which is where the disabled primary actually lives.
+
+## Verification
+
+Unit tests: **264 assertions across 15 files**, all pure. The five new modules are covered
+directly, including the three GPS failure modes the recorder exists to filter — a receiver
+jittering 4 m/s at traffic lights for ten minutes (must add zero distance), a 3 km teleport out
+of a tunnel (must not be credited, but must re-anchor so the *next* step is measured correctly),
+and a twenty-minute app suspension (elapsed time counts it; moving time and energy must not).
+
+End-to-end in a desktop browser, with the basemap and `W5_N55.rd5` injected into OPFS and
+`navigator.geolocation` stubbed to walk the computed route:
+
+- routing, the HUD, power, climb callouts, progress and the arrival clock — all live and
+  correct (27.0 km/h reported for a 7.5 m/s stub; 165 W on the flat rising to 265 W on a climb);
+- going 1.2 km off the line raised the alert and the automatic reroute produced a fresh 9.2 km
+  route from the rider's position to the unchanged finish;
+- ending the ride produced a summary with distance, moving time, ascent and energy, and saving
+  it put one record in the `rides` object store;
+- the map carried all seven layers in the right order, the `rider-arrow` image registered, the
+  travelled and focus sources filled with 33 and 21 coordinates, and the position feature
+  carried a `heading` property;
+- course-up matched the map bearing to the heading exactly (117° / 117°).
+
+**Still unverified, and it is the verification that counts**: a real iPhone, added to the Home
+Screen, in airplane mode. Specifically the compass permission prompt (`requestPermission` only
+resolves from a user gesture, and desktop Chrome never asks), the wake lock, and whether the
+HUD is actually readable at 25 km/h — which is not a thing a desk can tell you.
+
+### One trap worth writing down
+
+**A hidden browser tab never fires `requestAnimationFrame`, and MapLibre's style loader awaits
+one.** The consequence is that the map silently never loads: no `load` event, no `error` event,
+`isStyleLoaded()` stays false, `getStyle()` returns undefined, and no sprite or glyph request is
+ever made. `styleReady` therefore never flips, so the route layers are never added and the
+waypoint markers are never created.
+
+This wasted half an hour looking for a bug in the marker code that was not there. Two symptoms
+distinguish it from a real failure: `performance.getEntriesByType('resource')` shows *zero*
+sprite and glyph requests, and there is no error of any kind. Shim
+`window.requestAnimationFrame` to a `setTimeout` before the map is built and everything works.
+
+It is a close cousin of the dead-worker trap in `CLAUDE.md` — a map that never draws, with
+nothing in the console — and it fails the same way for a different reason.

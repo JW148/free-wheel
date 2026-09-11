@@ -175,6 +175,7 @@ textarea {
 
 select,
 input[type='text'],
+input[type='number'],
 input:not([type]) {
   font: inherit;
   font-size: 0.85rem;
@@ -242,4 +243,78 @@ input:not([type]) {
 
 dd.bad {
   color: var(--bad);
+}
+
+/* ── Rider settings ─────────────────────────────────────────────────────────────────────
+   Lives in the Setup overlay, which is a plain document rather than the ride screen's
+   floating chrome — so it borrows the drawer's row styling (`.profile-row`, `.profiles`)
+   for the two pickers and adds only what those do not cover. */
+
+.panel-block {
+  margin-bottom: 2.25rem;
+}
+
+.panel-block h2 {
+  margin-top: 1.75rem;
+}
+
+.panel-block h2:first-child {
+  margin-top: 0;
+}
+
+/* Two number fields side by side: they are one question — how much is going up the hill —
+   asked in two parts, and separating them onto two rows makes them look unrelated. */
+.rider-masses {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.rider-masses label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.rider-masses input {
+  min-width: 0;
+  width: 100%;
+}
+
+.panel-block .profiles {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  border: none;
+}
+
+.panel-block .detail-stats {
+  margin-bottom: 0.75rem;
+}
+
+.switch-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  margin-bottom: 1.25rem;
+}
+
+.switch-row input {
+  accent-color: var(--slate-100);
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0.15rem 0 0;
+  min-width: 0;
+}
+
+.switch-row > span {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.9rem;
 }

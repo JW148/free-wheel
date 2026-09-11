@@ -3,10 +3,10 @@
 There is no backend (see the top-level `CLAUDE.md`). This directory is the one exception: two
 scripts that run under plain Node on your own machine, not in the app, and fill an
 S3-compatible bucket with the data the app streams from. They are the only thing in this project
-that ever talks to `brouter.de`, and at roughly eight conditional requests per refresh — one
-per distinct BRouter segment Britain's regions need (`regions.test.mjs` asserts each region
-needs at most two, and `regions.json` currently has 14 regions overlapping onto a small shared
-set of grid cells).
+that ever talks to `brouter.de`, and at five conditional requests per refresh — one per
+distinct BRouter segment Britain's regions need. The 14 regions in `regions.json` overlap onto
+just `E0_N50`, `W5_N50`, `W5_N55`, `W10_N50` and `W10_N55` (measured from the live manifest on
+2026-09-11; `regions.test.mjs` asserts each region needs at most two).
 
 Nothing under `web/src` reads these scripts or their dependencies at build time. They exist
 purely to keep the bucket current; the app only ever reads `manifest.json` and the objects it
@@ -194,7 +194,7 @@ export S3_ENDPOINT=... S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRE
 npm run mirror:segments
 ```
 
-Eight conditional requests to `brouter.de`, and an upload only for segments whose bytes
+Five conditional requests to `brouter.de`, and an upload only for segments whose bytes
 actually differ. Most runs publish nothing at all, which is the point of `lib/decide.mjs`.
 
 Refreshing the basemaps is the expensive half. Find a live Protomaps build date first (the loop

@@ -4,10 +4,12 @@
  * A committed constant rather than an environment variable: `vercel.json` is a static build
  * with no env vars, and the bucket is public anyway. Changing hosts is a one-line commit.
  *
- * This is the Hetzner Object Storage endpoint form the bucket will use, but the bucket itself
- * does not exist yet — it is created in a separate task, blocked on credentials. Set this to
- * the real endpoint once that bucket exists, and confirm with `curl -sI "$MANIFEST_URL" | head -1`
- * expecting `HTTP/2 200`.
+ * The live bucket: Hetzner Object Storage, Falkenstein, in virtual-hosted form
+ * (`<bucket>.<location>.your-objectstorage.com`). Deliberately not the path-style
+ * `S3_ENDPOINT` the mirror scripts sign against — both address the same bucket, and this is
+ * the one a browser reads. Verified 2026-09-11 with a ranged request returning `206` plus
+ * `access-control-allow-origin` and `content-range`; re-check with the `curl` in
+ * `web/tools/mirror/README.md` if the picker ever reports it cannot reach the internet.
  */
 export const DATA_ORIGIN = 'https://free-wheel.fsn1.your-objectstorage.com'
 

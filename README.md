@@ -5,6 +5,28 @@ client-side in a PWA. No routing server, no tile server, no backend at all.
 
 See `CLAUDE.md` for the architecture and the rules of the repo, and `docs/` for spike results.
 
+## What it does
+
+**Planning.** Tap a start and a finish, compare up to six riding styles at once on one pair of
+elevation axes, and pick the one you want off the map or off the list. Every climb on the chosen
+route is listed with where it starts, how much it gains and how steep it is. Routes save to a
+library on the phone, and export as GPX.
+
+**Riding.** The screen locks to you and answers four questions at a glance: how fast, how hard,
+how far left, and what time you arrive. Under them, the next 3 km of road drawn as a gradient
+strip, and one line naming the climb — or the descent — that is coming. Leave the route and it
+routes again from where you are, through whatever waypoints are still ahead. The map can turn to
+face the way you are going. And it speaks — sparingly, about five things, all of them the sort
+you would rather hear than read: a climb coming up and how steep it is, the top of a hard one,
+a long descent, going off route, and the finish.
+
+**Afterwards.** The ride is recorded — distance, moving time, climbing, average and maximum
+speed, and the work done — and can be kept or exported.
+
+The power figure is estimated from speed, the route's own gradient and your weight, not measured;
+Setup → Rider is where you tell it who you are, and it shows what your settings predict for two
+familiar situations so you can check them against what you know you can hold.
+
 ## Prerequisites
 
 - **Node** (tested on 26.x)

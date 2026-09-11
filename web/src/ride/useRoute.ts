@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { sharedEngine } from '../engine/engineClient'
 import { tilesForWaypoints } from '../engine/tiles'
 import { haversineM } from './geo'
-import { parseBrouterGpx, type ParsedRoute } from './gpx'
+import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
 import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
+import { isRoutableProfile, RECORDED_TRACK } from './profiles'
 
 export type { Waypoint } from './plan'
 
@@ -39,7 +40,10 @@ export function useRoute() {
     const parsed: Record<string, ParsedRoute> = {}
     for (const [id, doc] of Object.entries(restored.current?.gpx ?? {})) {
       try {
-        parsed[id] = parseBrouterGpx(doc)
+        // The key says which document this is. A recorded track has no `track-length` summary,
+        // so reading it with the engine's parser restores a route of zero length — and a
+        // progress bar that divides by it. See `parseTrackGpx`.
+        parsed[id] = id === RECORDED_TRACK.id ? parseTrackGpx(doc) : parseBrouterGpx(doc)
       } catch {
         // Drop an unparseable stored route rather than refusing to start.
       }
@@ -127,22 +131,29 @@ export function useRoute() {
     // Sequentially, because the engine Worker blocks inside Wasm for the duration of a
     // route — issuing them in parallel would queue them anyway, and would lose the
     // per-profile progress the rider can see.
-    for (const id of selection) {
-      setRouting(id)
-      const outcome = await sharedEngine().route(id, lonLats)
-      if (!outcome.ok || !outcome.gpx) {
-        failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
-        continue
+    try {
+      for (const id of selection) {
+        setRouting(id)
+        const outcome = await sharedEngine().route(id, lonLats)
+        if (!outcome.ok || !outcome.gpx) {
+          failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
+          continue
+        }
+        try {
+          computed[id] = parseBrouterGpx(outcome.gpx)
+          documents[id] = outcome.gpx
+        } catch (e) {
+          failures.push(e instanceof Error ? e.message : String(e))
+        }
       }
-      try {
-        computed[id] = parseBrouterGpx(outcome.gpx)
-        documents[id] = outcome.gpx
-      } catch (e) {
-        failures.push(e instanceof Error ? e.message : String(e))
-      }
+    } catch (e) {
+      // The call itself rejecting — a worker that would not spawn — rather than a route that
+      // could not be found. Without the `finally` below it leaves the button reading
+      // "Routing…" until the app is reloaded.
+      failures.push(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRouting(null)
     }
-
-    setRouting(null)
     setRoutes(computed)
     setGpx(documents)
     setChosen(chosenAfterRun(Object.keys(computed)))
@@ -150,6 +161,147 @@ export function useRoute() {
     // A partial comparison is still useful — say what failed rather than discarding the rest.
     if (failures.length) setError([...new Set(failures)].join(' '))
   }, [waypoints, selection])
+
+  /**
+   * Routes again from where the rider is now, through whatever is still ahead of them.
+   *
+   * Mid-ride, and so deliberately unlike {@link run} in three ways:
+   *
+   * - **One profile.** The comparison is over — the rider is on a road, committed. Routing six
+   *   profiles one after another would take six times as long at the moment it matters most.
+   * - **The plan is rewritten.** `waypoints` becomes the rider's position plus what is left,
+   *   because a route that starts 20 km behind the rider is not a route they can follow, and a
+   *   second reroute would otherwise be computed from the same stale start.
+   * - **A failure changes nothing.** The old route stays on the map and the rider keeps
+   *   whatever they had. The alternative — clearing the route because the reroute failed — is
+   *   the worst possible response to being lost.
+   *
+   * `remaining` comes from `waypointsAhead`, which is what stops a rider being sent back to a
+   * via point they have already gone through.
+   */
+  const rerouteFrom = useCallback(
+    async (
+      from: { lon: number; lat: number },
+      remaining: { lon: number; lat: number }[],
+      profileId: string,
+    ): Promise<boolean> => {
+      if (remaining.length === 0) return false
+      const next: Waypoint[] = [
+        { id: crypto.randomUUID(), lon: from.lon, lat: from.lat },
+        ...remaining.map((w) => ({ id: crypto.randomUUID(), lon: w.lon, lat: w.lat })),
+      ]
+      const lonLats = next.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
+
+      setRouting(profileId)
+      setError(null)
+      try {
+        const outcome = await sharedEngine().route(profileId, lonLats)
+        if (!outcome.ok || !outcome.gpx) {
+          setError(explainRoutingFailure(outcome.error ?? 'routing failed', next))
+          return false
+        }
+        const parsed = parseBrouterGpx(outcome.gpx)
+        setWaypoints(next)
+        setRoutes({ [profileId]: parsed })
+        setGpx({ [profileId]: outcome.gpx })
+        setChosen(profileId)
+        return true
+      } catch (e) {
+        // `route()` reports a routing failure by returning, but the *call* can still reject —
+        // a worker that failed to spawn, an engine that could not initialise. Uncaught, that
+        // skipped `setRouting(null)` and pinned the spinner: mid-ride the Reroute button would
+        // read "Routing…" for the rest of the ride with no way to clear it.
+        setError(e instanceof Error ? e.message : String(e))
+        return false
+      } finally {
+        setRouting(null)
+      }
+    },
+    [],
+  )
+
+  /**
+   * Turns the plan round and routes it the other way.
+   *
+   * Not just `waypoints.reverse()` and keep the line. A cycle route is **not symmetric**: one-way
+   * streets, no-entry turns and BRouter's own cost model all mean the way home is a different
+   * road from the way out, sometimes substantially. Reversing the drawn geometry would put a
+   * line on the map that the rider cannot legally follow, so the reversed plan is routed again.
+   *
+   * Reuses `run`'s selection, which is the right behaviour on the planning screen: if you were
+   * comparing three styles on the way out, you want the same three on the way back.
+   */
+  const reverse = useCallback(() => {
+    setWaypoints((current) => [...current].reverse())
+    setRoutes({})
+    setGpx({})
+    setChosen(null)
+    setError(null)
+  }, [])
+
+  /**
+   * Puts a saved route back on the map, exactly as it was computed.
+   *
+   * The stored GPX is re-parsed rather than a stored geometry being trusted, so a saved route
+   * goes through the same `parseBrouterGpx` that every freshly computed one does — one code
+   * path, and the GPX parity corpus covers it.
+   *
+   * The selection collapses to the saved profile. A loaded route is a decision already made,
+   * and leaving a six-way comparison ticked would mean the next Reroute silently recomputed
+   * six routes.
+   */
+  const loadSaved = useCallback(
+    (entry: { waypoints: Waypoint[]; profile: string; gpx: string }): boolean => {
+      try {
+        const parsed = parseBrouterGpx(entry.gpx)
+        setWaypoints(entry.waypoints)
+        setSelection([entry.profile])
+        setRoutes({ [entry.profile]: parsed })
+        setGpx({ [entry.profile]: entry.gpx })
+        setChosen(entry.profile)
+        setError(null)
+        return true
+      } catch (e) {
+        setError(`That saved route could not be read: ${e instanceof Error ? e.message : e}`)
+        return false
+      }
+    },
+    [],
+  )
+
+  /**
+   * Puts a *recorded* ride back on the map as the line to follow.
+   *
+   * Deliberately different from {@link loadSaved} in three ways, all of which follow from a
+   * track being something that happened rather than something the engine computed:
+   *
+   * - **It is drawn as `recorded`, not as a profile.** No profile produced it, and labelling it
+   *   with one would claim a routing style it never had.
+   * - **The selection is left alone.** It is what "Find route" and an automatic reroute will
+   *   use, and a recorded track cannot route — so the rider keeps whatever style they had.
+   * - **The waypoints become its two ends.** They are what a reroute routes *to*: come off the
+   *   track and the app takes you on to where the track finished, which is the only useful
+   *   answer. The middle of the track is not waypoints — it is the road.
+   */
+  const loadTrack = useCallback((entry: { gpx: string }): boolean => {
+    try {
+      const parsed = parseTrackGpx(entry.gpx)
+      const start = parsed.coords[0]
+      const finish = parsed.coords[parsed.coords.length - 1]
+      setWaypoints([
+        { id: crypto.randomUUID(), lon: start[0], lat: start[1] },
+        { id: crypto.randomUUID(), lon: finish[0], lat: finish[1] },
+      ])
+      setRoutes({ [RECORDED_TRACK.id]: parsed })
+      setGpx({ [RECORDED_TRACK.id]: entry.gpx })
+      setChosen(RECORDED_TRACK.id)
+      setError(null)
+      return true
+    } catch (e) {
+      setError(`That recorded ride could not be read: ${e instanceof Error ? e.message : e}`)
+      return false
+    }
+  }, [])
 
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
@@ -184,6 +336,21 @@ export function useRoute() {
     removeWaypoint,
     clear,
     run,
+    rerouteFrom,
+    reverse,
+    loadSaved,
+    loadTrack,
+    /**
+     * The profile a reroute should use.
+     *
+     * Not simply `chosen`: following a recorded track sets `chosen` to `recorded`, which names
+     * no `.brf` file, so a reroute would ask the engine for a profile that does not exist and
+     * come back with a routing failure at the exact moment the rider is lost. The ticked
+     * selection is the honest fallback — it is the style this rider rides.
+     */
+    rerouteProfile: isRoutableProfile(chosen) ? chosen! : selection[0],
+    /** Whether what is on the map is a track that was ridden rather than a computed route. */
+    isRecordedTrack: chosen === RECORDED_TRACK.id,
     cancel,
     setError,
   }

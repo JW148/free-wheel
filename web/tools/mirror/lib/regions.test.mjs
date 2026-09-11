@@ -176,7 +176,7 @@ describe('regions.json', () => {
     expect(covers(-2.96, 58.98), 'Orkney').toBe(true)
 
     // The two that are not, both recorded in the sweep comment above and in
-    // `docs/phase-6-progress.md`. If one of these starts passing, delete it from both.
+    // `docs/phase-8-progress.md`. If one of these starts passing, delete it from both.
     expect(covers(-6.31, 49.92), 'Isles of Scilly').toBe(false)
     expect(covers(-1.15, 60.15), 'Shetland').toBe(false)
   })
