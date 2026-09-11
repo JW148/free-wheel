@@ -265,7 +265,16 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     if (map.current?.getLayer('paths')) map.current.setFilter('paths', pathFilter(next))
   }, [])
 
-  const refresh = useCallback(async () => {
+  /**
+   * Re-reads the installed archives, answering `null` if the engine could not be asked.
+   *
+   * `null` rather than an empty list, and the difference is a rider's next move. "Nothing is
+   * installed" sends them to Setup to download a region; "the engine is broken" is a fault
+   * with an entirely different remedy. Collapsing the second into the first — which an empty
+   * array did, because every caller then reported `no-basemap` — put a confident, wrong
+   * signpost in front of someone whose app was failing for another reason.
+   */
+  const refresh = useCallback(async (): Promise<{ name: string; bytes: number }[] | null> => {
     try {
       const installed = await sharedEngine().installedBasemaps()
       setArchives(installed)
@@ -273,7 +282,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setStatus('error')
-      return []
+      return null
     }
   }, [])
 
@@ -295,6 +304,11 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   const endRemote = useCallback(async () => {
     if (remoteRef.current === null) return
     const installed = await refresh()
+    // `refresh` has already reported the fault and set the status. There is nothing to
+    // restore *to* if the list cannot be read, and overwriting that with `no-basemap` below
+    // would replace a real diagnosis with a wrong one. The loan stays open, so a later exit
+    // tries again.
+    if (installed === null) return
     // The archive this loan displaced is the preference, not the answer: the borrowing screen
     // exists to change what is installed, so the list is re-read and the preference may no
     // longer be in it.
@@ -321,6 +335,10 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     started.current = true
     void (async () => {
       const installed = await refresh()
+      // Same distinction as in `endRemote`: `refresh` has already set `error`, and saying
+      // `no-basemap` over the top of it would send the rider to download a region when the
+      // engine is what is broken.
+      if (installed === null) return
       const pick = archiveToOpen(installed, [remembered()])
       if (pick === null) {
         setStatus('no-basemap')

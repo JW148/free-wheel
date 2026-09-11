@@ -20,6 +20,8 @@ import './App.css'
 export default function App() {
   const container = useRef<HTMLDivElement | null>(null)
   const basemap = useMapLibre(container)
+  // Stable, so `closeSetup` below is not rebuilt on every render.
+  const { endRemote } = basemap
   const [setupOpen, setSetupOpen] = useState(false)
   /**
    * `null` until we know whether there is anything installed, so the guided flow does not
@@ -72,13 +74,19 @@ export default function App() {
     setSetupOpen(false)
     void (async () => {
       try {
-        if (await askStorage()) setNeedsSetup(false)
+        if (!(await askStorage())) return
+        // Awaited before the gate opens, never after. The picker borrowed the map, and the
+        // ride screen's effects wake up the instant `needsSetup` clears — so the map has to
+        // be back and `styleReady` back down first, or they run against a streamed archive
+        // that is about to be torn out from under them. See `RegionPicker`'s `leave`.
+        await endRemote()
+        setNeedsSetup(false)
       } catch {
         // Leave the gate where it is: a storage failure says nothing new about what is
         // installed, and the picker's own screen reports it better than this can.
       }
     })()
-  }, [askStorage])
+  }, [askStorage, endRemote])
 
   return (
     <>

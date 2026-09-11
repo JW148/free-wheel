@@ -20,6 +20,18 @@ describe('archiveToOpen', () => {
     expect(archiveToOpen(installed, ['deleted.pmtiles'])).toBe('wessex.pmtiles')
   })
 
+  /*
+   * The combination `endRemote` actually produces on a deleted displaced archive: the first
+   * preference is gone and the second is installed but is *not* `installed[0]`. Test 3 above
+   * cannot tell "carried on down the list" from "gave up and took the first", because there
+   * the two answers coincide. Here they differ, so only one of them passes.
+   */
+  it('carries on down the list rather than giving up at the first miss', () => {
+    expect(archiveToOpen(installed, ['deleted.pmtiles', 'central-scotland.pmtiles'])).toBe(
+      'central-scotland.pmtiles',
+    )
+  })
+
   it('takes whatever is there when no preference survives', () => {
     expect(archiveToOpen(installed, [])).toBe('wessex.pmtiles')
   })

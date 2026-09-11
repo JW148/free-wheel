@@ -170,16 +170,35 @@ export default function RegionPicker({
     )
   }, [map, styleReady, running, summaries])
 
-  // Handing the map back, on every exit from this screen and not only the successful one.
+  /**
+   * Leaving the picker, in the one order that works.
+   *
+   * The handback has to **finish** before the gate opens, and that is why this is a step on
+   * the way out rather than an unmount cleanup. A cleanup cannot await, and React runs an
+   * unmounting child's cleanups before the updated tree's effects in the same passive phase —
+   * so a handback started from a cleanup is still suspended at its first `await` when
+   * `RideView`'s newly unsuspended effects run, against a `styleReady` that is still true and
+   * a `map.current` that is still the streamed archive. Not a race: those closures captured
+   * `styleReady === true` already, so it happened every time. It cost two silent faults — pins
+   * created on an instance about to be detached and never re-added to the real one, and
+   * `lastFitted` written for the streamed map so the restored map's `fitBounds` was skipped.
+   *
+   * Awaited here, `endRemote` has already rebuilt the map and dropped `styleReady` by the time
+   * `onDone` flips the gate, so every ride-screen effect that wakes up bails on the same tick
+   * and runs properly once the restored map loads.
+   */
+  const leave = useCallback(async () => {
+    await endRemote()
+    onDone()
+  }, [endRemote, onDone])
+
+  // The outlines come off with the screen: the map outlives the picker — one controller, two
+  // screens — so leaving them on paints region boxes across the ride screen.
   //
-  // Two things have to happen. The outlines come off: the map outlives the picker — one
-  // controller, two screens — so leaving them on paints region boxes across the ride screen.
-  // And the streamed backdrop is stood down, because `showRemote` is a loan: it skips
-  // `ensureRouteLayers` and never sets `active`, on the assumption that a `show()` always
-  // follows. That holds on the download path and on a hand-imported *basemap*, and fails on
-  // every other way out — road data imported on its own, or carrying on without a region —
-  // which left the rider on a network-streamed Britain where the route line, the position dot
-  // and the theme button were all silently dead. `endRemote` owns that; see `useMapLibre`.
+  // `endRemote` is here only as a safety net, for an exit that bypasses `leave` entirely (the
+  // whole app unmounting, or a gate flipped from somewhere new). It is a no-op on every
+  // ordinary path, because `leave` has already closed the loan. Do not make this the
+  // mechanism again — see `leave` above for what that cost.
   useEffect(
     () => () => {
       const instance = map.current
@@ -239,7 +258,9 @@ export default function RegionPicker({
         // imported, because importing it would pull the whole Worker-side storage module onto
         // the main thread for one string.
         await show(`${summary.region.id}.pmtiles`)
-        onDone()
+        // `show` has already closed the loan, so the handback inside `leave` is a no-op here.
+        // Gone through anyway, so there is one way out of this screen rather than two.
+        await leave()
       } catch (error) {
         // Deliberately no bookkeeping of what got through: the engine recomputes that from
         // disk on every attempt, and a second opinion held here could only ever disagree.
@@ -247,7 +268,7 @@ export default function RegionPicker({
         setRunning(false)
       }
     },
-    [onDone, refresh, show],
+    [leave, refresh, show],
   )
 
   const status = downloadStatus(progress)
@@ -296,7 +317,7 @@ export default function RegionPicker({
                 set up by hand stands the picker down by itself when Setup closes, but a
                 rider who wants to look at the app first should not have to find that out by
                 guessing. */}
-            <button type="button" className="picker-plain" onClick={onDone}>
+            <button type="button" className="picker-plain" onClick={() => void leave()}>
               Carry on without a region
             </button>
           </>
