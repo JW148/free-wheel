@@ -13,6 +13,7 @@
     "build-catalogue": "node tools/build-tile-catalogue.mjs",
     "fetch-map-assets": "node tools/fetch-map-assets.mjs",
     "mirror:segments": "node tools/mirror/sync-segments.mjs",
+    "mirror:configure": "node tools/mirror/configure-bucket.mjs",
     "mirror:basemaps": "node tools/mirror/cut-basemaps.mjs"
   },
   "dependencies": {

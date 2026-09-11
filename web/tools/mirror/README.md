@@ -70,6 +70,7 @@ Bootstrap a brand new bucket in this order:
 ```bash
 cd web
 export S3_ENDPOINT=... S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
+npm run mirror:configure              # CORS and public-read — see below
 npm run mirror:basemaps -- 20260906   # picks a build date — see below
 npm run mirror:segments
 ```
@@ -109,7 +110,19 @@ below does **not** do this search — it guesses `<current-year><current-month>0
 usually right but not guaranteed the moment cron fires at 03:41 on the 1st. See "Cron" below
 for what that means operationally.
 
-## CORS
+## CORS and public-read
+
+Both are applied by `npm run mirror:configure`, which takes the origins to allow and defaults
+to any (`npm run mirror:configure -- https://example.app` to be strict — but note a dev server
+is its own origin, so a list naming only the deployed site breaks local testing). It is an S3
+API call rather than a console setting because Hetzner's console does not offer CORS at all,
+and it reads both settings back afterwards rather than trusting the writes.
+
+**Public-read is the half that is easy to forget.** `putObject` sets no per-object ACL, so the
+bucket's own policy is the only thing making the data readable. Without it every object is a
+403, which presents in the app exactly like a bucket that does not exist: the picker reports
+"could not reach the internet". If a provider refuses the bucket policy, the script says so
+and the bucket has to be made public some other way before anything works.
 
 The picker streams the UK-wide basemap with ranged reads, and every basemap and segment
 download resumes from a byte offset (`web/src/engine/...` — see `CLAUDE.md`'s downloader
