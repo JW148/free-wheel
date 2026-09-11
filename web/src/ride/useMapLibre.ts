@@ -3,6 +3,7 @@ import { AttributionControl, Map as MapLibreMap } from 'maplibre-gl'
 import { mountBasemap, mountRemoteBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
 import { checkMapLibreWorker, configureMapLibreWorker } from '../map/maplibreWorker'
 import { basemapStyle, pathFilter, type MapTheme, type PathMode } from '../map/style'
+import { archiveToOpen } from '../map/archiveChoice'
 import { sharedEngine } from '../engine/engineClient'
 import { ensureRouteLayers } from './routeLayers'
 
@@ -23,6 +24,16 @@ function storedTheme(): MapTheme {
     return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'
   } catch {
     return 'dark'
+  }
+}
+
+/** The archive last opened, or null if there is none or storage is unreadable. */
+function remembered(): string | null {
+  try {
+    return localStorage.getItem(LAST_BASEMAP_KEY)
+  } catch {
+    // Private mode. Whatever is installed is as good a default as any.
+    return null
   }
 }
 
@@ -67,6 +78,20 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   // switch would tear the map down and remount the archive.
   const themeRef = useRef(theme)
   themeRef.current = theme
+  /**
+   * The streamed archive on screen, if any, and the local one it displaced.
+   *
+   * `showRemote` is a *loan* of the map, not a handover. It skips `ensureRouteLayers` and
+   * never touches `active`, on the assumption that a `show()` always follows it — true of the
+   * region picker's download path and nothing else. A rider who reached the picker with a
+   * basemap but no road data, took the manual route, imported only the road data and pressed
+   * Done was left on a network-streamed Britain at zoom 4.6: no route source, so a planned
+   * line drew nothing; no position source, so the dot never appeared; `activeRef` null, so the
+   * theme button did nothing. Every one of those fails silently. {@link endRemote} is what
+   * closes the loan.
+   */
+  const remoteRef = useRef<string | null>(null)
+  const displacedRef = useRef<string | null>(null)
   const [pathMode, setPathModeState] = useState<PathMode>(storedPathMode)
   // Same reasoning as `themeRef`: `show` needs the current value without being rebuilt when it
   // changes, or every path toggle would tear the map down and remount the archive.
@@ -124,6 +149,9 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         }
         activeRef.current = info
         setActive(info)
+        // A local archive is up, so there is no loan outstanding. This is what makes
+        // `endRemote` a no-op after a finished download, and after a hand-imported basemap.
+        remoteRef.current = null
         setStatus('ready')
         try {
           localStorage.setItem(LAST_BASEMAP_KEY, name)
@@ -160,6 +188,9 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     async (url: string) => {
       setError(null)
       setStyleReady(false)
+      // Only on the first loan: a second `showRemote` would otherwise record the *streamed*
+      // archive as the thing to go back to, which is nothing at all.
+      if (remoteRef.current === null) displacedRef.current = activeRef.current?.name ?? null
       try {
         const header = await mountRemoteBasemap(url)
         map.current?.remove()
@@ -178,6 +209,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         created.on('error', (e) => setError(e.error?.message ?? 'map error'))
         created.once('load', () => setStyleReady(true))
         map.current = created
+        remoteRef.current = url
         setStatus('ready')
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
@@ -245,6 +277,42 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     }
   }, [])
 
+  /**
+   * Gives the map back after a {@link showRemote} loan.
+   *
+   * Called on every exit from the borrowing screen, not only the successful one, because the
+   * unsuccessful exits are the ones that used to break. A no-op when a local archive is
+   * already up — `show` clears the loan — so the download path costs nothing.
+   *
+   * Storage is re-read rather than trusting what was there when the loan began: the borrowing
+   * screen's whole purpose is to change what is installed, and a rider may have imported a
+   * basemap by hand while it was up. The displaced archive is only the *preference*.
+   *
+   * Having nothing local to go back to is a legitimate outcome — "carry on without a region"
+   * on an empty phone — and it is made an explicit branch. Leaving the streamed archive up
+   * would be worse than an empty map: it looks like a working map and silently is not.
+   */
+  const endRemote = useCallback(async () => {
+    if (remoteRef.current === null) return
+    const installed = await refresh()
+    // The archive this loan displaced is the preference, not the answer: the borrowing screen
+    // exists to change what is installed, so the list is re-read and the preference may no
+    // longer be in it.
+    const pick = archiveToOpen(installed, [displacedRef.current, remembered()])
+    if (pick !== null) {
+      await show(pick)
+      return
+    }
+    map.current?.remove()
+    map.current = null
+    remoteRef.current = null
+    displacedRef.current = null
+    activeRef.current = null
+    setActive(null)
+    setStyleReady(false)
+    setStatus('no-basemap')
+  }, [refresh, show])
+
   // Open on whatever is already imported. StrictMode double-invokes effects in dev, and
   // building two Maps over the same container leaks the first one, so this guards.
   const started = useRef(false)
@@ -253,13 +321,12 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     started.current = true
     void (async () => {
       const installed = await refresh()
-      if (installed.length === 0) {
+      const pick = archiveToOpen(installed, [remembered()])
+      if (pick === null) {
         setStatus('no-basemap')
         return
       }
-      const remembered = localStorage.getItem(LAST_BASEMAP_KEY)
-      const pick = installed.find((a) => a.name === remembered) ?? installed[0]
-      await show(pick.name)
+      await show(pick)
     })()
   }, [refresh, show])
 
@@ -285,6 +352,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     setPathMode,
     show,
     showRemote,
+    endRemote,
     refresh,
     setError,
   }

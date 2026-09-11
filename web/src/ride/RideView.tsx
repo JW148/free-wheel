@@ -61,8 +61,17 @@ export default function RideView({
   suspended: boolean
   onOpenSetup: () => void
 }) {
-  const { map, error: mapError, styleReady, workerProblem, theme, setTheme, pathMode, setPathMode } =
-    basemap
+  const {
+    map,
+    error: mapError,
+    status: mapStatus,
+    styleReady,
+    workerProblem,
+    theme,
+    setTheme,
+    pathMode,
+    setPathMode,
+  } = basemap
   const plan = useRoute()
   const sheet = useRouteSheet(plan)
   const [riding, setRiding] = useState(false)
@@ -257,13 +266,15 @@ export default function RideView({
   }, [map, styleReady, suspended, fix, following])
 
   const centreOnMe = useCallback(async () => {
+    if (suspended) return
     const here = await locateOnce()
     if (here && map.current) {
       map.current.easeTo({ center: [here.lon, here.lat], zoom: Math.max(map.current.getZoom(), 15) })
     }
-  }, [locateOnce, map])
+  }, [locateOnce, map, suspended])
 
   const startRiding = useCallback(async () => {
+    if (suspended) return
     setRiding(true)
     setPlacing(false)
     // Ride can be started from inside the drawer, which covers the map it is about to lock
@@ -276,7 +287,20 @@ export default function RideView({
       zoom: RIDING_ZOOM,
       duration: 900,
     })
-  }, [locateOnce, map])
+  }, [locateOnce, map, suspended])
+
+  /**
+   * The rail's imperative map writers, behind the same flag as the effects.
+   *
+   * Unreachable today: `body:has(.picker) .ride-chrome { display: none }` takes the rail out
+   * of hit-testing entirely. But that leaves a CSS rule load-bearing for who owns the map,
+   * which is precisely the guarantee the `suspended` doc comment above says CSS cannot give —
+   * and a comment that contradicts the code beside it is worse than no comment. One flag, one
+   * rule, in both places.
+   */
+  const ifLive = (act: () => void) => () => {
+    if (!suspended) act()
+  }
 
   /**
    * The rail, in visual order top to bottom. An array rather than six hand-written buttons so
@@ -296,14 +320,14 @@ export default function RideView({
       key: 'theme',
       icon: theme === 'dark' ? <SunIcon /> : <MoonIcon />,
       label: theme === 'dark' ? 'Switch to the daylight map' : 'Switch to the dark map',
-      onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+      onClick: ifLive(() => setTheme(theme === 'dark' ? 'light' : 'dark')),
     },
     {
       key: 'paths',
       icon: <PathIcon />,
       label: PATH_MODE_LABEL[pathMode],
       active: pathMode !== 'none',
-      onClick: () => setPathMode(nextPathMode(pathMode)),
+      onClick: ifLive(() => setPathMode(nextPathMode(pathMode))),
     },
     { key: 'setup', icon: <SettingsIcon />, label: 'Setup', onClick: onOpenSetup },
     {
@@ -406,6 +430,13 @@ export default function RideView({
                 <dt>climbing</dt>
               </div>
             </dl>
+          ) : mapStatus === 'no-basemap' ? (
+            /* The one state where the routing hints below are nonsense: there is no map to
+               tap. It is reachable by choice — "carry on without a region" — so it has to
+               explain itself rather than looking like a failed load. */
+            <p className="rail-hint panel">
+              No map on this phone yet. Open Setup to download a region, or to import one.
+            </p>
           ) : routeCount > 1 ? (
             <p className="rail-hint panel">
               {routeCount} routes — tap one to choose it.

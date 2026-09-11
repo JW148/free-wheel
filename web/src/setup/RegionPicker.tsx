@@ -93,7 +93,7 @@ export default function RegionPicker({
 
   // The hook returns a fresh object every render, so effects depend on the callbacks — which
   // are stable — rather than on `basemap` itself.
-  const { map, styleReady, showRemote, show, refresh } = basemap
+  const { map, styleReady, showRemote, show, endRemote, refresh } = basemap
 
   const summaries = useMemo(
     () =>
@@ -170,15 +170,23 @@ export default function RegionPicker({
     )
   }, [map, styleReady, running, summaries])
 
-  // And off again when this screen goes. The map outlives the picker — one controller, two
-  // screens — so leaving the outlines on it would paint region boxes across the ride screen
-  // for a rider who stood the picker down by importing their files by hand instead.
+  // Handing the map back, on every exit from this screen and not only the successful one.
+  //
+  // Two things have to happen. The outlines come off: the map outlives the picker — one
+  // controller, two screens — so leaving them on paints region boxes across the ride screen.
+  // And the streamed backdrop is stood down, because `showRemote` is a loan: it skips
+  // `ensureRouteLayers` and never sets `active`, on the assumption that a `show()` always
+  // follows. That holds on the download path and on a hand-imported *basemap*, and fails on
+  // every other way out — road data imported on its own, or carrying on without a region —
+  // which left the rider on a network-streamed Britain where the route line, the position dot
+  // and the theme button were all silently dead. `endRemote` owns that; see `useMapLibre`.
   useEffect(
     () => () => {
       const instance = map.current
       if (instance) removeRegionLayers(instance)
+      void endRemote()
     },
-    [map],
+    [map, endRemote],
   )
 
   // A tap on a region selects it. Ignored mid-download: the sheet is the only thing on screen
@@ -244,6 +252,7 @@ export default function RegionPicker({
 
   const status = downloadStatus(progress)
   const problem = failure === null ? null : downloadFailure(failure)
+  const price = selected === null ? null : sheetPrice(selected.price, problem !== null)
 
   return (
     <div className="picker">
@@ -347,10 +356,9 @@ export default function RegionPicker({
             ) : (
               <>
                 {/* Suppressed after a failure: the mount-time price is for the whole region,
-                    and the retry will resume. `sheetPrice` holds the rule and the reason. */}
-                {sheetPrice(selected.price, problem !== null) !== null && (
-                  <p className="picker-size">{selected.price}</p>
-                )}
+                    and the retry will resume. `sheetPrice` holds the rule and the reason, and
+                    what it hands back is what renders. */}
+                {price !== null && <p className="picker-size">{price}</p>}
                 {problem && (
                   <div className="picker-problem" role="alert">
                     <p>{problem.message}</p>
