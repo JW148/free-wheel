@@ -106,3 +106,76 @@ describe('downloadInto', () => {
     expect(sink.bytes.length).toBe(0)
   })
 })
+
+describe('downloadInto: untrustworthy 206 responses', () => {
+  it('restarts from zero when a 206 claims a Content-Range that does not start where we asked', async () => {
+    const sink = fakeSink(body('abcd'))
+    const fetchImpl = vi.fn(async () =>
+      // Claims range 0-9, not 4-9: a server bug, or a cache/proxy that mislabels a full
+      // response as partial. Trusting the status code alone would write this at offset 4,
+      // producing a file of the right length that is wrong from byte 0.
+      new Response(body('ABCDEFGHIJ'), { status: 206, headers: { 'Content-Range': 'bytes 0-9/10' } }),
+    )
+    await downloadInto(sink, 'https://example/x', 10, {
+      from: 4,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    expect(new TextDecoder().decode(sink.bytes)).toBe('ABCDEFGHIJ')
+  })
+
+  it('restarts from zero when a 206 has no Content-Range header at all', async () => {
+    const sink = fakeSink(body('abcd'))
+    const fetchImpl = vi.fn(async () => new Response(body('ABCDEFGHIJ'), { status: 206 }))
+    await downloadInto(sink, 'https://example/x', 10, {
+      from: 4,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    expect(new TextDecoder().decode(sink.bytes)).toBe('ABCDEFGHIJ')
+  })
+})
+
+describe('downloadInto: resuming after a mid-stream failure', () => {
+  it('retains bytes written before the stream errors, flushes them, and a resumed call completes the file', async () => {
+    const sink = fakeSink()
+    const flushSpy = vi.spyOn(sink, 'flush')
+    // `pull` rather than `start`: enqueueing then immediately erroring in `start` discards the
+    // queued chunk (erroring a stream resets its internal queue per spec), which would test
+    // nothing. Delivering one chunk via a successful `pull`, then erroring on the next `pull`,
+    // is what a real dropped connection looks like — some bytes already handed to the reader.
+    let pulls = 0
+    const droppedFetch = vi.fn(async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulls += 1
+            if (pulls === 1) {
+              controller.enqueue(body('abcd'))
+            } else {
+              controller.error(new Error('connection dropped'))
+            }
+          },
+        }),
+        { status: 200 },
+      ),
+    )
+
+    await expect(
+      downloadInto(sink, 'https://example/x', 10, { fetchImpl: droppedFetch as unknown as typeof fetch }),
+    ).rejects.toThrow('connection dropped')
+
+    // The point of the feature: the bytes received before the drop are on the sink at the
+    // right offsets, not discarded, and flushed rather than left buffered.
+    expect(new TextDecoder().decode(sink.bytes)).toBe('abcd')
+    expect(flushSpy).toHaveBeenCalled()
+
+    const resumedFetch = vi.fn(async () =>
+      new Response(body('efghij'), { status: 206, headers: { 'Content-Range': 'bytes 4-9/10' } }),
+    )
+    await downloadInto(sink, 'https://example/x', 10, {
+      from: sink.size(),
+      fetchImpl: resumedFetch as unknown as typeof fetch,
+    })
+
+    expect(new TextDecoder().decode(sink.bytes)).toBe('abcdefghij')
+  })
+})

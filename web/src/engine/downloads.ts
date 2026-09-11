@@ -45,6 +45,17 @@ export function resumeDecision(
   return { action: 'resume', at: existing.bytes }
 }
 
+/**
+ * The start offset a `Content-Range: bytes 4-9/10` header claims, or `null` if the header is
+ * missing or doesn't parse. A `206` is only trustworthy when this matches the byte we asked
+ * the server to resume from — see the note in `downloadInto`.
+ */
+function contentRangeStart(header: string | null): number | null {
+  if (!header) return null
+  const match = /^bytes (\d+)-\d+\/(?:\d+|\*)$/.exec(header)
+  return match ? Number(match[1]) : null
+}
+
 export async function downloadInto(
   sink: ByteSink,
   url: string,
@@ -63,8 +74,15 @@ export async function downloadInto(
   }
 
   // A server that ignores Range answers 200 with the whole file. Writing that at the resume
-  // offset would produce a file the right length and wrong throughout.
-  let offset = response.status === 206 ? from : 0
+  // offset would produce a file the right length and wrong throughout — and the length check
+  // can't catch it, because the length comes out right. A `206` has the same failure mode if
+  // its `Content-Range` doesn't actually start where we asked: trusting the status code alone
+  // leaves that hole open, so the header is parsed and checked against `from` before the
+  // response is trusted as a genuine partial-content answer. Anything else — no `206`, no
+  // header, or a header that starts somewhere else — is treated as a full response from byte
+  // zero, the same safe fallback the plain-`200` case takes.
+  const trustedResume = response.status === 206 && contentRangeStart(response.headers.get('Content-Range')) === from
+  let offset = trustedResume ? from : 0
   if (offset === 0) sink.truncate(0)
 
   const reader = response.body.getReader()
