@@ -84,6 +84,13 @@ describe('downloadPlan', () => {
     expect(plan.items.map((i) => i.key)).toEqual(['W5_N50'])
   })
 
+  it('re-downloads only the basemap when the road data is current', () => {
+    const staleBasemap = { ...installedWessex, basemapHash: 'old' }
+    const plan = downloadPlan(wessex, manifest, [staleBasemap])
+    expect(plan.items.map((i) => i.key)).toEqual(['wessex'])
+    expect(plan.bytes).toBe(90000000)
+  })
+
   it('fails loudly rather than pricing a segment the manifest does not describe as free', () => {
     const { W5_N50: _dropped, ...rest } = manifest.segments
     const strippedManifest = { ...manifest, segments: rest }

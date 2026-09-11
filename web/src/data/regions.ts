@@ -36,6 +36,7 @@ export interface DownloadItem {
  * the manifest no longer describes a segment the region declares, that reads as stale road
  * data rather than throwing: `segments[name]?.hash` is `undefined`, which cannot equal an
  * installed hash string, so it falls into `road-data-outdated` the same as any other mismatch.
+ * `downloadPlan` below disagrees on purpose for this same input — see its doc comment for why.
  */
 export function regionState(
   region: RegionEntry,
@@ -59,6 +60,17 @@ export function regionState(
  * Segments are shared: `W5_N50` covers most of England and Wales, so a rider who already has
  * Wessex should not download 137 MB again for the South West. `installed` is every region a
  * phone already holds, not just this one, so that sharing works.
+ *
+ * Unlike `regionState`, this throws if a region declares a segment `manifest.segments` does
+ * not describe, instead of treating it as merely stale: a status query has a safe default
+ * (call it outdated and move on), but this function has to hand back a concrete `url` and
+ * `bytes` for every item, and there is no safe value to invent for one it can't find. A caller
+ * that just saw `regionState` report `road-data-outdated` for this same input and then calls
+ * `downloadPlan` to act on it should not be surprised by an uncaught throw. In practice this is
+ * unreachable through `parseManifest` (`web/src/data/manifest.ts:110`), which rejects a region
+ * referencing an undescribed segment at parse time — so this only guards against a manually
+ * constructed or mismatched manifest, and stays a live concern only for as long as that check
+ * does.
  */
 export function downloadPlan(
   region: RegionEntry,
