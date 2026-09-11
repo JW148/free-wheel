@@ -52,24 +52,42 @@ export interface InstalledRegion {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-function asset(value: unknown, where: string): { url: string; bytes: number; hash: string } {
+/**
+ * A segment name is a BRouter grid cell id (`W5_N55`), never anything else. Constraining the
+ * shape isn't just validation: `segments[name] = ...` below assigns onto a plain object with a
+ * caller-controlled key, and an unconstrained name of `__proto__` would set the object's
+ * prototype instead of an own property. Requiring the grid shape closes that off structurally
+ * rather than by special-casing the dangerous key.
+ */
+const SEGMENT_NAME = /^[EW]\d{1,3}_[NS]\d{1,2}$/
+
+function asset(
+  value: unknown,
+  where: string,
+  options: { requireHash?: boolean } = {},
+): { url: string; bytes: number; hash: string } {
+  const requireHash = options.requireHash ?? true
   if (!isObject(value)) throw new Error(`${where}: expected an asset, got ${typeof value}`)
   const { url, bytes, hash } = value
   if (typeof url !== 'string' || url.length === 0) throw new Error(`${where}: missing url`)
-  if (typeof bytes !== 'number' || bytes <= 0) throw new Error(`${where}: bytes is ${String(bytes)}`)
-  if (typeof hash !== 'string' || hash.length === 0) throw new Error(`${where}: missing hash`)
-  return { url, bytes, hash }
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
+    throw new Error(`${where}: bytes is ${String(bytes)}`)
+  }
+  if (requireHash && (typeof hash !== 'string' || hash.length === 0)) {
+    throw new Error(`${where}: missing hash`)
+  }
+  return { url, bytes, hash: typeof hash === 'string' ? hash : '' }
 }
 
 export function parseManifest(value: unknown): DataManifest {
   if (!isObject(value)) throw new Error('not a manifest: expected an object')
   if (value.version !== 1) throw new Error(`manifest version ${String(value.version)} is not supported`)
-  if (!isObject(value.picker)) throw new Error('manifest has no picker archive')
   if (!isObject(value.segments)) throw new Error('manifest has no segments')
   if (!Array.isArray(value.regions)) throw new Error('manifest has no regions')
 
   const segments: Record<string, SegmentEntry> = {}
   for (const [name, entry] of Object.entries(value.segments)) {
+    if (!SEGMENT_NAME.test(name)) throw new Error(`segment name ${name} is not a valid grid cell id`)
     const { url, bytes, hash } = asset(entry, `segment ${name}`)
     const changed = isObject(entry) && typeof entry.changed === 'string' ? entry.changed : ''
     segments[name] = { url, bytes, hash, changed }
@@ -100,10 +118,10 @@ export function parseManifest(value: unknown): DataManifest {
     }
   })
 
-  const picker = value.picker as Record<string, unknown>
-  if (typeof picker.url !== 'string' || typeof picker.bytes !== 'number') {
-    throw new Error('manifest picker is malformed')
-  }
+  // No hash: the picker archive is downloaded unconditionally, never compared for staleness
+  // the way a region's segments and basemap are. It still needs the same "not a failed
+  // upload" guarantee as everything else, so it goes through the same positive-bytes check.
+  const picker = asset(value.picker, 'picker', { requireHash: false })
 
   return {
     version: 1,
@@ -137,7 +155,17 @@ export async function loadManifest(
     if (!response.ok) throw new Error(`the mirror returned ${response.status}`)
     const text = await response.text()
     const manifest = parseManifest(JSON.parse(text))
-    localStorage.setItem(CACHE_KEY, text)
+    // Caching is a best-effort side effect of a successful fetch, not part of what makes the
+    // fetch succeed. iOS Safari in Private Browsing throws QuotaExceededError on every
+    // setItem call, and a manifest we just fetched and validated is not stale just because we
+    // failed to save a copy of it — so a write failure here must never fall into the catch
+    // below, which means "the fetch failed".
+    try {
+      localStorage.setItem(CACHE_KEY, text)
+    } catch {
+      // Nothing to do: the fetched manifest is still good, we just won't have a cached
+      // fallback next time we're offline.
+    }
     return { manifest, fresh: true }
   } catch (error) {
     if (!cached) {
@@ -147,6 +175,18 @@ export async function loadManifest(
         }`,
       )
     }
-    return { manifest: parseManifest(JSON.parse(cached)), fresh: false }
+    try {
+      return { manifest: parseManifest(JSON.parse(cached)), fresh: false }
+    } catch (cacheError) {
+      // The cached copy itself is corrupt or from an old, incompatible schema. Discard it —
+      // otherwise every future call fails the same way until someone clears storage by hand —
+      // and say plainly that it was the cache at fault, not the network.
+      localStorage.removeItem(CACHE_KEY)
+      throw new Error(
+        `the saved copy was unreadable and has been discarded: ${
+          cacheError instanceof Error ? cacheError.message : String(cacheError)
+        }`,
+      )
+    }
   }
 }

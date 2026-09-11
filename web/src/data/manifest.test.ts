@@ -70,6 +70,27 @@ describe('parseManifest', () => {
   it('rejects anything that is not an object at all', () => {
     expect(() => parseManifest('<!doctype html>')).toThrow(/not a manifest/)
   })
+
+  it('rejects a zero-byte picker, which the region basemap check already covers but the picker skipped', () => {
+    const broken = structuredClone(good)
+    broken.picker.bytes = 0
+    expect(() => parseManifest(broken)).toThrow(/picker/)
+  })
+
+  it('rejects non-finite bytes, not just zero or negative', () => {
+    const broken = structuredClone(good)
+    ;(broken.segments.W5_N55 as { bytes: number }).bytes = Number.POSITIVE_INFINITY
+    expect(() => parseManifest(broken)).toThrow(/W5_N55/)
+  })
+
+  it('rejects a segment key that is not a grid cell id, closing a prototype-pollution corner', () => {
+    // Built via JSON.parse rather than a literal `{ __proto__: ... }`, so the result has a
+    // real own property named "__proto__" (JSON.parse's own-property semantics), not the
+    // prototype of the object itself — the same shape a malicious or corrupt manifest.json
+    // payload would take once parsed.
+    const raw = JSON.parse(JSON.stringify(good).replace(/W5_N55/g, '__proto__'))
+    expect(() => parseManifest(raw)).toThrow(/__proto__/)
+  })
 })
 
 describe('loadManifest', () => {
@@ -107,5 +128,29 @@ describe('loadManifest', () => {
     const result = await loadManifest({ fetchImpl: fetchImpl as unknown as typeof fetch })
     expect(result.fresh).toBe(false)
     expect(result.manifest.regions[0].id).toBe('central-scotland')
+  })
+
+  it('discards a corrupt cached copy rather than failing the same way forever', async () => {
+    localStorage.setItem('free-wheel.manifest', 'not json at all')
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Load failed')
+    })
+    await expect(loadManifest({ fetchImpl: fetchImpl as unknown as typeof fetch }))
+      .rejects.toThrow(/unreadable/)
+    expect(localStorage.getItem('free-wheel.manifest')).toBeNull()
+  })
+
+  it('does not let a failed cache write demote a successful fetch to stale or failed', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(good), { status: 200 }))
+    const setItemSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError')
+    })
+    try {
+      const result = await loadManifest({ fetchImpl: fetchImpl as unknown as typeof fetch })
+      expect(result.fresh).toBe(true)
+      expect(result.manifest.regions[0].id).toBe('central-scotland')
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 })
