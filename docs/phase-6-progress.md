@@ -2,7 +2,7 @@
 
 **Status: built and unit-tested, never run against a live mirror.** Tap a region on a map of
 Britain, watch it download, land on the ride screen with local data — that path exists in code,
-compiles clean, and is exercised end to end by 287 tests. None of it has been exercised in a
+compiles clean, and is exercised end to end by 310 tests. None of it has been exercised in a
 browser, because the bucket it streams from does not exist. That gap, and the one below it, are
 the most important facts in this document; see "What is not done" before reading anything else
 as a success.
@@ -19,9 +19,14 @@ web/tools/mirror/
   lib/geometry.mjs        segment-grid math, cross-checked against the app's own tiles.ts
   lib/decide.mjs          hashOf, decideSegmentAction — the identical-bytes publish rule
   lib/manifest.mjs        buildManifest, assertPublishable
+  lib/bootstrap.mjs       publishing on a bucket that has nothing on it yet
+  s3.mjs                  the S3 calls, and the two cache-control policies
+  sync-segments.mjs       the weekly job: brouter.de -> the bucket, by hash
+  cut-basemaps.mjs        the monthly job: Protomaps -> region archives + the picker backdrop
+  README.md               bucket layout, CORS, cron, and the order the two jobs must run in
   regions.json            the 14-region list, cut to a byte budget
 web/src/data/
-  regions.ts              segmentsForBbox etc., the app-side twin of geometry.mjs
+  regions.ts              regionState and downloadPlan — what a region costs, and if it is stale
   manifest.ts             DataManifest, RegionEntry, InstalledRegion, loadManifest (localStorage cache)
   origin.ts               DATA_ORIGIN, MANIFEST_URL, assetUrl — see "What is not done"
 web/src/engine/
@@ -45,24 +50,33 @@ Protomaps build `20260906`, `--maxzoom=14`, one basemap archive per region:
 
 | region | archive size |
 |---|---|
-| Britain, z0–10 (the picker's own backdrop) | 61 MB |
-| Central Belt (probe, not shipped) | 86 MB |
-| London (probe, not shipped) | 54 MB |
-| Southern Scotland and the Borders | 49 MB |
-| South West England | 102 MB |
-| London and the Home Counties | 128 MB |
-| The Midlands | 180 MB |
+| Britain, z0–10 (the picker's own backdrop) | 61 MB, measured |
+| Central Belt (probe, not shipped) | 86 MB, measured |
+| London (probe, not shipped) | 54 MB, measured |
+| South West England | 102 MB, measured |
+| The Midlands | 180 MB, measured |
+| Southern Scotland and the Borders | **≈ 110 MB, estimated** (49 MB measured at a smaller extent) |
+| London and the Home Counties | **≈ 155 MB, estimated** (128 MB measured at a smaller extent) |
+
+**Two of those figures are no longer measurements.** Closing the coverage holes (below) widened
+six regions — `highlands-islands`, `central-scotland`, `southern-scotland`, `east-anglia`,
+`wessex` and `london-home-counties` — and an archive's size follows its bbox. Re-measuring needs
+`pmtiles extract` against a dated Protomaps build, so the two that had a measurement are scaled
+from it by area instead: Southern Scotland gains 1.97 deg², including Edinburgh and the Forth,
+and London gains 0.72 deg² of semi-rural Essex. The other four were never measured at all. Every
+one of these is settled for real by the first `mirror:basemaps` run, which prints exact bytes per
+region — **check them against the 250 MB threshold then**, because that claim is now an estimate
+for six of the fourteen.
 
 London's 54 MB probe against the Central Belt's 86 MB, both roughly city-sized, is a 168 MB
 per square degree vs. 37 MB per square degree difference — city density costs far more per unit
 area than rural coverage, which is why the regions are cut on a byte budget rather than on
-equal-looking map area. All fourteen shipped regions stay comfortably under the 250 MB split
-threshold considered in the plan; none needed splitting on bytes in the end. The two that did
-need splitting needed it for a different reason — see below.
+equal-looking map area. Nothing needed splitting on bytes in the end. The two that did need
+splitting needed it for a different reason — see below.
 
 **First-download time on a phone was not measured.** There is no bucket to download from, so
 there is nothing to time. This is the single biggest hole in "what was measured" and it stays
-open until Task 5 runs.
+open until the first upload runs.
 
 ## Where the plan turned out to be wrong
 
@@ -76,10 +90,46 @@ the test but made the geography worse: one split pulled in a Brittany segment fo
 ride, the other was a 0.3°-wide sliver that existed only to justify an Irish-quadrant segment
 and a Highlands one neither region wanted. The real fix was to nudge the offending edges off the
 grid lines (south-west England's southern edge from 49.9° to 50.0°, southern Scotland's western
-edge from −5.3° to −5.0°) rather than cut at them. Final count: **14 regions**, all ≤2 segments,
-with two small accepted gaps — the Lizard tip, the Isles of Scilly, and the Rhins of Galloway
-(Stranraer, Portpatrick) fall outside every region. Each is a one-line bbox extension later if a
-rider asks.
+edge from −5.3° to −5.0°) rather than cut at them. Final count: **14 regions**, all ≤2 segments.
+
+### And then the bboxes left six holes, with real towns in them
+
+The test that was supposed to catch that named eleven cities and asserted each fell in some
+region. None of the eleven landed in a hole, so it passed — while Oxford, Cheltenham,
+Gloucester, Cirencester, Stroud, Witney, Bicester and Abingdon sat in a band between Wessex's
+north edge at 51.6, the Midlands' south edge at 52.0 and South West England's east edge at
+−2.4, and Aberdeen and Stonehaven sat east of the Highlands' −2.4. A friend in Oxford would
+have opened the picker with nothing to tap.
+
+Sweeping properly — a 2 km grid over a hand-traced outline of mainland Britain, in
+`lib/regions.test.mjs` — found four more holes: Berwick-upon-Tweed and the Berwickshire coast,
+the Lincolnshire coast from Skegness to Grimsby, north Essex around Colchester, and the whole
+of Kintyre. The named-cities test could not have found any of them; the holes a list of
+rectangles leaves are between the places anyone thinks to name.
+
+All six are closed by widening a bbox, and every region still needs at most two segments, from
+the same five grid cells as before. Two of the closures are worth recording:
+
+- **Kintyre** took `central-scotland` from one segment to two. That is only tolerable because
+  the second is `W10_N55` at **5.5 MB** — by far the cheapest cell on the grid, being almost
+  all sea. The region gained Arran, Bute, Islay and Jura with it, and is renamed *Central
+  Scotland and Argyll*. `east-anglia` likewise becomes *East Anglia and Lincolnshire*.
+- **Orkney** came in free: the Highlands' north edge moved from 58.7 to 59.5, still inside the
+  same `N55` row of the grid.
+
+Three accepted gaps remain, each one a bbox edge sitting on a grid line where the next nudge
+outward costs a whole extra segment:
+
+- **the Lizard tip and the Isles of Scilly**, below 50.0°N — the next row down is `W5_N45` and
+  `W10_N45`, Brittany and the Bay of Biscay.
+- **the Rhins of Galloway** (Stranraer, Portpatrick), west of −5.0 — reaching them takes
+  `southern-scotland` from two segments to four.
+- **Shetland**, above 59.5°N — `W5_N60` would be a third segment for the Highlands.
+
+The first two are declared in `regions.test.mjs`, which asserts both that no other mainland
+point is uncovered *and* that each declared gap is still real, so closing one without deleting
+its declaration fails the build. Shetland is not on the mainland, so the sweep never reaches
+it; it is recorded here and nowhere else.
 
 ### Task 1's geometry had the same clamp bug in two places, on purpose, and it was wrong in both
 
@@ -217,7 +267,10 @@ Run it in order once the mirror is live — later items depend on earlier ones h
    "Finishing up…", then the ride screen opens on that region's own archive.
 9. Reload: straight to the ride screen, no picker, no region outlines anywhere on its map.
 10. Throttle to offline mid-download, then Retry: the transfer resumes with a `Range` header on
-    the retried request, and the bar jumps to the resume offset rather than restarting at 0.
+    the retried request, and the bar jumps to the resume offset rather than restarting at 0. If
+    it restarts at 0 instead, the bucket's CORS rule is missing
+    `Access-Control-Expose-Headers: Content-Range` — the downloader cannot place a `206` whose
+    range it cannot read, so it deliberately re-fetches the whole file rather than guess.
 11. Reload with the network off, having downloaded once: the head shows the saved-list note, and
     any installed region reads `unknown`, not `current`.
 12. Clear `localStorage` only, go offline, reload: the "no list of regions" sheet appears, and
@@ -262,27 +315,29 @@ entirely on this walkthrough.
 
 ## What is not done
 
-**The mirror does not exist, in either sense of the word.** Task 5 of the plan — writing
-`web/tools/mirror/s3.mjs`, `sync-segments.mjs`, `cut-basemaps.mjs` and their `README.md`, wiring
-`npm run mirror:segments`/`mirror:basemaps` into `web/package.json`, and running the first
-upload — was skipped in full, not merely left un-run: none of those four files or `package.json`
-entries exist in this repo. It needs Hetzner Object Storage credentials nobody here has, and it
-publishes to an external service, which is a decision for whoever holds those credentials, not
-something to do speculatively. The pure logic those scripts would call — `hashOf`,
-`decideSegmentAction`, `buildManifest`, `assertPublishable`, `segmentsForBbox`, `regions.json` —
-is written and tested (Tasks 1, 2, 3, 4), so standing the mirror up is wiring, not design.
+**The bucket does not exist.** The scripts that fill it do: `web/tools/mirror/s3.mjs`,
+`sync-segments.mjs`, `cut-basemaps.mjs`, `lib/bootstrap.mjs` and `README.md` are all written,
+`npm run mirror:segments` and `mirror:basemaps` are wired into `web/package.json`, and every
+pure function they call — `hashOf`, `decideSegmentAction`, `buildManifest`, `assertPublishable`,
+`partitionByReadiness`, `carryForwardBasemaps`, `segmentsForBbox`, `regions.json` — has tests.
+
+What has never happened is the **first upload and the CORS check against a live bucket**. That
+needs Hetzner Object Storage credentials nobody here has, and it publishes to an external
+service, which is a decision for whoever holds those credentials rather than something to do
+speculatively. Neither script has been run at all, so nothing below the S3 client's first call
+has ever executed: read `web/tools/mirror/README.md`'s "Ordering" section before the first run,
+because the two jobs have to go in one particular order on an empty bucket.
 
 Consequently:
 
 - `web/src/data/origin.ts`'s `DATA_ORIGIN` is a placeholder in Hetzner's endpoint-URL form,
   `https://free-wheel.fsn1.your-objectstorage.com` — a guess at the shape the real host will
   take, not a working address. **There is no bucket public URL to record here.** Replace the
-  constant once Task 5 runs, and confirm with `curl -sI "$MANIFEST_URL" | head -1` expecting
-  `HTTP/2 200`.
-- The VPS cron that would keep the mirror current does not exist either, since it runs the
-  scripts above. Once it does, it needs five environment variables the app itself never uses,
-  because the app has none: `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
-  `S3_SECRET_ACCESS_KEY`.
+  constant once the first upload succeeds, and confirm with `curl -sI "$MANIFEST_URL" | head -1`
+  expecting `HTTP/2 200`.
+- The VPS cron is written down (two lines, in `README.md`) but not installed anywhere. It
+  needs five environment variables the app itself never uses, because the app has none:
+  `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
 - **Nothing in `RegionPicker` has ever run in a browser**, for the same reason — there is
   nothing to stream from. Every line above in "the browser verification checklist" is unrun.
 - **The on-device acceptance test — cold launch, tap a region, airplane mode, plan and follow —
@@ -300,9 +355,10 @@ Consequently:
 
 ## Verified
 
-- `cd web && npx vitest run` — 287 passing across 21 files (baseline before this phase: 98
-  across 8; the mirror's pure logic, the manifest parser, the resumable downloader, the partial
-  marker, `regionStore`, the picker's model, and the region-outline layer account for the rest).
+- `cd web && npx vitest run` — 310 passing across 22 files (baseline before this phase: 98
+  across 8; the mirror's pure logic and scripts, the manifest parser, the resumable downloader,
+  the partial marker, `regionStore`, the picker's model, and the region-outline layer account
+  for the rest).
 - `npm run build` — clean, `tsc -b` and `vite build` both succeed, service worker precache
   unaffected.
 - **Not verified: anything that needs a browser, a network, or a bucket.** See "What is not

@@ -16,7 +16,7 @@ this for where the work actually stands.
 | **Phase 3** — React/MapLibre PWA | ✅ Basemap renders with labels, offline |
 | **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. **Ridden 2026-09-06** |
 | **Phase 5** — basemap legibility | 🟡 Land cover, water and rail restyled after the ride. Tests green, not yet ridden |
-| **Phase 6** — region downloads | 🔴 Built and unit-tested (287/287); **the mirror bucket does not exist** — nobody has run the upload with real credentials, so `DATA_ORIGIN` is a placeholder host and the picker has never streamed anything in a browser. Manual import still works and is the only way onto a device today |
+| **Phase 6** — region downloads | 🔴 Built and unit-tested (310/310); **the mirror bucket does not exist** — nobody has run the upload with real credentials, so `DATA_ORIGIN` is a placeholder host and the picker has never streamed anything in a browser. Manual import still works and is the only way onto a device today |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
@@ -84,14 +84,22 @@ a phone by hand exactly as before:
 2. Save to Files on the phone.
 3. In the app: Setup → Maps and data → import each one.
 
-**Standing the mirror up** needs `web/tools/mirror/s3.mjs`, `sync-segments.mjs` and
-`cut-basemaps.mjs` written first (Phase 6's Task 5, skipped for want of credentials — see
-`docs/phase-6-progress.md`), then a VPS cron running them weekly against five environment
-variables the app itself never needs, since it has none: `S3_ENDPOINT`, `S3_REGION`,
-`S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. Once that first run publishes
-`manifest.json`, replace the placeholder in `web/src/data/origin.ts`'s `DATA_ORIGIN` with the
-bucket's real public endpoint and confirm with `curl -sI "$MANIFEST_URL" | head -1` expecting
-`HTTP/2 200`.
+**Standing the mirror up** is the next real step, and the code for it is already here:
+`web/tools/mirror/` holds `s3.mjs`, `sync-segments.mjs`, `cut-basemaps.mjs` and a `README.md`
+covering bucket layout, CORS, cron and — the part that matters on an empty bucket — the order
+the two jobs have to run in. What is missing is credentials. With them:
+
+```bash
+cd web
+export S3_ENDPOINT=... S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
+npm run mirror:basemaps -- <YYYYMMDD>   # a live protomaps build date; they expire
+npm run mirror:segments
+```
+
+Then check CORS against the live bucket (`README.md` has the exact `curl`), replace the
+placeholder in `web/src/data/origin.ts`'s `DATA_ORIGIN` with the bucket's real public endpoint,
+and confirm with `curl -sI "$MANIFEST_URL" | head -1` expecting `HTTP/2 200`. Neither script has
+ever been run, so treat the first pass as a test run and read its log.
 
 ## Environment — the parts that will waste your time
 
