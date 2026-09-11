@@ -141,10 +141,20 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   /**
    * Shows a remote archive streamed over HTTP range, for the region picker.
    *
-   * Follows `show` except in three ways: it mounts the archive by URL instead of an OPFS
-   * name, it opens on Britain rather than the archive's own centre, and it never touches
+   * Follows `show` except in four ways: it mounts the archive by URL instead of an OPFS
+   * name, it opens on Britain rather than the archive's own centre, it never touches
    * `archives` or `active` — a streamed archive is not installed, and the ride screen must
-   * never be able to mistake this backdrop for a downloaded region.
+   * never be able to mistake this backdrop for a downloaded region — and its `load` handler
+   * skips `ensureRouteLayers`. The picker draws no route, and `show()` rebuilds the map with
+   * those layers anyway when a real region is mounted, so adding the call here would be
+   * dead code, not a fix — do not "restore" it.
+   *
+   * The ~25 lines of map construction below are a near-duplicate of `show`'s. Left
+   * duplicated rather than factored out for now: nothing in this repo tests `useMapLibre`
+   * (it needs a DOM and a live MapLibre instance), and this file's failure mode is the one
+   * that cost the project a whole phase — a broken map produces no error and no failed
+   * request, it simply never draws. An untested refactor of map construction is the wrong
+   * trade today; factoring the shared construction into a helper is recorded as a follow-up.
    */
   const showRemote = useCallback(
     async (url: string) => {
