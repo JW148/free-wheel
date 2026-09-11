@@ -91,9 +91,10 @@ export default function RoutePanel() {
         )}
       </h2>
       <p className="sub">
-        BRouter's real <code>RoutingEngine</code> on WasmGC, reading imported tiles out of OPFS.
-        Each route is compared to the JVM by GPX byte length and CRC-32. Import the tiles a case
-        needs first — this never downloads anything.
+        BRouter's real <code>RoutingEngine</code> on WasmGC, reading whatever tiles are already
+        on the phone — from a region download or an import, it doesn't care which. Each route is
+        compared to the JVM by GPX byte length and CRC-32. Get the tiles a case needs onto the
+        phone first — this panel never fetches them itself.
       </p>
 
       <p className="meta">status: {status}</p>

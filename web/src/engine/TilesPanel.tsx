@@ -101,9 +101,10 @@ export default function TilesPanel() {
     <section>
       <h2>Regions and tiles</h2>
       <p className="sub">
-        Routing data comes as 5°×5° tiles named by their south-west corner. Pick a region to see
-        which you need, download them from brouter.de, then import them here — the app never
-        downloads them for you.
+        Routing data comes as 5°×5° tiles named by their south-west corner. This is the manual
+        way in, for a bucket outage or an extract the region picker's list doesn't cover — pick
+        a region to see which tiles you need, download them from brouter.de, then import them
+        here.
       </p>
 
       {error && <p className="error">{error}</p>}
