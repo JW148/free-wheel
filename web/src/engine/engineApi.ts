@@ -15,22 +15,24 @@ import {
   importTileFile,
   installedBasemaps,
   installedTiles,
+  recordTileInstalled,
   resetTileStorage,
-  BASEMAP_DIR,
   SEGMENT_DIR,
   type ImportProgress,
 } from './tileStore'
 import type { ProvisionProgress } from './opfsVfs'
-import { downloadInto, resumeDecision, type RegionProgress } from './downloads'
+import type { ByteSink, RegionProgress } from './downloads'
 import { downloadPlan } from '../data/regions'
 import {
-  basemapFileFor,
   clearPartialHash,
+  deleteRegionFiles,
+  pathForItem,
   readPartialHash,
   readRecords,
   recordAfterDownload,
   recordsAfterRemoval,
-  deleteRegionFiles,
+  runRegionDownload,
+  serializeRegionOp,
   writePartialHash,
   writeRecords,
 } from './regionStore'
@@ -90,11 +92,15 @@ interface WasmEngine {
   }
 }
 
-/** Where a plan item lands in OPFS. Shared between the download loop and the cleanup pass. */
-function pathForItem(regionId: string, item: { kind: 'basemap' | 'segment'; key: string }): string {
-  return item.kind === 'basemap'
-    ? `${BASEMAP_DIR}/${basemapFileFor(regionId)}`
-    : `${SEGMENT_DIR}/${item.key}.rd5`
+/** Adapts a real OPFS handle to the `ByteSink` shape `runRegionDownload` writes through. */
+async function openSink(path: string): Promise<ByteSink> {
+  const handle = await openHandle(path)
+  return {
+    size: () => handle.getSize(),
+    truncate: (to) => handle.truncate(to),
+    write: (chunk, at) => handle.write(chunk, { at }),
+    flush: () => handle.flush(),
+  }
 }
 
 let engine: WasmEngine | null = null
@@ -216,105 +222,76 @@ const engineApi = {
    * directory registry, and skipping it makes BRouter report that the segment directory does
    * not exist while the file sits in OPFS. It only shows up on a cold start.
    *
-   * `resumeDecision` is recomputed from the handle's actual size and the recorded partial hash
-   * immediately before every attempt — never cached across a retry. A retry is exactly a
-   * second call to this method (the caller sees the rejection and tries again), and each call
-   * starts from `readRecords()` and re-reads every handle's live size, so a previous attempt's
-   * partial or over-long file is judged fresh rather than assumed.
+   * The per-item resume/restart/skip loop lives in `regionStore.runRegionDownload`, tested there
+   * without OPFS — this is thin wiring around it plus the bookkeeping that has to happen once
+   * for the whole region: reading and writing `regions.json`, and only then clearing the
+   * partial-hash entries `runRegionDownload` deliberately leaves behind (see its doc comment).
    *
-   * A partial hash is cleared only once the *whole region* succeeds and its record is written,
-   * not as each item finishes. A multi-item region — basemap plus several segments — commits
-   * nothing to `regions.json` until every item is down, so a failure on the last segment would
-   * otherwise leave the earlier, already-correct items with no recorded hash: a retry's
-   * `downloadPlan` still lists them (the region isn't recorded as installed yet), and
-   * `resumeDecision` would see a `null` hash where it expects a match and restart them from
-   * byte zero — silently re-fetching a 90 MB basemap and a 137 MB segment that were already
-   * fine, on every retry after a late failure.
+   * The whole call is serialized through `serializeRegionOp` against every other
+   * `downloadRegion`/`removeRegion` call, and `records` is re-read immediately before
+   * `recordAfterDownload` rather than reusing the snapshot from the top of this function —
+   * belt and braces on top of the queue, not a substitute for it.
    */
   async downloadRegion(
     region: RegionEntry,
     manifest: DataManifest,
     onProgress?: (progress: RegionProgress) => void,
   ): Promise<InstalledRegion[]> {
-    const records = await readRecords()
-    const plan = downloadPlan(region, manifest, records)
-    let doneBytes = 0
+    return serializeRegionOp(async () => {
+      const records = await readRecords()
+      const plan = downloadPlan(region, manifest, records)
 
-    for (const item of plan.items) {
-      const path = pathForItem(region.id, item)
+      await runRegionDownload(
+        region.id,
+        plan.items,
+        plan.bytes,
+        {
+          openSink,
+          refreshSize,
+          readPartialHash,
+          writePartialHash,
+          recordSegmentWritten: (name, bytes) => recordTileInstalled(name, bytes, Date.now()),
+        },
+        onProgress,
+      )
 
-      try {
-        const handle = await openHandle(path)
-        const recordedHash = await readPartialHash(path)
-        const decision = resumeDecision(
-          { bytes: handle.getSize(), hash: recordedHash },
-          { bytes: item.bytes, hash: item.hash },
-        )
+      const fresh = await readRecords()
+      const updated = recordAfterDownload(fresh, region, manifest, Date.now())
+      await writeRecords(updated)
 
-        if (decision.action !== 'done') {
-          await writePartialHash(path, item.hash)
-          const sink = {
-            size: () => handle.getSize(),
-            truncate: (to: number) => handle.truncate(to),
-            write: (chunk: Uint8Array, at: number) => {
-              handle.write(chunk, { at })
-            },
-            flush: () => handle.flush(),
-          }
-          await downloadInto(sink, item.url, item.bytes, {
-            from: decision.action === 'resume' ? decision.at : 0,
-            onProgress: (received) =>
-              onProgress?.({
-                key: item.key,
-                kind: item.kind,
-                received,
-                total: item.bytes,
-                overallReceived: doneBytes + received,
-                overallTotal: plan.bytes,
-                state: 'downloading',
-              }),
-          })
-          refreshSize(path)
-        }
-
-        doneBytes += item.bytes
-        onProgress?.({
-          key: item.key, kind: item.kind, received: item.bytes, total: item.bytes,
-          overallReceived: doneBytes, overallTotal: plan.bytes, state: 'complete',
-        })
-      } catch (error) {
-        onProgress?.({
-          key: item.key, kind: item.kind, received: 0, total: item.bytes,
-          overallReceived: doneBytes, overallTotal: plan.bytes, state: 'failed',
-        })
-        throw error
+      // Only now, with the region durably recorded as installed, are the partial-hash entries
+      // safe to forget — see `runRegionDownload`'s doc comment.
+      for (const item of plan.items) {
+        await clearPartialHash(pathForItem(region.id, item))
       }
-    }
 
-    const updated = recordAfterDownload(records, region, manifest, Date.now())
-    await writeRecords(updated)
-
-    // Only now, with the region durably recorded as installed, are the partial-hash entries
-    // safe to forget — see the doc comment above.
-    for (const item of plan.items) {
-      await clearPartialHash(pathForItem(region.id, item))
-    }
-
-    // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
-    await installedTiles()
-    return updated
+      // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
+      await installedTiles()
+      return updated
+    })
   },
 
   async installedRegions(): Promise<InstalledRegion[]> {
     return readRecords()
   },
 
+  /**
+   * Removes a region: writes the record first, deletes files second.
+   *
+   * That order matters. `removeFile` swallows `NotFoundError` but not
+   * `NoModificationAllowedError` — a real scenario when a second Safari tab holds a lock — so a
+   * partial failure has to leave orphaned bytes with no record (self-healed by the next
+   * download) rather than a record for a region whose basemap is already gone and which
+   * `downloadPlan` would then refuse to ever re-fetch.
+   */
   async removeRegion(id: string): Promise<InstalledRegion[]> {
-    const records = await readRecords()
-    const { records: remaining, deleteSegments, deleteBasemap } = recordsAfterRemoval(records, id)
-    await deleteRegionFiles(deleteSegments, deleteBasemap)
-    await writeRecords(remaining)
-    return remaining
+    return serializeRegionOp(async () => {
+      const records = await readRecords()
+      const { records: remaining, deleteSegments, deleteBasemap } = recordsAfterRemoval(records, id)
+      await writeRecords(remaining)
+      await deleteRegionFiles(deleteSegments, deleteBasemap)
+      return remaining
+    })
   },
 
   /**

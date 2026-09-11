@@ -298,6 +298,35 @@ export function knownSize(path: string): number {
 }
 
 /**
+ * The size of a file that might not be open yet, without opening — and thereby registering —
+ * it.
+ *
+ * `listDirectoryEntries` deliberately avoids `getFile()` because its behaviour is unreliable on
+ * a file that already holds an open sync access handle elsewhere — but that caveat only
+ * applies to a path already in the registry, and this checks the registry first and answers
+ * from it directly in that case. For everything else — typically an orphan left by a session
+ * that crashed or was killed mid-download, discovered fresh after a restart with nothing yet
+ * open on it — a `getFile()` peek is safe, and lets a caller decide whether a file is worth
+ * opening (and thereby exposing to the VFS bridge as present) at all before doing so. Returns
+ * -1 if the file cannot be sized, including "does not exist".
+ */
+export async function peekFileSize(path: string): Promise<number> {
+  const key = normalise(path)
+  const cached = files.get(key)
+  if (cached) return cached.size
+
+  try {
+    const dir = await directoryFor(key)
+    const name = key.slice(key.lastIndexOf('/') + 1)
+    const fileHandle = await dir.getFileHandle(name)
+    const file = await fileHandle.getFile()
+    return file.size
+  } catch {
+    return -1
+  }
+}
+
+/**
  * Ensures every asset is present in OPFS, downloading what is missing, and leaves a sync
  * access handle open for each.
  *

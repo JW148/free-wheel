@@ -1,4 +1,5 @@
 import { listDirectoryEntries, openHandle, refreshSize, removeFile } from './opfsVfs'
+import { isTruncated } from './partials'
 
 /**
  * Tile storage — **import only**.
@@ -208,6 +209,20 @@ export async function deleteTile(tile: string): Promise<void> {
 }
 
 /**
+ * Records that a segment now has fresh bytes on disk, however they got there.
+ *
+ * Import and download both count. `installedTiles()` reports `importedAt: null` for a tile
+ * this manifest doesn't know about, and a region download deserves the same "how old is this"
+ * surfacing an import gets — the whole point of tracking age at all is that segments go stale,
+ * and hiding a downloaded one's age would violate the rule the imported ones are held to.
+ */
+export async function recordTileInstalled(tile: string, bytes: number, at: number): Promise<void> {
+  const manifest = await readManifest()
+  manifest[tile] = { bytes, importedAt: at }
+  await writeManifest(manifest)
+}
+
+/**
  * Tiles present in OPFS, newest import first.
  *
  * Driven by what is **actually on disk**, with the manifest consulted only for import dates.
@@ -225,7 +240,14 @@ export async function installedTiles(): Promise<InstalledTile[]> {
     const match = /^([EW]\d{1,3}_[NS]\d{1,2})\.rd5$/.exec(name)
     if (!match) continue // .imported.json and anything else that is not a tile
     const tile = match[1]
-    const handle = await openHandle(`${SEGMENT_DIR}/${name}`)
+    const path = `${SEGMENT_DIR}/${name}`
+
+    // An interrupted download leaves a file here short of what it was ever meant to be.
+    // Skipping it — never opening it, so it never registers with the VFS bridge — is what
+    // keeps BRouter from seeing a present-but-corrupt segment instead of an honest absence.
+    if (await isTruncated(path)) continue
+
+    const handle = await openHandle(path)
     tiles.push({ tile, bytes: handle.getSize(), importedAt: manifest[tile]?.importedAt ?? null })
   }
 
