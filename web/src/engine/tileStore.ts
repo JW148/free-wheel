@@ -2,24 +2,24 @@ import { listDirectoryEntries, openHandle, refreshSize, removeFile } from './opf
 import { clearDownloading, isTruncated } from './partials'
 
 /**
- * Tile storage — **import only**.
+ * Tile storage — records of what has landed in OPFS, for both ways a tile gets there.
  *
- * The app deliberately does not download routing data. The user fetches `.rd5` segments from
- * brouter.de themselves and imports them here. That keeps the app free of any tile-hosting
- * dependency, and free of the CORS problem entirely: brouter.de serves no
- * `Access-Control-Allow-Origin` header, so a browser could never fetch from it directly, but a
- * file the user already has involves no cross-origin request at all.
+ * The primary path is `regionStore.ts`: a rider picks a region and the mirror streams its
+ * basemap and segments down, built on the primitives this file owns (`SEGMENT_DIR`,
+ * `BASEMAP_DIR`, {@link deleteTile}, {@link recordTileInstalled}). The app never fetches from
+ * brouter.de directly, in either path — it serves no `Access-Control-Allow-Origin` header, so a
+ * browser could not anyway. The manual route below stays as an escape hatch: the user fetches a
+ * `.rd5` or `.pmtiles` themselves and imports it, for a mirror outage or a custom extract the
+ * region list does not cover.
  *
- * ## The trade-off, stated plainly
+ * ## Staleness
  *
- * brouter.de rebuilds segments **weekly** from current OpenStreetMap data. Imported files are
- * a snapshot and **do not update themselves** — they will drift out of date until the user
- * re-imports. Roads that changed, were added, or were removed since the import will not be
- * reflected in routing.
- *
- * The app cannot fix this, but it can refuse to hide it: {@link installedTiles} reports when
- * each tile was imported, and the tile catalogue records when brouter.de last rebuilt it, so
- * the UI can show the gap rather than leaving the user to guess.
+ * Everything the mirror publishes is content-addressed: an object's name carries a hash of its
+ * bytes, so a client is offered an update only when the bytes actually differ, not merely when
+ * brouter.de last rebuilt them (which is weekly, regardless of whether anything changed). A
+ * manually imported file carries no such hash and cannot be compared this way — it is a
+ * snapshot that will not update itself, and {@link installedTiles} reports when it was imported
+ * so the UI can show the gap rather than leaving the user to guess.
  */
 
 /** Where tiles live inside OPFS. Must match `Router.SEGMENT_DIR` on the Java side. */

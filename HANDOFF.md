@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-07-26, updated 2026-09-06. Read `CLAUDE.md` first for the rules of the repo, then
+Written 2026-07-26, updated 2026-09-11. Read `CLAUDE.md` first for the rules of the repo, then
 this for where the work actually stands.
 
 `brouter-link/` is correctly excluded from git and its own checkout is clean; verify with
@@ -16,11 +16,12 @@ this for where the work actually stands.
 | **Phase 3** — React/MapLibre PWA | ✅ Basemap renders with labels, offline |
 | **Phase 4** — the ride UI | 🟡 **Plan and follow works end to end**; verified on desktop and booted on the iOS Simulator. **Ridden 2026-09-06** |
 | **Phase 5** — basemap legibility | 🟡 Land cover, water and rail restyled after the ride. Tests green, not yet ridden |
+| **Phase 6** — region downloads | 🔴 Built and unit-tested (287/287); **the mirror bucket does not exist** — nobody has run the upload with real credentials, so `DATA_ORIGIN` is a placeholder host and the picker has never streamed anything in a browser. Manual import still works and is the only way onto a device today |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
-`docs/phase-5-progress.md`. Each
+`docs/phase-5-progress.md`, `docs/phase-6-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -74,12 +75,23 @@ separate local checkout, and a static host's build machine has none of those. On
 `-PwasmDebug` sidecars (`.wasm.map`, `.teadbg`, the deobfuscator, `wasm-gc/src/`) stay
 ignored. Regenerate with Gradle and commit the result; do not hand-edit.
 
-**The data files are still not deployed, and must not be.** `.rd5` and `.pmtiles` go on the
-phone by hand — see *Tiles are import-only* below. Getting them there:
+**Region data is meant to come from the mirror, not from this Mac** — see *Routing data comes
+from our mirror* below — but the bucket it streams from does not exist yet. Until it does, or
+whenever a mirror outage or a custom extract calls for the escape hatch anyway, get files onto
+a phone by hand exactly as before:
 
 1. AirDrop `data/segments4/W5_N55.rd5` and `data/basemap/edinburgh.pmtiles` from this Mac.
 2. Save to Files on the phone.
 3. In the app: Setup → Maps and data → import each one.
+
+**Standing the mirror up** needs `web/tools/mirror/s3.mjs`, `sync-segments.mjs` and
+`cut-basemaps.mjs` written first (Phase 6's Task 5, skipped for want of credentials — see
+`docs/phase-6-progress.md`), then a VPS cron running them weekly against five environment
+variables the app itself never needs, since it has none: `S3_ENDPOINT`, `S3_REGION`,
+`S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. Once that first run publishes
+`manifest.json`, replace the placeholder in `web/src/data/origin.ts`'s `DATA_ORIGIN` with the
+bucket's real public endpoint and confirm with `curl -sI "$MANIFEST_URL" | head -1` expecting
+`HTTP/2 200`.
 
 ## Environment — the parts that will waste your time
 
@@ -164,10 +176,12 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
    it applied**, so an upstream change fails the build rather than silently reverting. Never a
    Gradle composite build — that writes into the linked checkout.
 
-2. **Tiles are import-only.** The app has no downloader, by the user's explicit decision. Do
-   not add one; `brouter.de` sends no CORS header anyway, so a browser could not fetch from it.
-   A working `Range`/`If-Range` resumable downloader was built and then deleted — it is in the
-   git history of this working tree only if you commit first.
+2. **The app downloads from our mirror, never from brouter.de.** Phase 6 replaced import-only
+   with a region picker that streams from a bucket a weekly VPS cron keeps in sync — the
+   `Range`/`If-Range` resumable downloader mentioned in earlier revisions of this document
+   was not thrown away, it is `web/src/engine/downloads.ts`, now load-bearing. Manual `.rd5`/
+   `.pmtiles` import stays as the escape hatch. `brouter.de` still gets no direct traffic from
+   the app; it sends no CORS header anyway, so a browser could not fetch from it regardless.
 
 3. **One engine, one handle registry.** `sharedEngine()` is a singleton because OPFS permits
    exactly one open sync access handle per file. Two `EngineClient`s means two Workers means a
