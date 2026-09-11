@@ -81,10 +81,13 @@ async function clearPartialHash(path: string): Promise<void> {
  * mechanism have all been one marker outliving the other or outliving the write itself. Setting
  * or clearing them separately is the mistake; there is no call site that wants only one.
  *
- * The durable half goes first, and the clearing order in {@link clearDownloading} is the mirror
- * image, so that whatever a crash in between leaves behind errs the same way: a durable marker
- * without its in-memory twin hides a genuinely-short file until it is completed, replaced or
- * deleted, while the reverse would let a truncated file answer as present after a restart.
+ * The durable half goes first here, and first in {@link clearDownloading} too — the same order
+ * both ways, not a mirror image. The reason is that the durable half is the one that can fail:
+ * it is an OPFS write, while the in-memory half cannot throw. Moving the fallible half first
+ * and the infallible half only once it has committed is what keeps the two from disagreeing.
+ * A throw part-way through either function leaves both markers in their *previous* state,
+ * which is consistent; and a crash leaves only whatever the durable store holds, since the
+ * in-memory half does not survive the Worker either way.
  *
  * **Call only once the bytes are actually about to be disturbed** — see
  * `regionStore.runRegionDownload`. A download that fails before its first write must leave no

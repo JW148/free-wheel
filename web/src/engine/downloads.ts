@@ -23,21 +23,20 @@ export interface ByteSink {
   flush(): void
 }
 
+/**
+ * A sink, or a way to get one at the last possible moment.
+ *
+ * The deferred form exists because acquiring the sink is not free of consequences: in this app
+ * it opens an OPFS handle, which creates the file if it is absent and registers it with the VFS
+ * bridge — and registration alone is what makes a path visible to BRouter. A download that
+ * fails before its first byte must leave the filesystem exactly as it found it, so a caller
+ * that cares passes a function and {@link downloadInto} calls it only once bytes are certain.
+ */
+export type ByteSinkSource = ByteSink | (() => Promise<ByteSink>)
+
 export interface DownloadOptions {
   from?: number
   fetchImpl?: typeof fetch
-  /**
-   * Awaited once, after the response is in hand and immediately before the first byte of the
-   * sink is touched — the truncate as much as the writes, since a truncate on its own already
-   * destroys whatever was there.
-   *
-   * It exists so a caller can record "this file is now being disturbed" durably *before* it is,
-   * and — just as important — not record it at all when the download never gets this far. A
-   * connection that drops before the first response leaves the file exactly as it was, which
-   * may be a complete, valid older segment, and marking that file as pending would hide a file
-   * nobody has touched. See `regionStore.runRegionDownload`.
-   */
-  onWillWrite?: () => void | Promise<void>
   onProgress?: (received: number, total: number) => void
 }
 
@@ -80,7 +79,7 @@ function contentRangeStart(header: string | null): number | null {
 }
 
 export async function downloadInto(
-  sink: ByteSink,
+  sink: ByteSinkSource,
   url: string,
   expectedBytes: number,
   options: DownloadOptions = {},
@@ -107,23 +106,33 @@ export async function downloadInto(
   const trustedResume = response.status === 206 && contentRangeStart(response.headers.get('Content-Range')) === from
   let offset = trustedResume ? from : 0
 
-  // Last moment at which this file is still untouched, and the first at which it is certain to
-  // be disturbed. Awaited, so a caller's durable record of that lands before the truncate does.
-  await options.onWillWrite?.()
-
-  if (offset === 0) sink.truncate(0)
+  // The last moment at which the target is still untouched, and the first at which bytes are
+  // certain to land on it. A deferred sink is acquired here and nowhere earlier, so a caller
+  // whose acquisition has side effects — opening an OPFS handle creates the file and makes it
+  // visible to the engine — pays them only when the download has actually got this far.
+  let target: ByteSink
+  try {
+    target = typeof sink === 'function' ? await sink() : sink
+    if (offset === 0) target.truncate(0)
+  } catch (error) {
+    // Nobody is going to read this body now. Left un-cancelled it holds the connection until
+    // GC gets around to it, which on a phone means a 137 MB transfer still running in the
+    // background after the app has reported the download failed.
+    await response.body.cancel().catch(() => {})
+    throw error
+  }
 
   const reader = response.body.getReader()
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      sink.write(value, offset)
+      target.write(value, offset)
       offset += value.byteLength
       options.onProgress?.(offset, expectedBytes)
     }
   } finally {
-    sink.flush()
+    target.flush()
   }
 
   if (offset !== expectedBytes) {

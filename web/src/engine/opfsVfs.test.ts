@@ -151,9 +151,19 @@ describe('the pending marker, as BRouter sees it', () => {
     expect(bridge().exists(TILE)).toBe(true)
   })
 
-  it('does not mark a path nothing has opened', async () => {
+  it('can be set before the file is opened, and still hides it once it is', async () => {
+    // The window this closes: opening is what creates and registers a path, and registration
+    // alone makes it visible to the bridge. A marker that could only be set on an already-open
+    // file would leave the file exposed for as long as it took to set — which is where a
+    // truncated orphan, reopened for a retry whose fetch then failed, stayed visible.
     markPending(TILE, 200)
     await writeFile(TILE, 100)
+
+    expect(bridge().exists(TILE)).toBe(false)
+    expect(bridge().isFile(TILE)).toBe(false)
+    expect(bridge().size(TILE)).toBe(-1)
+
+    clearPending(TILE)
     expect(bridge().exists(TILE)).toBe(true)
   })
 })

@@ -9,6 +9,7 @@ import {
   completeRegionDownload,
   deleteRegionFiles,
   markDownloading,
+  opfsDownloadDeps,
   pathForItem,
   readPartialHash,
   readRecords,
@@ -18,8 +19,8 @@ import {
   serializeRegionOp,
   type DownloadLoopDeps,
 } from './regionStore'
-import { BASEMAP_DIR, SEGMENT_DIR } from './tileStore'
-import { closeOpfs } from './opfsVfs'
+import { BASEMAP_DIR, installedTiles, SEGMENT_DIR } from './tileStore'
+import { clearPending, closeOpfs, installVfsBridge } from './opfsVfs'
 
 /**
  * Most of this file needs no storage — the record functions are pure and the download loop runs
@@ -181,9 +182,13 @@ function fakeDownloadEnv() {
 
   const deps: DownloadLoopDeps = {
     openSink: async (path) => {
+      log.push(`open:${path}`)
       if (!sinks.has(path)) sinks.set(path, fakeSink(new Uint8Array(0), log, path))
       return sinks.get(path)!
     },
+    // Sizes a file without the side effects of opening one — so an unopened path is -1, the
+    // same answer `opfsVfs.peekFileSize` gives for a file that is not there.
+    peekSize: async (path) => sinks.get(path)?.size() ?? -1,
     refreshSize: (path) => {
       refreshSizeCalls.push(path)
     },
@@ -311,6 +316,12 @@ describe('runRegionDownload', () => {
     expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`truncate:${path}`))
     expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`write:${path}`))
 
+    // And the open is deferred to the same moment, after the mark: opening creates and
+    // registers the file, so a path opened before it is marked is a path BRouter can see at
+    // whatever length it happens to have.
+    expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`open:${path}`))
+    expect(log.indexOf(`open:${path}`)).toBeLessThan(log.indexOf(`truncate:${path}`))
+
     // Both halves, from one call: the durable entry a restart reads, and the registry marker
     // this session reads. Neither is allowed to be set without the other.
     expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 6 })
@@ -324,7 +335,7 @@ describe('runRegionDownload', () => {
     // session, so it would keep hiding it until the segment was re-imported or deleted.
     const item: DownloadItem = { kind: 'segment', key: 'W5_N50', url: 'https://example/w.rd5', bytes: 10, hash: 'hw' }
     const path = pathForItem('region', item)
-    const { deps, partials, pending, refreshSizeCalls, sinks } = fakeDownloadEnv()
+    const { deps, log, partials, pending, refreshSizeCalls, sinks } = fakeDownloadEnv()
     sinks.set(path, fakeSink(text('a complete older segment')))
 
     const fetchImpl = vi.fn(async () => {
@@ -337,6 +348,9 @@ describe('runRegionDownload', () => {
 
     expect(partials.has(path)).toBe(false)
     expect(pending.has(path)).toBe(false)
+    // Not opened either — see the real-registry tests below for why that is the half that
+    // matters, and what it costs when only the marking is deferred.
+    expect(log).not.toContain(`open:${path}`)
     // Nothing was written, so there is nothing stale to re-measure either.
     expect(refreshSizeCalls).not.toContain(path)
     expect(decode(sinks.get(path)!)).toBe('a complete older segment')
@@ -376,6 +390,105 @@ describe('runRegionDownload', () => {
     // different segment would otherwise keep answering with that old size, letting a read run
     // past what the truncated-and-partly-rewritten file actually contains.
     expect(refreshSizeCalls).toContain(path)
+  })
+})
+
+/**
+ * The same loop, wired to the deps the Worker actually uses, over `fakeOpfs`.
+ *
+ * `fakeDownloadEnv` cannot see this class of bug: its `openSink` hands back a plain object with
+ * no registry behind it, so a test can assert "nothing was marked" while the real `openSink`
+ * has already created the file and made it visible to `freeWheelVfs`. The question these tests
+ * ask is the only one that matters — after a failed attempt, what can BRouter see?
+ */
+describe('runRegionDownload, against the real registry', () => {
+  const item: DownloadItem = {
+    kind: 'segment', key: 'W5_N50', url: 'https://example/W5_N50.rd5', bytes: 143654912, hash: 'bbbb2222',
+  }
+  const path = pathForItem('wessex', item)
+
+  const failingFetch = () =>
+    vi.fn(async () => {
+      throw new Error('network down')
+    }) as unknown as typeof fetch
+
+  function bridge() {
+    installVfsBridge()
+    return (globalThis as unknown as { freeWheelVfs: { exists(p: string): boolean; size(p: string): number } })
+      .freeWheelVfs
+  }
+
+  it('leaves a truncated orphan hidden when the retry fails before the first byte', async () => {
+    // Last session died mid-segment: the file is short and durably marked.
+    opfs.write(path, 500)
+    await markDownloading(path, { hash: 'bbbb2222', bytes: item.bytes })
+    // This is a cold start, so only the durable half survives — `pendingTargets` is in-memory.
+    clearPending(path)
+
+    expect(bridge().exists(path)).toBe(false)
+    expect(await installedTiles()).toEqual([])
+
+    await expect(
+      runRegionDownload('wessex', [item], item.bytes, { ...opfsDownloadDeps, fetchImpl: failingFetch() }),
+    ).rejects.toThrow('network down')
+
+    // Still hidden. Opening this file up front to ask its size would have registered it at 500
+    // bytes with nothing marking it, and BRouter would read a truncated .rd5 as corrupt data
+    // rather than as an honest "no data for this area" — for the rest of the session.
+    expect(bridge().exists(path)).toBe(false)
+    expect(bridge().size(path)).toBe(-1)
+    expect(await installedTiles()).toEqual([])
+  })
+
+  it('creates nothing when a first download fails before the first byte', async () => {
+    await expect(
+      runRegionDownload('wessex', [item], item.bytes, { ...opfsDownloadDeps, fetchImpl: failingFetch() }),
+    ).rejects.toThrow('network down')
+
+    // No 0-byte file. One would have no durable marker — `isTruncated` is false for a path
+    // nothing is tracking — so `installedTiles()` would list it, at `bytes: 0`, on this and
+    // every later cold start.
+    expect(opfs.read(path)).toBeNull()
+    expect(bridge().exists(path)).toBe(false)
+    expect(await installedTiles()).toEqual([])
+  })
+
+  it('opens, writes and unhides the file when the bytes do arrive', async () => {
+    // The positive control: deferring the open must not mean never opening it.
+    const small: DownloadItem = { ...item, bytes: 6, hash: 'hs' }
+    const fetchImpl = vi.fn(async () => new Response(text('abcdef'), { status: 200 }))
+
+    await runRegionDownload('wessex', [small], 6, {
+      ...opfsDownloadDeps,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    expect(bridge().exists(path)).toBe(true)
+    expect(bridge().size(path)).toBe(6)
+    expect(new TextDecoder().decode(opfs.read(path)!)).toBe('abcdef')
+    expect((await installedTiles()).map((t) => t.tile)).toEqual(['W5_N50'])
+  })
+
+  it('resumes from what is on disk without having opened it to find out', async () => {
+    // `peekSize` is not just a way to avoid opening — it has to give the same answer
+    // `sink.size()` used to, or a resume restarts from zero and re-fetches 137 MB.
+    const small: DownloadItem = { ...item, bytes: 10, hash: 'hs' }
+    opfs.write(path, new TextEncoder().encode('efgh'))
+    await markDownloading(path, { hash: 'hs', bytes: 10 })
+    clearPending(path)
+
+    const resumed = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({ Range: 'bytes=4-' })
+      return new Response(text('ijklmn'), { status: 206, headers: { 'Content-Range': 'bytes 4-9/10' } })
+    })
+
+    await runRegionDownload('wessex', [small], 10, {
+      ...opfsDownloadDeps,
+      fetchImpl: resumed as unknown as typeof fetch,
+    })
+
+    expect(resumed).toHaveBeenCalledTimes(1)
+    expect(new TextDecoder().decode(opfs.read(path)!)).toBe('efghijklmn')
   })
 })
 

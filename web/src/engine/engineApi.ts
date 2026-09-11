@@ -7,7 +7,6 @@ import {
   provisionOpfs,
   provisionedFiles,
   readRangeFromOpfs,
-  refreshSize,
 } from './opfsVfs'
 import {
   deleteTile,
@@ -15,19 +14,17 @@ import {
   importTileFile,
   installedBasemaps,
   installedTiles,
-  recordTileInstalled,
   resetTileStorage,
   SEGMENT_DIR,
   type ImportProgress,
 } from './tileStore'
 import type { ProvisionProgress } from './opfsVfs'
-import type { ByteSink, RegionProgress } from './downloads'
+import type { RegionProgress } from './downloads'
 import { downloadPlan } from '../data/regions'
 import {
   completeRegionDownload,
   deleteRegionFiles,
-  markDownloading,
-  readPartialHash,
+  opfsDownloadDeps,
   readRecords,
   recordsAfterRemoval,
   runRegionDownload,
@@ -87,17 +84,6 @@ interface WasmEngine {
     probeRead(path: string): string
     probeList(path: string): string
     probeDepth(depth: number): number
-  }
-}
-
-/** Adapts a real OPFS handle to the `ByteSink` shape `runRegionDownload` writes through. */
-async function openSink(path: string): Promise<ByteSink> {
-  const handle = await openHandle(path)
-  return {
-    size: () => handle.getSize(),
-    truncate: (to) => handle.truncate(to),
-    write: (chunk, at) => handle.write(chunk, { at }),
-    flush: () => handle.flush(),
   }
 }
 
@@ -237,19 +223,7 @@ const engineApi = {
       const records = await readRecords()
       const plan = downloadPlan(region, manifest, records)
 
-      await runRegionDownload(
-        region.id,
-        plan.items,
-        plan.bytes,
-        {
-          openSink,
-          refreshSize,
-          markDownloading,
-          readPartialHash,
-          recordSegmentWritten: (name, bytes) => recordTileInstalled(name, bytes, Date.now()),
-        },
-        onProgress,
-      )
+      await runRegionDownload(region.id, plan.items, plan.bytes, opfsDownloadDeps, onProgress)
 
       // Records the region, and only then forgets its download markers — see
       // `completeRegionDownload`, and `runRegionDownload`'s doc comment for why not sooner.

@@ -12,9 +12,9 @@
 import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 import type { DownloadItem } from '../data/regions'
 import { downloadInto, resumeDecision, type ByteSink, type RegionProgress } from './downloads'
-import { openHandle, refreshSize, removeFile } from './opfsVfs'
-import { BASEMAP_DIR, deleteTile, SEGMENT_DIR } from './tileStore'
-import { clearDownloading, type PartialTarget } from './partials'
+import { openHandle, peekFileSize, refreshSize, removeFile } from './opfsVfs'
+import { BASEMAP_DIR, deleteTile, recordTileInstalled, SEGMENT_DIR } from './tileStore'
+import { clearDownloading, markDownloading, readPartialHash, type PartialTarget } from './partials'
 
 // Re-exported so a caller assembling `DownloadLoopDeps` has one import for the loop and the
 // store it reads. `tileStore.ts` imports straight from `./partials` instead, which is the whole
@@ -164,16 +164,31 @@ export async function deleteRegionFiles(deleteSegments: string[], deleteBasemap:
  * resume/restart/skip dispatch testable with a fake sink and fake fetch instead of real OPFS.
  */
 export interface DownloadLoopDeps {
-  /** Opens (creating if absent) the sink a path's bytes get written into. */
+  /**
+   * Opens (creating if absent) the sink a path's bytes get written into.
+   *
+   * Called only from inside the download's sink source, once bytes are certain — never to ask a
+   * file how big it is. Opening creates the file and registers it with the VFS bridge, and
+   * registration is what makes a path visible to BRouter; a plan item that is skipped, or whose
+   * fetch fails before the first byte, must leave the filesystem as it found it. Use
+   * {@link DownloadLoopDeps.peekSize} for the size.
+   */
   openSink(path: string): Promise<ByteSink>
+  /**
+   * The size of a file that may not exist, without creating or registering it — `-1` when it is
+   * not there. `opfsVfs.peekFileSize`.
+   */
+  peekSize(path: string): Promise<number>
   /** Re-reads a file's size into whatever registry the real implementation keeps. */
   refreshSize(path: string): void
   /**
    * Records that `path` is being written toward `target` — durably and in the live registry,
    * so a file left short is hidden from BRouter either way. See `partials.markDownloading`.
    *
-   * Called from inside `downloadInto`'s `onWillWrite` hook, never before it: until a response
-   * is in hand, the file on disk is untouched and may be a complete, valid older segment.
+   * Called from inside the download's sink source, never before it: until a response is in
+   * hand, the file on disk is untouched and may be a complete, valid older segment. Marking
+   * runs *before* `openSink` there, so no window exists in which the file is registered and
+   * unmarked.
    */
   markDownloading(path: string, target: PartialTarget): Promise<void>
   readPartialHash(path: string): Promise<PartialTarget | null>
@@ -184,6 +199,33 @@ export interface DownloadLoopDeps {
    */
   recordSegmentWritten(name: string, bytes: number): Promise<void>
   fetchImpl?: typeof fetch
+}
+
+/**
+ * The real OPFS and network surface, in one object.
+ *
+ * Lives here rather than inline in `engineApi.ts` so that what a test drives is the same object
+ * the Worker uses, down to the `openSink` adapter. `engineApi.ts` cannot be imported under
+ * vitest — it calls `Comlink.expose()` at module scope — so anything assembled there is wiring
+ * no test can reach, and the wiring is where the last two bugs actually lived.
+ *
+ * A test overrides only `fetchImpl`, and runs the rest against `fakeOpfs.ts`.
+ */
+export const opfsDownloadDeps: DownloadLoopDeps = {
+  async openSink(path: string): Promise<ByteSink> {
+    const handle = await openHandle(path)
+    return {
+      size: () => handle.getSize(),
+      truncate: (to) => handle.truncate(to),
+      write: (chunk, at) => handle.write(chunk, { at }),
+      flush: () => handle.flush(),
+    }
+  },
+  peekSize: peekFileSize,
+  refreshSize,
+  markDownloading,
+  readPartialHash,
+  recordSegmentWritten: (name, bytes) => recordTileInstalled(name, bytes, Date.now()),
 }
 
 /**
@@ -200,17 +242,29 @@ export interface DownloadLoopDeps {
  * call starts fresh, so a previous attempt's partial or over-long file is judged on what is
  * actually there rather than assumed.
  *
- * ## When an item is marked, and when it is not
+ * ## Nothing happens to a file until its bytes are certain
  *
- * Marking happens inside `downloadInto`'s `onWillWrite` hook — after the response is in hand,
- * immediately before the truncate or first write. Not before the fetch, which is where it used
- * to be: a download that fails before a single byte lands (an instant network drop, a 404, a
- * server that refuses the range) leaves the file on disk exactly as it was, and that file may be
- * a complete, perfectly good older segment the rider has been routing on for weeks. Marking it
- * would hide it — from BRouter, which would then honestly report no data for an area it has
- * data for, and from `installedTiles()`, which would stop listing it. A file nobody has touched
- * must never be hidden. `start` and `resume` alike disturb the file once bytes flow, so both are
- * marked at that same moment; `done` never touches it and never marks.
+ * Marking *and opening* both happen inside the sink source `downloadInto` calls once it has a
+ * response in hand, immediately before the truncate or first write. Neither happens before the
+ * fetch, which is where they used to be:
+ *
+ * - **Marking** a file an attempt never reached hides one nobody has touched. It may be a
+ *   complete, perfectly good older segment the rider has routed on for weeks, and BRouter would
+ *   then report no data for an area it has data for.
+ * - **Opening** it is just as consequential, and less obvious. `openSink` creates the file if it
+ *   is absent and registers it with the VFS bridge, and registration alone is what makes a path
+ *   visible to BRouter. Opening up front — which is what the loop did while only the marking was
+ *   deferred — un-hid a truncated orphan the moment a retry began, at its short size and with no
+ *   marker, and left it that way for the session if the fetch then failed. On a first download
+ *   it left a 0-byte file that `installedTiles()` happily listed on every later cold start,
+ *   because a path with no durable entry is not truncated as far as `isTruncated` is concerned.
+ *
+ * So the size `resumeDecision` needs comes from `deps.peekSize`, which neither creates nor
+ * registers, and the order inside the source is mark, then open: `markPending` is keyed by path
+ * rather than held on the handle precisely so it can run first.
+ *
+ * `start` and `resume` alike disturb the file once bytes flow, so both mark; `done` touches
+ * nothing, opens nothing, and marks nothing.
  *
  * A marker is deliberately left in place after an item completes, not cleared here:
  * clearing is the caller's job, done only once the whole region is durably recorded as
@@ -243,36 +297,48 @@ export async function runRegionDownload(
     let touched = false
 
     try {
-      const sink = await deps.openSink(path)
       const recorded = await deps.readPartialHash(path)
+      // `peekSize` answers -1 for a file that is not there; to `resumeDecision` that is zero
+      // bytes. Passing the -1 through would read as a resume offset of -1. Defensive rather
+      // than load-bearing today — `downloadInto` sends no Range header for a non-positive
+      // `from`, so the attempt would still restart correctly — which is exactly why the
+      // normalisation belongs here, where the contract is, rather than being relied on there.
+      const onDisk = Math.max(0, await deps.peekSize(path))
       const decision = resumeDecision(
-        { bytes: sink.size(), hash: recorded?.hash ?? null },
+        { bytes: onDisk, hash: recorded?.hash ?? null },
         { bytes: item.bytes, hash: item.hash },
       )
 
       if (decision.action !== 'done') {
-        await downloadInto(sink, item.url, item.bytes, {
-          from: decision.action === 'resume' ? decision.at : 0,
-          fetchImpl: deps.fetchImpl,
+        await downloadInto(
           // Called once the response is in hand and the file is certain to be disturbed, and
-          // never if the attempt dies before that. See the doc comment above.
-          onWillWrite: async () => {
+          // never if the attempt dies before that. See the doc comment above. Marking precedes
+          // opening so the file is never registered — and so never visible — while unmarked.
+          async () => {
             await deps.markDownloading(path, { hash: item.hash, bytes: item.bytes })
+            const sink = await deps.openSink(path)
             touched = true
+            return sink
           },
-          onProgress: (received) => {
-            lastReceived = received
-            onProgress?.({
-              key: item.key,
-              kind: item.kind,
-              received,
-              total: item.bytes,
-              overallReceived: doneBytes + received,
-              overallTotal: totalBytes,
-              state: 'downloading',
-            })
+          item.url,
+          item.bytes,
+          {
+            from: decision.action === 'resume' ? decision.at : 0,
+            fetchImpl: deps.fetchImpl,
+            onProgress: (received) => {
+              lastReceived = received
+              onProgress?.({
+                key: item.key,
+                kind: item.kind,
+                received,
+                total: item.bytes,
+                overallReceived: doneBytes + received,
+                overallTotal: totalBytes,
+                state: 'downloading',
+              })
+            },
           },
-        })
+        )
         deps.refreshSize(path)
         if (item.kind === 'segment') await deps.recordSegmentWritten(item.key, item.bytes)
       }

@@ -19,6 +19,12 @@
  * does on a device. What it does not model: quota, eviction, cross-tab lock timing, or
  * `getFile()`'s behaviour on a file another context has locked — {@link FakeOpfs.jam} stands in
  * for that last one, because the interesting part is only how `peekFileSize` reacts to it.
+ *
+ * One more gap worth knowing before trusting a green test here: a **closed** sync access handle
+ * keeps reading and writing in this fake, where a real one throws `InvalidStateError`. So a use
+ * after `close()` — the bug `VirtualFileAccessor.close()` being a deliberate no-op exists to
+ * avoid — passes here and would fail on a device. Nothing in these tests does it, but a test
+ * that started to would not be told.
  */
 
 interface FakeFile {
