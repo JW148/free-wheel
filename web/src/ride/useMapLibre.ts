@@ -358,6 +358,12 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
       // Nothing is installed, which is a state rather than a failure. A message left over
       // from an earlier attempt would read as one.
       setError(null)
+    } else if (statusRef.current !== 'error') {
+      // `refresh` and `show` are supposed to have set 'error' already before calling us with
+      // this outcome — but `openLocal`'s defensive catch-all cannot, since nothing throws
+      // through it with an error attached. Assert the invariant rather than let a caller see
+      // `unavailable` paired with a `status` that still says 'ready'.
+      setStatus('error')
     }
     try {
       doomed?.remove()
