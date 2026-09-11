@@ -40,10 +40,25 @@ type RailControl = {
 export default function RideView({
   container,
   basemap,
+  suspended,
   onOpenSetup,
 }: {
   container: React.RefObject<HTMLDivElement | null>
   basemap: ReturnType<typeof useMapLibre>
+  /**
+   * Whether another screen currently owns the map.
+   *
+   * There is one MapLibre instance for the whole app — `App.tsx` owns the controller and
+   * hands it to both screens — so while the region picker is up, the map it draws Britain on
+   * is this one. Every effect below that *writes* to the map or *listens* to it is gated on
+   * this, and gated by not running at all rather than by running and ignoring itself: the
+   * tap handler is never registered, the pins are never added, the camera is never fitted.
+   *
+   * The ride screen's chrome is hidden by CSS in the same situation, and that is not the same
+   * guarantee. Markers and handlers live on the map instance, inside `.ride-map`, which is a
+   * sibling of the element that rule hides.
+   */
+  suspended: boolean
   onOpenSetup: () => void
 }) {
   const { map, error: mapError, styleReady, workerProblem, theme, setTheme, pathMode, setPathMode } =
@@ -112,9 +127,13 @@ export default function RideView({
   // Three intents, one gesture. `mapTapAction` owns the precedence and is tested directly.
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    if (!instance || !styleReady || suspended) return
     const onClick = (e: MapMouseEvent) => {
       const action = mapTapAction({
+        // Always false by the time this runs — the effect does not register the handler
+        // otherwise — but passed rather than hardcoded, so the rule lives in one place and
+        // the closure cannot go stale against it.
+        suspended,
         profileUnderTap: canChoose.current ? routeAt(instance, e.point) : null,
         choosing: canChoose.current,
         clearableChoice: clearable.current,
@@ -128,7 +147,7 @@ export default function RideView({
     return () => {
       instance.off('click', onClick)
     }
-  }, [map, styleReady])
+  }, [map, styleReady, suspended])
 
   // ── Waypoint pins ─────────────────────────────────────────────────────────────────────
   // DOM markers rather than a symbol layer: they need to be individually draggable and
@@ -137,6 +156,15 @@ export default function RideView({
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
+
+    // A pin is map content, not chrome, so no CSS rule takes it off a map the picker is
+    // drawing Britain on. Any that were already placed come off — a plan saved before the
+    // app was updated must not reappear as stray letters over a region list.
+    if (suspended) {
+      for (const [, marker] of markers.current) marker.remove()
+      markers.current.clear()
+      return
+    }
 
     const live = new Set(plan.waypoints.map((w) => w.id))
     for (const [id, marker] of markers.current) {
@@ -185,13 +213,16 @@ export default function RideView({
         editable ? `${role} point ${label}. Tap to remove.` : `${role} point ${label}`,
       )
     })
-  }, [map, styleReady, plan.waypoints, editable])
+  }, [map, styleReady, suspended, plan.waypoints, editable])
 
   // ── The routes ────────────────────────────────────────────────────────────────────────
   const lastFitted = useRef<string | null>(null)
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    // `setRoutes` is harmless on the picker's backdrop — `showRemote` never adds the route
+    // source, so it no-ops — but `fitBounds` below is not: a plan saved from an earlier
+    // session would yank the picker's camera off Britain and onto last week's ride.
+    if (!instance || !styleReady || suspended) return
 
     // While riding, the comparison is over: only the route being ridden is drawn, and it is
     // drawn as a lone route — neutral near-white, maximum contrast for a glance at speed. The
@@ -215,15 +246,15 @@ export default function RideView({
       }
     }
     if (drawn.length === 0) lastFitted.current = null
-  }, [map, styleReady, plan.routes, plan.chosen, plan.waypoints.length, riding])
+  }, [map, styleReady, suspended, plan.routes, plan.chosen, plan.waypoints.length, riding])
 
   // ── The rider ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady || !fix) return
+    if (!instance || !styleReady || suspended || !fix) return
     setPosition(instance, fix.lon, fix.lat)
     if (following) instance.easeTo({ center: [fix.lon, fix.lat], duration: 700 })
-  }, [map, styleReady, fix, following])
+  }, [map, styleReady, suspended, fix, following])
 
   const centreOnMe = useCallback(async () => {
     const here = await locateOnce()

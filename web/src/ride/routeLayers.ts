@@ -234,6 +234,7 @@ export function routeAt(map: MapLibreMap, point: Point): string | null {
  *
  * Four intents compete for one gesture, so the order is the whole design:
  *
+ * 0. **Nothing at all**, when another screen owns the map. See `suspended` below.
  * 1. **Choose** — a tap that lands on a route line always means "this one". Dropping a
  *    waypoint on the line you were pointing at would reroute the thing you were selecting.
  * 2. **Clear** — a tap on empty map reverts a choice before it edits the route. The pin
@@ -250,6 +251,20 @@ export type MapTap =
   | { do: 'nothing' }
 
 export function mapTapAction(input: {
+  /**
+   * Whether another screen currently owns the map, and the ride screen must keep its hands
+   * off it entirely.
+   *
+   * First, and above `choose`, because it is not a preference between intents — it is the
+   * absence of any. There is one MapLibre instance for the whole app (`App.tsx` owns the
+   * controller and hands it to both screens), so while the region picker is up, the map a
+   * rider is tapping to choose *Central Scotland* is the very same object the ride screen
+   * listens on. Left unsuppressed, the first tap dropped an `S` on Britain and the second an
+   * `F`, `useRoute` persisted both, and the rider arrived on their newly downloaded map with
+   * a route already half-planned out of nowhere. The pins are DOM markers on the map itself,
+   * not chrome, so hiding the ride screen's controls did not hide them.
+   */
+  suspended: boolean
   /** The route under the tap, from {@link routeAt}. */
   profileUnderTap: string | null
   /** Whether choosing is possible at all. False while riding: the decision is made. */
@@ -263,7 +278,8 @@ export function mapTapAction(input: {
   clearableChoice: boolean
   placing: boolean
 }): MapTap {
-  const { profileUnderTap, choosing, clearableChoice, placing } = input
+  const { suspended, profileUnderTap, choosing, clearableChoice, placing } = input
+  if (suspended) return { do: 'nothing' }
   if (choosing && profileUnderTap) return { do: 'choose', profile: profileUnderTap }
   if (choosing && clearableChoice) return { do: 'clear' }
   if (placing) return { do: 'place' }

@@ -86,6 +86,7 @@ describe('routeFeatures', () => {
 describe('mapTapAction', () => {
   const tap = (over: Partial<Parameters<typeof mapTapAction>[0]> = {}) =>
     mapTapAction({
+      suspended: false,
       profileUnderTap: null,
       choosing: true,
       clearableChoice: false,
@@ -121,6 +122,19 @@ describe('mapTapAction', () => {
 
   it('does nothing on empty map with editing off', () => {
     expect(tap({ placing: false })).toEqual({ do: 'nothing' })
+  })
+
+  /*
+   * One map instance serves both screens, so while the region picker is over the ride screen
+   * every tap meant for a region arrives here too. Suspension is checked before any intent,
+   * not folded into `placing`: a tap during the picker must not choose or clear either, and
+   * `placing` is a rider's own toggle that says nothing about who owns the map.
+   */
+  it('does nothing at all while another screen owns the map', () => {
+    expect(tap({ suspended: true })).toEqual({ do: 'nothing' })
+    expect(tap({ suspended: true, profileUnderTap: 'gravel' })).toEqual({ do: 'nothing' })
+    expect(tap({ suspended: true, clearableChoice: true })).toEqual({ do: 'nothing' })
+    expect(tap({ suspended: true, placing: true })).toEqual({ do: 'nothing' })
   })
 
   it('neither chooses nor clears while riding — the decision is made', () => {

@@ -118,6 +118,25 @@ export function ensureRegionLayers(map: MapLibreMap): void {
   })
 }
 
+/**
+ * Takes the picker's layers back off.
+ *
+ * Symmetric with {@link ensureRegionLayers} and needed for the same reason that one is
+ * idempotent: the map instance outlives the screen that decorated it. `App.tsx` owns one
+ * controller and hands it to both screens, so a picker that stands down without a download —
+ * a rider who imported their files by hand in Setup instead — would otherwise leave region
+ * boxes drawn across the ride screen's map.
+ *
+ * Guarded at every step, because the *common* exit is a different map instance: a finished
+ * download rebuilds the map around the downloaded archive, and that one never had these.
+ */
+export function removeRegionLayers(map: MapLibreMap): void {
+  for (const id of [REGION_FILL_LAYER, REGION_LINE_LAYER]) {
+    if (map.getLayer(id)) map.removeLayer(id)
+  }
+  if (map.getSource(REGION_SOURCE)) map.removeSource(REGION_SOURCE)
+}
+
 export function setRegionData(map: MapLibreMap, collection: GeoJSON.FeatureCollection): void {
   const source = map.getSource(REGION_SOURCE) as GeoJSONSource | undefined
   source?.setData(collection)

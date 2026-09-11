@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
 import RegionPicker from './setup/RegionPicker'
 import { useMapLibre } from './ride/useMapLibre'
 import { sharedEngine } from './engine/engineClient'
+import { readyToRide } from './setup/pickerModel'
 import './ride/ride.css'
 import './App.css'
 
@@ -26,30 +27,67 @@ export default function App() {
    */
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
 
+  /**
+   * Whether this phone has enough to ride on. The rule itself is `readyToRide`, which is
+   * pure and tested; this is the part that has to touch storage.
+   */
+  const askStorage = useCallback(async () => {
+    const [regions, basemaps, roadData] = await Promise.all([
+      sharedEngine().installedRegions(),
+      sharedEngine().installedBasemaps(),
+      sharedEngine().installedTiles(),
+    ])
+    return readyToRide({
+      regions: regions.length,
+      basemaps: basemaps.length,
+      roadData: roadData.length,
+    })
+  }, [])
+
   useEffect(() => {
     void (async () => {
       try {
-        const [regions, archives, tiles] = await Promise.all([
-          sharedEngine().installedRegions(),
-          sharedEngine().installedBasemaps(),
-          sharedEngine().installedTiles(),
-        ])
-        // A phone that imported files by hand before regions existed is set up, and must not
-        // be sent back to the picker.
-        setNeedsSetup(regions.length === 0 && (archives.length === 0 || tiles.length === 0))
+        setNeedsSetup(!(await askStorage()))
       } catch {
         // If the engine cannot even be asked, the picker is the more useful screen — it is
         // the one that explains what the app needs.
         setNeedsSetup(true)
       }
     })()
-  }, [])
+  }, [askStorage])
+
+  /**
+   * Ask again when Setup closes, because Setup is how a rider gets data onto a phone the
+   * picker could not help — and without this, importing both files by hand and pressing Done
+   * lands them straight back on a screen still insisting there is nothing to choose from. A
+   * home-screen app has no address bar, so that was a dead end you could only leave by
+   * force-quitting.
+   *
+   * It only ever stands the picker *down*, never back up. Deleting data in Setup is a
+   * deliberate act with its own screen and its own feedback; throwing the rider into a
+   * full-screen picker as they press Done would be answering a housekeeping task with a
+   * takeover. The picker gets its turn on the next launch, where it belongs.
+   */
+  const closeSetup = useCallback(() => {
+    setSetupOpen(false)
+    void (async () => {
+      try {
+        if (await askStorage()) setNeedsSetup(false)
+      } catch {
+        // Leave the gate where it is: a storage failure says nothing new about what is
+        // installed, and the picker's own screen reports it better than this can.
+      }
+    })()
+  }, [askStorage])
 
   return (
     <>
+      {/* One map, two screens. While the picker is up it owns the map, and the ride screen
+          must not listen to it or draw on it — see `RideView`'s `suspended` prop. */}
       <RideView
         container={container}
         basemap={basemap}
+        suspended={needsSetup === true}
         onOpenSetup={() => setSetupOpen(true)}
       />
       {needsSetup === true && (
@@ -59,7 +97,7 @@ export default function App() {
           onOpenSetup={() => setSetupOpen(true)}
         />
       )}
-      {setupOpen && <SetupView basemap={basemap} onClose={() => setSetupOpen(false)} />}
+      {setupOpen && <SetupView basemap={basemap} onClose={closeSetup} />}
     </>
   )
 }

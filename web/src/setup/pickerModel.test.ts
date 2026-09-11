@@ -5,9 +5,13 @@ import {
   actionLabel,
   downloadFailure,
   downloadStatus,
+  failureCopy,
   formatMegabytes,
   itemWords,
+  pickerFailure,
   priceLine,
+  readyToRide,
+  sheetPrice,
   statesOf,
   statusLine,
   summarise,
@@ -281,5 +285,96 @@ describe('downloadFailure', () => {
       expect(message).not.toMatch(forbidden)
       expect(advice ?? '').not.toMatch(forbidden)
     }
+  })
+})
+
+describe('readyToRide', () => {
+  it('is satisfied by a region record', () => {
+    expect(readyToRide({ regions: 1, basemaps: 0, roadData: 0 })).toBe(true)
+  })
+
+  /*
+   * The phone that was set up before regions existed. It has no record and everything it
+   * needs; sending it to the picker would tell a rider who is already riding that they have
+   * not started.
+   */
+  it('is satisfied by a hand-imported map and road data together', () => {
+    expect(readyToRide({ regions: 0, basemaps: 1, roadData: 1 })).toBe(true)
+  })
+
+  it('is not satisfied by half of a hand import', () => {
+    expect(readyToRide({ regions: 0, basemaps: 1, roadData: 0 })).toBe(false)
+    expect(readyToRide({ regions: 0, basemaps: 0, roadData: 1 })).toBe(false)
+  })
+
+  it('is not satisfied by an empty phone', () => {
+    expect(readyToRide({ regions: 0, basemaps: 0, roadData: 0 })).toBe(false)
+  })
+})
+
+describe('pickerFailure', () => {
+  const ok = { status: 'fulfilled' } as const
+  const bad = (reason: unknown) => ({ status: 'rejected', reason }) as const
+
+  it('reports nothing when both arrived', () => {
+    expect(pickerFailure(ok, ok)).toBeNull()
+  })
+
+  it('separates a missing list from unreachable storage', () => {
+    expect(pickerFailure(bad(new Error('could not reach the mirror')), ok)?.cause).toBe('list')
+    expect(pickerFailure(ok, bad(new Error('navigator.storage is undefined')))?.cause).toBe('storage')
+  })
+
+  /*
+   * Both fail together on a plain-http LAN origin with no network: storage is `undefined`
+   * because the context is insecure, and the mirror is unreachable. Storage is the one to
+   * name — it blocks the manual route out as well as the download.
+   */
+  it('names storage when both failed, because storage blocks the way out too', () => {
+    expect(pickerFailure(bad(new Error('offline')), bad(new Error('no storage')))?.cause).toBe('storage')
+  })
+
+  it('scrubs the reason it carries, like every other message on this screen', () => {
+    expect(pickerFailure(bad(new Error('segment name W5_N45 is not a valid grid cell id')), ok)).toEqual({
+      cause: 'list',
+      reason: 'road data name W5_N45 is not a valid grid cell id',
+    })
+  })
+})
+
+describe('failureCopy', () => {
+  it('does not blame the network for a storage fault', () => {
+    expect(failureCopy('storage').heading).not.toMatch(/internet|network|connection/i)
+    expect(failureCopy('list').explanation).toMatch(/could not reach the internet/)
+  })
+
+  it('offers a different next step for each, since the manual route needs storage too', () => {
+    expect(failureCopy('storage').action).not.toBe(failureCopy('list').action)
+  })
+
+  const forbidden = /\.rd5|\.pmtiles|segment|OPFS|\btiles?\b/i
+
+  it('keeps the copy rule in both', () => {
+    for (const cause of ['storage', 'list'] as const) {
+      const { heading, explanation, action } = failureCopy(cause)
+      expect(`${heading} ${explanation} ${action}`).not.toMatch(forbidden)
+    }
+  })
+})
+
+describe('sheetPrice', () => {
+  it('shows the price before anything has been tried', () => {
+    expect(sheetPrice('137 MB — the map and the road data for this area.', false)).toBe(
+      '137 MB — the map and the road data for this area.',
+    )
+  })
+
+  /*
+   * A download that died at 130 of 137 MB resumes. Repeating the whole-region price one line
+   * above advice that says the retry picks up where it stopped is two contradictory sentences
+   * next to each other, and only the engine knows the honest remaining figure.
+   */
+  it('withholds a stale whole-region price above a resume', () => {
+    expect(sheetPrice('137 MB — the map and the road data for this area.', true)).toBeNull()
   })
 })

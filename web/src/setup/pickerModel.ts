@@ -46,6 +46,78 @@ export function itemWords(kind: RegionProgress['kind']): string {
   return kind === 'basemap' ? 'the map' : 'the road data'
 }
 
+/**
+ * Whether this phone has enough to ride on, and so whether the picker should stand down.
+ *
+ * A region record is the modern answer. The second half is the phone that was set up before
+ * regions existed and imported its two files by hand: it has no record, but it has everything
+ * it needs, and sending it to the picker would be telling a rider who is already riding that
+ * they have not started.
+ *
+ * It is also the way *out* of the picker's dead end. A rider who reaches the "no list of
+ * regions" state and takes the manual route needs this asked again when Setup closes —
+ * otherwise they import both files, press Done, and land back on a screen that still says
+ * there is nothing to choose from. A home-screen app has no address bar to reload from, so
+ * "force-quit the app" was the only exit that screen had.
+ */
+export function readyToRide(counts: {
+  regions: number
+  basemaps: number
+  roadData: number
+}): boolean {
+  return counts.regions > 0 || (counts.basemaps > 0 && counts.roadData > 0)
+}
+
+/** Why the picker has nothing to offer. */
+export interface CatalogueFailure {
+  cause: 'storage' | 'list'
+  reason: string
+}
+
+/** Just enough of a `PromiseSettledResult` to decide on, and to write a test against. */
+type Settled = { status: 'fulfilled' } | { status: 'rejected'; reason: unknown }
+
+/**
+ * Which of the two things the screen needs actually failed.
+ *
+ * They are fetched together, so both can fail at once — and the headline has to name the
+ * right one. "free-wheel could not reach the internet" printed over a storage fault is a
+ * false statement that sends a rider to look at their wifi; per `CLAUDE.md`, `navigator.storage`
+ * is `undefined` rather than merely restricted on a plain-http origin, which is a condition
+ * this project's own LAN device-testing workflow walks into.
+ *
+ * Storage wins when both fail, because it is the more fundamental of the two: a phone that
+ * cannot reach its own storage cannot download a region even with a perfect list, and cannot
+ * import one by hand either.
+ */
+export function pickerFailure(list: Settled, storage: Settled): CatalogueFailure | null {
+  if (storage.status === 'rejected') return { cause: 'storage', reason: tidyMessage(storage.reason) }
+  if (list.status === 'rejected') return { cause: 'list', reason: tidyMessage(list.reason) }
+  return null
+}
+
+/** The words for each, so the headline cannot drift from the fault it describes. */
+export function failureCopy(cause: CatalogueFailure['cause']): {
+  heading: string
+  explanation: string
+  action: string
+} {
+  if (cause === 'storage') {
+    return {
+      heading: 'free-wheel cannot reach this phone’s storage',
+      explanation:
+        'Nothing can be saved here until it can, so there is no point offering you a download. This is usually an app opened over an insecure connection, or a second copy of free-wheel open in another tab.',
+      action: 'Open Setup',
+    }
+  }
+  return {
+    heading: 'There is no list of regions on this phone yet',
+    explanation:
+      'free-wheel could not reach the internet, and it has never saved a copy of the list. Connect to a network and open the app again, or set it up by hand.',
+    action: 'Set up by hand',
+  }
+}
+
 /** One region, priced and described, ready to put on screen. */
 export interface RegionSummary {
   id: string
@@ -162,6 +234,20 @@ export function priceLine(state: RegionState, bytes: number, size: string): stri
   if (bytes === 0) return 'Everything this region needs is already on the phone.'
   if (state === 'not-installed') return `${size} — the map and the road data for this area.`
   return `${size} to bring this region up to date.`
+}
+
+/**
+ * The price line above the button, or nothing.
+ *
+ * Nothing after a failure, and that is the whole of this function. `price` is the cost of the
+ * *whole* region, worked out when the screen loaded; a download that died at 130 of 137 MB
+ * will resume, so repeating the full figure one line above advice that says the retry picks up
+ * where it stopped puts two contradictory sentences next to each other. The honest remaining
+ * number is known only to the engine, which recomputes it from what is on disk at the start of
+ * the next attempt — so the advice carries it and the stale price gets out of the way.
+ */
+export function sheetPrice(price: string, failed: boolean): string | null {
+  return failed ? null : price
 }
 
 export interface DownloadStatus {

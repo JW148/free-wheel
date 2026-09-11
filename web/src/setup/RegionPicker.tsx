@@ -10,14 +10,18 @@ import {
   REGION_SOURCE,
   ensureRegionLayers,
   regionsGeoJson,
+  removeRegionLayers,
   setRegionData,
 } from './regionLayers'
 import {
   downloadFailure,
   downloadStatus,
+  failureCopy,
+  pickerFailure,
+  sheetPrice,
   statesOf,
   summarise,
-  tidyMessage,
+  type CatalogueFailure,
   type RegionSummary,
 } from './pickerModel'
 
@@ -51,7 +55,14 @@ import {
  *   through to `regionState`, which reports `unknown` rather than guessing `current`. The
  *   screen says so.
  * - **Offline having never seen the list.** `loadManifest` throws. The screen says that
- *   plainly and offers the way it used to work — importing files by hand, in Setup.
+ *   plainly and offers the way it used to work — importing files by hand, in Setup — and a
+ *   way past it entirely, because a rider must never be able to get stuck behind this screen.
+ *   A phone that then gets set up by hand stands the picker down by itself: `App.tsx` asks
+ *   storage again when Setup closes.
+ * - **Storage unreachable.** Its own headline, not the offline one. `navigator.storage` is
+ *   `undefined` rather than merely restricted on a plain-http origin — a condition this
+ *   project's own LAN device testing walks into — and telling that rider to check their
+ *   internet sends them looking in the wrong place entirely.
  * - **A failed download.** The sheet stays open, holding the error and a Retry. The retry
  *   resumes: the partial bytes and the marker describing them are already recorded and the
  *   engine recomputes from them on every attempt, so there is deliberately no retry
@@ -93,23 +104,34 @@ export default function RegionPicker({
   )
   const selected = summaries.find((s) => s.id === selectedId) ?? null
 
-  // The list, and what this phone already holds, in one go.
+  // The list, and what this phone already holds.
   //
   // Both or neither: a phone whose engine cannot read its own records must not be offered a
-  // download, because the download would compute its plan from the same records and re-fetch
-  // what is already here. The apology is the same screen either way, and it is the screen with
-  // the manual route on it.
+  // download, because the download would compute its plan from those same records and
+  // re-fetch what is already here.
+  //
+  // Fetched together but settled apart, because the two fail for completely different reasons
+  // and the screen has to name the right one. `allSettled` keeps the network request and the
+  // Worker's start-up in parallel — they are the two slowest things on a first launch — while
+  // `pickerFailure` decides which fault to report.
   useEffect(() => {
     let live = true
     void (async () => {
-      try {
-        const [{ manifest, fresh }, installed] = await Promise.all([
-          loadManifest(),
-          sharedEngine().installedRegions(),
-        ])
-        if (live) setCatalogue({ phase: 'ready', manifest, fresh, installed })
-      } catch (error) {
-        if (live) setCatalogue({ phase: 'unavailable', reason: tidyMessage(error) })
+      const [list, storage] = await Promise.allSettled([
+        loadManifest(),
+        sharedEngine().installedRegions(),
+      ])
+      if (!live) return
+      const failure = pickerFailure(list, storage)
+      if (failure) {
+        setCatalogue({ phase: 'unavailable', ...failure })
+      } else if (list.status === 'fulfilled' && storage.status === 'fulfilled') {
+        setCatalogue({
+          phase: 'ready',
+          manifest: list.value.manifest,
+          fresh: list.value.fresh,
+          installed: storage.value,
+        })
       }
     })()
     return () => {
@@ -147,6 +169,17 @@ export default function RegionPicker({
       ),
     )
   }, [map, styleReady, running, summaries])
+
+  // And off again when this screen goes. The map outlives the picker — one controller, two
+  // screens — so leaving the outlines on it would paint region boxes across the ride screen
+  // for a rider who stood the picker down by importing their files by hand instead.
+  useEffect(
+    () => () => {
+      const instance = map.current
+      if (instance) removeRegionLayers(instance)
+    },
+    [map],
+  )
 
   // A tap on a region selects it. Ignored mid-download: the sheet is the only thing on screen
   // reporting progress, and a stray tap on the map must not close it.
@@ -244,14 +277,18 @@ export default function RegionPicker({
 
         {catalogue.phase === 'unavailable' && (
           <>
-            <h2>There is no list of regions on this phone yet</h2>
-            <p className="picker-note">
-              free-wheel could not reach the internet, and it has never saved a copy of the
-              list. Connect to a network and open the app again, or set it up by hand.
-            </p>
+            <h2>{failureCopy(catalogue.cause).heading}</h2>
+            <p className="picker-note">{failureCopy(catalogue.cause).explanation}</p>
             <p className="picker-detail">{catalogue.reason}</p>
             <button type="button" className="primary" onClick={onOpenSetup}>
-              Set up by hand
+              {failureCopy(catalogue.cause).action}
+            </button>
+            {/* The way out, and the reason it is spelled out rather than implied: a phone
+                set up by hand stands the picker down by itself when Setup closes, but a
+                rider who wants to look at the app first should not have to find that out by
+                guessing. */}
+            <button type="button" className="picker-plain" onClick={onDone}>
+              Carry on without a region
             </button>
           </>
         )}
@@ -309,7 +346,11 @@ export default function RegionPicker({
               </>
             ) : (
               <>
-                <p className="picker-size">{selected.price}</p>
+                {/* Suppressed after a failure: the mount-time price is for the whole region,
+                    and the retry will resume. `sheetPrice` holds the rule and the reason. */}
+                {sheetPrice(selected.price, problem !== null) !== null && (
+                  <p className="picker-size">{selected.price}</p>
+                )}
                 {problem && (
                   <div className="picker-problem" role="alert">
                     <p>{problem.message}</p>
@@ -340,4 +381,4 @@ export default function RegionPicker({
 type Catalogue =
   | { phase: 'loading' }
   | { phase: 'ready'; manifest: DataManifest; fresh: boolean; installed: InstalledRegion[] }
-  | { phase: 'unavailable'; reason: string }
+  | ({ phase: 'unavailable' } & CatalogueFailure)
