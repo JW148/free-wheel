@@ -80,6 +80,12 @@ export class EngineClient {
     return this.spawn().installedBasemaps()
   }
 
+  /** Deletes one hand-imported map archive. Throws if a downloaded region owns it. */
+  async deleteBasemap(name: string) {
+    await this.init()
+    return this.spawn().deleteBasemap(name)
+  }
+
   /**
    * Downloads a region, reporting progress as it goes.
    *
@@ -97,9 +103,46 @@ export class EngineClient {
     return this.spawn().downloadRegion(region, manifest, onProgress ? Comlink.proxy(onProgress) : undefined)
   }
 
+  /**
+   * Calls off a download, running or queued.
+   *
+   * Unlike {@link EngineClient.cancel} this is a message the Worker actually receives: a
+   * download is waiting on network and storage, so the event loop is free. Bytes already
+   * written stay written and the next attempt resumes from them.
+   *
+   * ## The `init()` await is load-bearing, and it is not there to initialise anything
+   *
+   * It is there so that a cancel cannot **overtake the start it is cancelling**. `downloadRegion`
+   * awaits `init()` before it posts its message; a cancel that skipped that await posted
+   * *immediately*, so a Stop issued in the same tick as a start — which is exactly what
+   * happens when the queue pumps the next job and the rider is stopping it — arrived at the
+   * Worker first, found no controller registered for that id, and did nothing. The download
+   * then started and ran to completion with its row already gone from the screen. Measured:
+   * 300 MB fetched for a region the rider had cancelled.
+   *
+   * Both calls awaiting the same already-resolved `ready` promise is what fixes it: awaits on
+   * one promise resume in the order they were made, so the start is always posted first and
+   * the cancel always finds it.
+   *
+   * The early return keeps the original intent — a Worker that has never started has nothing
+   * to cancel, and spinning one up to tell it to stop would make a cancel the slowest thing on
+   * the screen.
+   */
+  async cancelRegionDownload(id: string): Promise<void> {
+    if (!this.api) return
+    await this.init()
+    await this.spawn().cancelRegionDownload(id)
+  }
+
   async installedRegions(): Promise<InstalledRegion[]> {
     await this.init()
     return this.spawn().installedRegions()
+  }
+
+  /** Removes a region: its basemap, and any road data no other region still needs. */
+  async removeRegion(id: string): Promise<InstalledRegion[]> {
+    await this.init()
+    return this.spawn().removeRegion(id)
   }
 
   async deleteTile(tile: string) {

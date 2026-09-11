@@ -19,12 +19,13 @@ this for where the work actually stands.
 | **Phase 6** — navigation | 🟡 Progress, climbs, power, rerouting, heading, recording, library. **Ridden 2026-09-08** |
 | **Phase 7** — the ride's feedback | 🟡 Six corrections from that ride. Tests green, driven in a browser, **not yet ridden** |
 | **Phase 8** — region downloads | 🟡 Built and unit-tested; **the mirror bucket now exists and is live** — CORS, public-read and a ranged `206` on `manifest.json` verified 2026-09-11. The picker has still never streamed anything in a browser, and nothing has been downloaded on a phone. Manual import survives as the escape hatch |
+| **Phase 9** — the maps library | 🟡 Many regions instead of one, all drawn at once; downloads queue and survive the screen. **Driven end to end in a browser against the live mirror** — downloaded, cancelled, resumed, installed, removed. Not yet ridden, not yet on a physical iPhone |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
 `docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
-`docs/phase-8-progress.md`. Each
+`docs/phase-8-progress.md`, `docs/phase-9-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 

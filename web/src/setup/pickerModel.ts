@@ -1,11 +1,12 @@
 /**
- * What the region picker decides, with the pixels left out.
+ * What the region browser decides, with the pixels left out.
  *
  * Everything here is pure so it can be tested without a browser: the states the outline layer
  * paints from, the sizes a rider reads, the line under the progress bar, and the words a
  * failure is turned into. The screen itself needs a map, a Worker and OPFS, none of which
  * exist under vitest — so anything that can be decided without them is decided here rather
- * than inside JSX, where nothing can reach it.
+ * than inside JSX, where nothing can reach it. Its companion is `libraryModel.ts`, which
+ * answers the questions you only have once something is downloaded.
  *
  * ## The vocabulary is the point of the screen
  *
@@ -21,7 +22,6 @@
 import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 import { downloadPlan, regionState, type RegionState } from '../data/regions'
 import type { RegionProgress } from '../engine/downloads'
-import type { Handback } from '../map/archiveChoice'
 
 /**
  * A size as a rider reads it: whole megabytes, decimal not binary.
@@ -48,16 +48,16 @@ export function itemWords(kind: RegionProgress['kind']): string {
 }
 
 /**
- * Whether this phone has enough to ride on, and so whether the picker should stand down.
+ * Whether this phone has enough to ride on, and so whether the first-run screen should stand
+ * down.
  *
  * A region record is the modern answer. The second half is the phone that was set up before
  * regions existed and imported its two files by hand: it has no record, but it has everything
- * it needs, and sending it to the picker would be telling a rider who is already riding that
- * they have not started.
+ * it needs, and sending it to the first-run screen would be telling a rider who is already
+ * riding that they have not started.
  *
- * It is also the way *out* of the picker's dead end. A rider who reaches the "no list of
- * regions" state and takes the manual route needs this asked again when Setup closes —
- * otherwise they import both files, press Done, and land back on a screen that still says
+ * It is also the way *out* of the "no list of regions" dead end: a rider who hits that state
+ * and imports their files by hand must not press Done and land back on a screen still saying
  * there is nothing to choose from. A home-screen app has no address bar to reload from, so
  * "force-quit the app" was the only exit that screen had.
  */
@@ -69,7 +69,7 @@ export function readyToRide(counts: {
   return counts.regions > 0 || (counts.basemaps > 0 && counts.roadData > 0)
 }
 
-/** Why the picker has nothing to offer. */
+/** Why the region browser has nothing to offer. */
 export interface CatalogueFailure {
   cause: 'storage' | 'list'
   reason: string
@@ -116,50 +116,6 @@ export function failureCopy(cause: CatalogueFailure['cause']): {
     explanation:
       'free-wheel could not reach the internet, and it has never saved a copy of the list. Connect to a network and open the app again, or set it up by hand.',
     action: 'Set up by hand',
-  }
-}
-
-/**
- * Whether the picker may stand down on a given handback.
- *
- * The picker borrows the one MapLibre instance the whole app shares, and every exit has to
- * give it back before the ride screen's effects wake up. Three of the four outcomes of that
- * handback are fine to leave on, and the rule is *not* "did it restore a map":
- *
- * - `restored` — obviously.
- * - `nothing-installed` — an empty phone that chose to carry on without a region. The map is
- *   torn down and the ride screen has copy for exactly this. Blocking here would rebuild the
- *   dead end the picker exists to remove.
- * - `unavailable` — the handback could not be completed. The borrowed map is down, so nothing
- *   is masquerading as the rider's own, but nobody has been told why and the one thing that
- *   might fix it (closing a second copy of the app) is not something the ride screen can ask
- *   for. The picker holds, says so, and offers a retry.
- */
-export function mayStandDown(outcome: Handback): boolean {
-  return outcome !== 'unavailable'
-}
-
-/**
- * The words for a handback that could not be completed.
- *
- * Its own copy rather than {@link failureCopy}'s, because it is its own fault: the list
- * arrived, the phone may well have a perfectly good map on it, and what failed was reading
- * the record of what is there. The remedy is the one this repo has already written down —
- * only one copy of the app can hold a storage handle, and a second tab is how that collides —
- * so the explanation says that rather than sending anyone to look at their wifi.
- */
-export function handbackCopy(): {
-  heading: string
-  explanation: string
-  retry: string
-  carryOn: string
-} {
-  return {
-    heading: 'free-wheel could not open your map',
-    explanation:
-      'It could not read what is saved on this phone, so there is nothing to put on screen. If free-wheel is open in another tab, close that tab — only one copy can use this phone’s storage at a time — and try again.',
-    retry: 'Try again',
-    carryOn: 'Carry on anyway',
   }
 }
 

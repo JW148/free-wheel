@@ -249,6 +249,29 @@ export async function deleteTile(tile: string): Promise<void> {
 }
 
 /**
+ * Removes one hand-imported basemap archive.
+ *
+ * Deliberately narrow. A *region's* map is removed by `engineApi.removeRegion`, which also
+ * retracts the region record and drops any road data nothing else still wants — deleting the
+ * file alone would leave a record claiming bytes that are not there, which is the exact failure
+ * `deleteTile`'s comment above describes for segments. So this refuses an archive a region
+ * record names, and the caller is told rather than left to find out later.
+ *
+ * Nothing else to forget: an imported archive has no manifest entry and no record. The download
+ * marker is cleared for the same reason `importBasemapFile` clears it — a stale one would hide
+ * a later archive of the same name from `installedBasemaps()`.
+ */
+export async function deleteBasemapFile(name: string, regionIds: string[]): Promise<void> {
+  const stem = name.replace(/\.pmtiles$/i, '')
+  if (regionIds.includes(stem)) {
+    throw new Error(`${name} belongs to a downloaded region — remove the region instead`)
+  }
+  const path = `${BASEMAP_DIR}/${name}`
+  await removeFile(path)
+  await clearDownloading(path)
+}
+
+/**
  * Records that a segment now has fresh bytes on disk, however they got there.
  *
  * Import and download both count. `installedTiles()` reports `importedAt: null` for a tile

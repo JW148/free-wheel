@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
-import RegionPicker from './setup/RegionPicker'
 import { useMapLibre } from './ride/useMapLibre'
 import { useRider } from './ride/useRider'
 import { sharedEngine } from './engine/engineClient'
+import { downloads } from './setup/downloadStore'
 import { readyToRide } from './setup/pickerModel'
 import './ride/ride.css'
 import './App.css'
@@ -12,11 +12,19 @@ import './App.css'
 /**
  * Two screens: the ride, and everything that supports it.
  *
- * The map controller is owned here rather than inside `RideView` because Setup needs it too
- * — importing a basemap should switch the map to it, and that cannot work if the map only
- * exists inside the screen Setup is covering. Setup is an overlay, not a replacement, for
- * the same reason: tearing the map down to show an import button would drop its OPFS
- * handles and its tile cache, and rebuilding both is neither fast nor free.
+ * The map controller is owned here rather than inside `RideView` because Setup needs it too —
+ * a downloaded or imported archive should appear on the map, and that cannot work if the map
+ * only exists inside the screen Setup is covering. Setup is an overlay, not a replacement, for
+ * the same reason: tearing the map down to show an import button would drop its OPFS handles
+ * and its tile cache, and rebuilding both is neither fast nor free.
+ *
+ * ## The first run is Setup, not a screen of its own
+ *
+ * A phone with nothing on it opens Setup with `gate` set, which puts it on Maps with a line of
+ * welcome copy and an exit worded for someone who has downloaded nothing yet. There is no
+ * separate picker component, and that is the point: the old one existed only until the first
+ * download succeeded and then became unreachable for the life of the install, which is how a
+ * rider ended up with exactly one region and no way to ask for another.
  */
 export default function App() {
   const container = useRef<HTMLDivElement | null>(null)
@@ -27,24 +35,14 @@ export default function App() {
   const rider = useRider()
   const [setupOpen, setSetupOpen] = useState(false)
   /**
-   * `null` until we know whether there is anything installed, so the guided flow does not
+   * `null` until we know whether there is anything installed, so the first-run screen does not
    * flash up for a moment on every launch before OPFS reports what is already there.
    */
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
-  /**
-   * Whether the picker has been asked to stand down.
-   *
-   * A request, not the act. The picker borrowed the map and it is the one that gives it back,
-   * so flipping `needsSetup` from here would open the gate onto a map still on loan — and
-   * would do it from a second piece of code that has to get the same ordering right, which is
-   * how the last three attempts at this went wrong. `App` asks; the picker performs the
-   * handback, reports it, and calls `onDone` if it worked.
-   */
-  const [standDown, setStandDown] = useState(false)
 
   /**
-   * Whether this phone has enough to ride on. The rule itself is `readyToRide`, which is
-   * pure and tested; this is the part that has to touch storage.
+   * Whether this phone has enough to ride on. The rule itself is `readyToRide`, which is pure
+   * and tested; this is the part that has to touch storage.
    */
   const askStorage = useCallback(async () => {
     const [regions, basemaps, roadData] = await Promise.all([
@@ -64,68 +62,42 @@ export default function App() {
       try {
         setNeedsSetup(!(await askStorage()))
       } catch {
-        // If the engine cannot even be asked, the picker is the more useful screen — it is
-        // the one that explains what the app needs.
+        // If the engine cannot even be asked, Setup is the more useful screen — it is the one
+        // that explains what the app needs and offers the manual way in.
         setNeedsSetup(true)
       }
     })()
   }, [askStorage])
 
   /**
-   * Ask again when Setup closes, because Setup is how a rider gets data onto a phone the
-   * picker could not help — and without this, importing both files by hand and pressing Done
-   * lands them straight back on a screen still insisting there is nothing to choose from. A
-   * home-screen app has no address bar, so that was a dead end you could only leave by
-   * force-quitting.
+   * New territory joining the map, from wherever the download was started.
    *
-   * It only ever stands the picker *down*, never back up. Deleting data in Setup is a
-   * deliberate act with its own screen and its own feedback; throwing the rider into a
-   * full-screen picker as they press Done would be answering a housekeeping task with a
-   * takeover. The picker gets its turn on the next launch, where it belongs.
+   * Subscribed here rather than inside the Maps screen because the Maps screen is very often
+   * not mounted when this fires — queueing four regions and going away is the whole point of
+   * the queue outliving the screen. `sync` splices the new archive in beside what is already
+   * drawn, so this is safe mid-ride: the route line, the position dot and the waypoints all
+   * stay exactly where they are.
+   */
+  useEffect(() => downloads.onInstalled(() => void basemap.sync()), [basemap.sync])
+
+  /**
+   * Leaving Setup.
+   *
+   * It only ever stands the first-run screen *down*, never back up. Deleting every region in
+   * Setup is a deliberate act with its own confirmation and its own feedback; throwing the
+   * rider into a full-screen welcome as they press Done would be answering a housekeeping task
+   * with a takeover. It gets its turn on the next launch, where it belongs.
    */
   const closeSetup = useCallback(() => {
     setSetupOpen(false)
-    void (async () => {
-      try {
-        if (!(await askStorage())) return
-        // Asks the picker to leave rather than dropping it. It is holding the map, the
-        // handback has to finish before the ride screen's effects wake up, and it can fail —
-        // all three are the picker's to deal with, and it is the screen that is on top and
-        // can say so. When there is no picker this is inert, which is correct: nothing else
-        // ever borrows the map.
-        setStandDown(true)
-      } catch {
-        // The gate stays where it is. A storage fault says nothing new about what is
-        // installed, and standing the picker down on an answer that never arrived could put a
-        // rider on the ride screen with nothing to ride on.
-        //
-        // It is not, however, free of silence — and the comment here used to claim otherwise.
-        // When the picker is showing its list, its own storage read having succeeded earlier,
-        // Done just looks inert: nothing on screen says the check failed. Recorded as an open
-        // item. The fix is to hand this fault to the picker's failure surface, which now
-        // exists; adding a fifth, unexercised route into that surface in the last round is
-        // the wrong trade.
-      }
-    })()
-  }, [askStorage])
-
-  /**
-   * The picker's way out, and stable by construction.
-   *
-   * It is a dependency of the picker's `leave`, which now runs from an effect as well as from
-   * a tap — a fresh arrow every render would make that effect re-fire on renders that mean
-   * nothing.
-   */
-  const standDownDone = useCallback(() => {
-    setStandDown(false)
     setNeedsSetup(false)
   }, [])
+
   const openSetup = useCallback(() => setSetupOpen(true), [])
+  const showSetup = setupOpen || needsSetup === true
 
   return (
     <>
-      {/* One map, two screens. While the picker is up it owns the map, and the ride screen
-          must not listen to it or draw on it — see `RideView`'s `suspended` prop. */}
       <RideView
         container={container}
         basemap={basemap}
@@ -133,15 +105,14 @@ export default function App() {
         rider={rider}
         onOpenSetup={openSetup}
       />
-      {needsSetup === true && (
-        <RegionPicker
+      {showSetup && (
+        <SetupView
           basemap={basemap}
-          standDown={standDown}
-          onDone={standDownDone}
-          onOpenSetup={openSetup}
+          rider={rider}
+          gate={needsSetup === true}
+          onClose={closeSetup}
         />
       )}
-      {setupOpen && <SetupView basemap={basemap} rider={rider} onClose={closeSetup} />}
     </>
   )
 }

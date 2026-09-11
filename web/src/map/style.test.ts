@@ -7,7 +7,7 @@ import {
   validateStyleMin,
 } from '@maplibre/maplibre-gl-style-spec'
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl'
-import { basemapStyle, nextPathMode } from './style'
+import { basemapStyle, layerRole, nextPathMode } from './style'
 import type { MapTheme, Palette, PaletteLand } from './style'
 import { PALETTES } from './style'
 import { LAND_TIERS, type LandClass } from './landcover'
@@ -79,10 +79,22 @@ function accepts(layer: LayerSpecification, kind: string, detail: string): boole
   )
 }
 
-function layer(style: StyleSpecification, id: string): LayerSpecification {
-  const found = style.layers.find((l) => l.id === id)
-  if (!found) throw new Error(`no layer "${id}" in style`)
+/**
+ * A layer by **role**.
+ *
+ * Layer ids carry the archive they draw (`roads|edinburgh.pmtiles`) because a phone holds one
+ * archive per downloaded region and draws all of them at once. Every assertion in this file is
+ * about the role, so the lookup strips the archive rather than every test naming one.
+ */
+function layer(style: StyleSpecification, role: string): LayerSpecification {
+  const found = style.layers.find((l) => layerRole(l.id) === role)
+  if (!found) throw new Error(`no layer "${role}" in style`)
   return found
+}
+
+/** Draw order, as roles. */
+function roleOrder(style: StyleSpecification): string[] {
+  return style.layers.map((l) => layerRole(l.id))
 }
 
 /** Everything a bike can be ridden or pushed along, as Protomaps names it. */
@@ -139,7 +151,7 @@ describe('path rendering', () => {
 
   it('keeps paths above roads so a cycleway is not buried under a street', () => {
     const style = basemapStyle('edinburgh.pmtiles')
-    const ids = style.layers.map((l) => l.id)
+    const ids = roleOrder(style)
     expect(ids.indexOf('paths')).toBeGreaterThan(ids.indexOf('roads'))
     expect(ids.indexOf('paths')).toBeLessThan(ids.indexOf('road-labels'))
   })
@@ -345,7 +357,10 @@ describe('land-cover layers', () => {
 
   it('draws every tier against the landuse source-layer', () => {
     for (const tier of LAND_TIERS) {
-      expect(style.layers.find((l) => l.id === tier.id), `missing layer "${tier.id}"`).toBeDefined()
+      expect(
+        style.layers.find((l) => layerRole(l.id) === tier.id),
+        `missing layer "${tier.id}"`,
+      ).toBeDefined()
     }
   })
 
@@ -354,7 +369,7 @@ describe('land-cover layers', () => {
     // layers — but its vocabulary is six kinds, not 43. A `-low` layer for a tier holding
     // none of them filters for kinds that source-layer never contains and can never draw
     // anything: dead weight, and a style that claims to do something it cannot.
-    const lowIds = style.layers.filter((l) => l.id.endsWith('-low')).map((l) => l.id)
+    const lowIds = roleOrder(style).filter((role) => role.endsWith('-low'))
 
     // urban_area -> residential, farmland/barren/glacier -> land-open, forest/grassland -> land-green
     expect(lowIds).toEqual(['land-built-low', 'land-open-low', 'land-green-low'])
@@ -366,7 +381,7 @@ describe('land-cover layers', () => {
     // them. Blending made the ordering not matter, at the cost of a washed-out map and a
     // colour at every overlap that nobody chose. Tiers fix the ordering properly, so the
     // opacity crutch must not come back.
-    const land = style.layers.filter((l) => l.id.startsWith('land-'))
+    const land = style.layers.filter((l) => layerRole(l.id).startsWith('land-'))
     expect(land.length).toBeGreaterThan(0)
     for (const layer of land) {
       const opacity = (layer as { paint?: Record<string, unknown> }).paint?.['fill-opacity']
@@ -375,7 +390,7 @@ describe('land-cover layers', () => {
   })
 
   it('keeps all land below the roads and above the background', () => {
-    const ids = style.layers.map((l) => l.id)
+    const ids = roleOrder(style)
     for (const tier of LAND_TIERS) {
       expect(ids.indexOf(tier.id), tier.id).toBeGreaterThan(ids.indexOf('background'))
       expect(ids.indexOf(tier.id), tier.id).toBeLessThan(ids.indexOf('roads'))
@@ -383,7 +398,7 @@ describe('land-cover layers', () => {
   })
 
   it('draws water above the land but below the roads', () => {
-    const ids = style.layers.map((l) => l.id)
+    const ids = roleOrder(style)
     expect(ids.indexOf('water')).toBeGreaterThan(ids.indexOf('land-park'))
     expect(ids.indexOf('water')).toBeLessThan(ids.indexOf('roads'))
   })

@@ -4,7 +4,7 @@ import type { RegionEntry } from '../data/manifest'
 import type { RegionState } from '../data/regions'
 
 /**
- * The three states a boundary can be in.
+ * The colours a boundary can be painted in.
  *
  * Chosen on chroma, like the route lines and for the same reason: every stroke in both
  * basemap palettes measures C 15.4 or less, so anything at C 45 or above cannot be mistaken
@@ -33,6 +33,22 @@ export const REGION_COLOURS = {
 export const REGION_SOURCE = 'regions'
 export const REGION_FILL_LAYER = 'regions-fill'
 export const REGION_LINE_LAYER = 'regions-line'
+/** The dashed outline over a region that is downloading. See {@link PaintedState}. */
+export const REGION_PENDING_LAYER = 'regions-pending'
+
+/**
+ * What a boundary can be painted as: the four states of {@link RegionState}, plus one for a
+ * download that is happening right now.
+ *
+ * `downloading` gets **no colour of its own**, and that is a finding rather than a shortcut. A
+ * search over the whole RGB cube for a fourth boundary colour at C >= 46 that clears ΔE 16 from
+ * both basemap palettes, the three colours below *and* the six route colours returns nothing:
+ * between them they have used up the usable circle, which is the same wall `profiles.ts`
+ * records hitting. So a region in flight keeps the `available` blue and separates on **shape** —
+ * a dashed outline — exactly as the basemap's path kinds separate on dash pattern at held
+ * chroma. Shape needs no clearance rule and survives dichromacy, which a seventh hue would not.
+ */
+export type PaintedState = RegionState | 'downloading'
 
 /**
  * Region boxes as polygons.
@@ -42,7 +58,7 @@ export const REGION_LINE_LAYER = 'regions-line'
  */
 export function regionsGeoJson(
   regions: RegionEntry[],
-  states: Record<string, RegionState>,
+  states: Record<string, PaintedState>,
 ): FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -64,15 +80,14 @@ export function regionsGeoJson(
 }
 
 /**
- * Adds the picker's own layers.
+ * Adds the region browser's own layers.
  *
  * These are chrome over the map rather than part of it, so they follow the route line's
  * rule: high chroma, because every stroke in both basemap palettes is C 15.4 or less and a
  * boundary that reads as map furniture is a boundary nobody taps.
  *
- * Safe to call repeatedly — the map is rebuilt whenever the basemap archive changes (theme
- * switch, style reload), and the caller should not have to track whether this particular
- * instance has been set up yet.
+ * Safe to call repeatedly, and it has to be: a theme swap goes through `setStyle`, which takes
+ * these with it, and `styledata` is where they come back.
  */
 export function ensureRegionLayers(map: MapLibreMap): void {
   if (map.getSource(REGION_SOURCE)) return
@@ -97,7 +112,25 @@ export function ensureRegionLayers(map: MapLibreMap): void {
         'map-outdated', REGION_COLOURS.outdated,
         REGION_COLOURS.available,
       ],
-      'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.45, 0.18],
+      // Nearly transparent for a region that is merely on offer, and that is not timidity.
+      // The fourteen published boxes *overlap* — every one of them shares an edge band with a
+      // neighbour — so at a uniform 0.18 the whole of Britain came out as a stack of blue
+      // rectangles with the coastline barely visible under it. Alpha compounds; a fill that
+      // reads correctly alone reads as a wash fourteen times over.
+      //
+      // So the outline carries a region that is only available, and fill is reserved for the
+      // three states where it means something: the one under your finger, the ones on their
+      // way, and the ones already here.
+      'fill-opacity': [
+        'case',
+        ['boolean', ['feature-state', 'selected'], false],
+        0.45,
+        ['==', ['get', 'state'], 'downloading'],
+        0.3,
+        ['==', ['get', 'state'], 'not-installed'],
+        0.06,
+        0.22,
+      ],
     },
   })
 
@@ -105,6 +138,7 @@ export function ensureRegionLayers(map: MapLibreMap): void {
     id: REGION_LINE_LAYER,
     type: 'line',
     source: REGION_SOURCE,
+    filter: ['!=', ['get', 'state'], 'downloading'],
     paint: {
       'line-color': [
         'match',
@@ -117,22 +151,36 @@ export function ensureRegionLayers(map: MapLibreMap): void {
       'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 1.5],
     },
   })
+
+  // Its own layer rather than a data-driven dash on the one above: `line-dasharray` is
+  // `cross-faded-data-driven` in MapLibre 6, so a `match` on a *property* is fine — but a solid
+  // pattern has to be spelled `[1, 0]` and mixing the two into one expression buys nothing
+  // over a second layer with a filter.
+  map.addLayer({
+    id: REGION_PENDING_LAYER,
+    type: 'line',
+    source: REGION_SOURCE,
+    filter: ['==', ['get', 'state'], 'downloading'],
+    paint: {
+      'line-color': REGION_COLOURS.available,
+      'line-dasharray': [2, 2],
+      'line-width': 3,
+    },
+  })
 }
 
 /**
- * Takes the picker's layers back off.
+ * Takes the region layers back off.
  *
- * Symmetric with {@link ensureRegionLayers} and needed for the same reason that one is
- * idempotent: the map instance outlives the screen that decorated it. `App.tsx` owns one
- * controller and hands it to both screens, so a picker that stands down without a download —
- * a rider who imported their files by hand in Setup instead — would otherwise leave region
- * boxes drawn across the ride screen's map.
+ * Symmetric with {@link ensureRegionLayers}, and now only needed by a caller that wants to keep
+ * a map and stop drawing regions on it. `BrowseMap` owns its own instance and simply removes
+ * it, so nothing in the app calls this today — it is kept because the pair is the contract, and
+ * a half of it is how the old shared-map arrangement left region boxes across the ride screen.
  *
- * Guarded at every step, because the *common* exit is a different map instance: a finished
- * download rebuilds the map around the downloaded archive, and that one never had these.
+ * Guarded at every step: a map that never had these layers is a legitimate argument.
  */
 export function removeRegionLayers(map: MapLibreMap): void {
-  for (const id of [REGION_FILL_LAYER, REGION_LINE_LAYER]) {
+  for (const id of [REGION_FILL_LAYER, REGION_LINE_LAYER, REGION_PENDING_LAYER]) {
     if (map.getLayer(id)) map.removeLayer(id)
   }
   if (map.getSource(REGION_SOURCE)) map.removeSource(REGION_SOURCE)

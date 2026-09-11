@@ -43,7 +43,8 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
   src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
                  The navigation kernel — progress, climbs, power, ascent, recording, library,
                  hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
-  src/setup/     Overlay: importing data, and the diagnostics/parity harness.
+  src/setup/     Overlay, and the first-run screen: the maps library, the region browser,
+                 the download queue, rider settings and the diagnostics/parity harness.
   src/engine/    Worker, Comlink client, OPFS VFS and tile store.
   src/map/       PMTiles-over-OPFS source, basemap style, the MapLibre worker fix.
 brouter-link/    Read-only symlink to upstream BRouter. See above.
@@ -238,6 +239,35 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **Toggle map layers with `setFilter`, not `setStyle`.** `setStyle` replaces every layer and
   takes the route line and position dot with it, so they have to be rebuilt — acceptable for
   the theme swap, wasteful for a button tapped three times to cycle modes.
+- **Every installed archive is drawn at once, and its layers interleave by role.** A phone
+  holds one `.pmtiles` per downloaded region and the map carries a source — and a full layer
+  set — for each, so there is no "current" archive and no border at which the map goes blank
+  while routing carries on working. The published regions *overlap*, so stacking one archive's
+  whole layer set after another's paints the second region's land fills over the first's roads:
+  streets that stop along a line across the map. Order is role-major (`basemapRoles()`), layer
+  ids are `role|archive`, and `composite.ts` splices a new archive in at each role's position.
+  Never append.
+- **A finished download joins the map with `addSource`, never `setStyle` or a new `Map`.** Both
+  of those discard the route line, the position dot and every waypoint marker — and a region
+  can land while the rider is following a route.
+- **`useMapLibre.sync()` is the only way the map changes.** Startup, a finished download, a
+  hand-imported archive and a removed region all go through it; it reads storage and reconciles.
+  One entry point, because the previous arrangement had two pieces of code making the same
+  decision from the same inputs and only one of them ever got fixed.
+- **The region browser owns its own MapLibre instance and does not borrow the ride screen's.**
+  The old picker streamed Britain over the shared map and handed it back, which was the most
+  delicate thing in the app — an async teardown racing React's effect ordering, three rounds of
+  fixes, and a failure where the rider was left on a streamed map of Britain wearing their own
+  map's clothes. None of it was about picking a region. `BrowseMap` builds its own and
+  `remove()`s it on unmount. Do not reintroduce a loan.
+- **Downloads belong to `downloadStore`, not to a screen.** It is a module singleton like
+  `sharedEngine`, so a rider can queue four regions and close Setup. `App` subscribes to
+  `onInstalled` and syncs the map — the Maps screen is usually not mounted when one lands.
+- **A cancel must not overtake the start it is cancelling.** `EngineClient.cancelRegionDownload`
+  awaits `init()` for no other reason: `downloadRegion` posts its Comlink message only after
+  that await, so a cancel that skipped it arrived first, found no controller registered, and did
+  nothing — 166 MB downloaded for a region whose row had already gone from the screen. Awaits on
+  one promise resume in the order they were made; that ordering is the fix.
 - **Don't cap the map at the archive's max zoom.** MapLibre overzooms vector tiles by scaling
   the deepest tile it has; `maxZoom: header.maxZoom` throws away usable detail and puts
   street-level layers permanently out of reach.
@@ -384,6 +414,12 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   `gradeAt` reads BRouter's own SRTM elevations over a ±60 m window. The corollary is that
   power and recorded ascent are only meaningful on the route, and both are cleared the moment a
   reroute replaces the geometry.
+- **There is no fourth region-boundary colour, and this has been checked.** A sweep of the RGB
+  cube for a colour at C >= 46 clearing ΔE 16 from both basemap palettes, the three existing
+  boundary colours and the six route colours returns nothing — the usable circle is full. A
+  region that is downloading therefore keeps the `available` blue and separates on a **dashed
+  outline**. Unselected fills are 0.06, not 0.18: alpha compounds, and fourteen overlapping
+  boxes at 0.18 washed the coastline out entirely.
 - **The two ride overlays are achromatic, and that is a rule not a preference.** Six route hues
   at C ≥ 45 already fill the usable circle under the ΔE ≥ 16 clearance floor. "Already ridden"
   is neutral grey — it has stopped being a route — and "climb ahead" is a blurred halo in black

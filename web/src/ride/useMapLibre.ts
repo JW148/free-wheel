@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttributionControl, Map as MapLibreMap } from 'maplibre-gl'
-import { mountBasemap, mountRemoteBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
+import { mountBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
 import { checkMapLibreWorker, configureMapLibreWorker } from '../map/maplibreWorker'
-import { basemapStyle, pathFilter, type MapTheme, type PathMode } from '../map/style'
-import { handbackPlan, type Handback } from '../map/archiveChoice'
+import { addArchiveToMap, removeArchiveFromMap } from '../map/composite'
+import { basemapStyle, layerRole, pathFilter, sourceIdFor, type MapTheme, type PathMode } from '../map/style'
+import { archiveToOpen, mountPlan, type MapOutcome } from '../map/archiveChoice'
 import { sharedEngine } from '../engine/engineClient'
 import { ensureRouteLayers } from './routeLayers'
 
 /** Re-exported so a caller of {@link useMapLibre} does not have to know where it lives. */
-export type { Handback }
+export type { MapOutcome }
 
 // Both at module scope, before any Map can exist. `addProtocol` is global to the maplibre
 // module rather than per-instance, and the worker URL is read when the pool is first
@@ -17,7 +18,12 @@ export type { Handback }
 registerPmtilesProtocol()
 export const workerUrl = configureMapLibreWorker()
 
-/** Remembered so the app opens on the archive you were last using, not an arbitrary one. */
+/**
+ * Remembered so the app opens looking at the region you were last riding in.
+ *
+ * Every downloaded region is on the map at once now, so this no longer decides *what* is
+ * drawn — only where the camera starts.
+ */
 const LAST_BASEMAP_KEY = 'free-wheel.basemap.v1'
 const THEME_KEY = 'free-wheel.theme.v1'
 const PATHS_KEY = 'free-wheel.paths.v1'
@@ -30,7 +36,7 @@ function storedTheme(): MapTheme {
   }
 }
 
-/** The archive last opened, or null if there is none or storage is unreadable. */
+/** The archive last looked at, or null if there is none or storage is unreadable. */
 function remembered(): string | null {
   try {
     return localStorage.getItem(LAST_BASEMAP_KEY)
@@ -60,15 +66,36 @@ export interface BasemapInfo {
 type Status = 'loading' | 'no-basemap' | 'ready' | 'error'
 
 /**
- * Owns the MapLibre instance and the OPFS-backed archive behind it.
+ * Owns the MapLibre instance and every OPFS archive behind it.
  *
- * The map is created once per archive and torn down when the archive changes — MapLibre has
- * no supported way to swap a source's underlying protocol handle, and rebuilding is cheap
- * next to the alternative of reasoning about half-migrated tile caches.
+ * ## Every downloaded region is drawn, all the time
+ *
+ * A phone holds one PMTiles archive per region it has downloaded, and the map carries a source
+ * — and a full set of layers — for each. There is no "current" archive a rider has to pick, and
+ * no boundary at which the map goes blank while routing carries on working, which is what the
+ * single-archive version did at every region edge. `active` below is only where the camera
+ * started; it decides nothing about what is drawn.
+ *
+ * The ordering that makes this work lives in `map/style.ts` and `map/composite.ts`: layers are
+ * interleaved by role across archives, never stacked archive by archive.
+ *
+ * ## `sync` is the only way the map changes
+ *
+ * Startup, a finished download, a hand-imported archive and a deleted region all go through
+ * {@link useMapLibre.sync}, which reads what is installed and reconciles the map against it.
+ * One entry point rather than four, because the previous arrangement had two pieces of code
+ * making the same decision from the same inputs and only one of them ever got fixed.
+ *
+ * Reconciling **splices** rather than rebuilds. A region that finishes downloading while the
+ * rider is following a route must not take the route line, the position dot and the waypoint
+ * markers off the screen, which a new `Map` or a `setStyle` both would.
  */
 export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   const map = useRef<MapLibreMap | null>(null)
   const [archives, setArchives] = useState<{ name: string; bytes: number }[]>([])
+  /** Every archive currently drawn, which after a successful sync is every installed one. */
+  const [mounted, setMounted] = useState<string[]>([])
+  const mountedRef = useRef<string[]>([])
   const [active, setActive] = useState<BasemapInfo | null>(null)
   const activeRef = useRef<BasemapInfo | null>(null)
   const [status, setStatus] = useState<Status>('loading')
@@ -77,39 +104,11 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   /** Flipped once the style has loaded, so callers know it is safe to touch layers. */
   const [styleReady, setStyleReady] = useState(false)
   const [theme, setThemeState] = useState<MapTheme>(storedTheme)
-  // `show` needs the current theme but must not be rebuilt when it changes, or every theme
-  // switch would tear the map down and remount the archive.
+  // `sync` needs the current theme but must not be rebuilt when it changes, or every theme
+  // switch would tear the map down and remount every archive.
   const themeRef = useRef(theme)
   themeRef.current = theme
-  /**
-   * The streamed archive on screen, if any, and the local one it displaced.
-   *
-   * `showRemote` is a *loan* of the map, not a handover. It skips `ensureRouteLayers` and
-   * never touches `active`, on the assumption that a `show()` always follows it — true of the
-   * region picker's download path and nothing else. A rider who reached the picker with a
-   * basemap but no road data, took the manual route, imported only the road data and pressed
-   * Done was left on a network-streamed Britain at zoom 4.6: no route source, so a planned
-   * line drew nothing; no position source, so the dot never appeared; `activeRef` null, so the
-   * theme button did nothing. Every one of those fails silently. {@link endRemote} is what
-   * closes the loan.
-   */
-  const remoteRef = useRef<string | null>(null)
-  const displacedRef = useRef<string | null>(null)
-  /**
-   * Bumped every time the map is given back, so a loan still in flight knows it was cancelled.
-   *
-   * `showRemote` suspends at the archive header, which on a slow mirror is seconds — long
-   * enough for a rider to take the manual route, import their files and press Done. Without
-   * this the header lands afterwards and drops a streamed Britain over the map they were just
-   * given back, with no loan recorded to undo it.
-   */
-  const loanGeneration = useRef(0)
-  // `endRemote` has to know what the map is doing without being rebuilt when it changes.
-  const statusRef = useRef(status)
-  statusRef.current = status
   const [pathMode, setPathModeState] = useState<PathMode>(storedPathMode)
-  // Same reasoning as `themeRef`: `show` needs the current value without being rebuilt when it
-  // changes, or every path toggle would tear the map down and remount the archive.
   const pathModeRef = useRef(pathMode)
   pathModeRef.current = pathMode
 
@@ -120,32 +119,81 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     void checkMapLibreWorker().then(setWorkerProblem)
   }, [])
 
+  const rememberFocus = useCallback((name: string) => {
+    try {
+      localStorage.setItem(LAST_BASEMAP_KEY, name)
+    } catch {
+      // Not remembering where you were is a small annoyance, not a failure.
+    }
+  }, [])
+
   /**
-   * Mounts a local archive, and reports whether it made it onto the screen.
+   * Takes the map down to nothing, leaving nothing mounted, and says why.
    *
-   * The boolean is for {@link endRemote}, which has to know: a failed `show` leaves whatever
-   * was already up still up, and during a loan that is the *streamed* archive. Treating a
-   * silent failure here as a finished handback is how a rider ends up on a map of Britain
-   * that looks like theirs and is not. Every other caller is welcome to ignore it — the
-   * error is on `error` and the status is `error` either way.
+   * Both outcomes leave the rider with no map, but only one of them is a *fault*, and they are
+   * kept apart all the way to the words on screen: `nothing-installed` is an empty phone, which
+   * the ride screen explains and offers Setup for; `unavailable` means storage could not be
+   * read or an archive would not mount, where "download a region" is confident, wrong advice.
+   * So the error `sync` already set is left standing rather than papered over with `no-basemap`.
+   *
+   * **Total.** Refs are cleared before `remove()`, which is the one line here that can throw, so
+   * a failed teardown costs the pixels but never the invariant.
    */
-  const show = useCallback(
-    async (name: string): Promise<boolean> => {
+  const discardMap = useCallback((outcome: 'nothing-installed' | 'unavailable'): MapOutcome => {
+    const doomed = map.current
+    map.current = null
+    mountedRef.current = []
+    setMounted([])
+    activeRef.current = null
+    setActive(null)
+    setStyleReady(false)
+    if (outcome === 'nothing-installed') {
+      setStatus('no-basemap')
+      // Nothing is installed, which is a state rather than a failure. A message left over from
+      // an earlier attempt would read as one.
+      setError(null)
+    } else {
+      setStatus('error')
+    }
+    try {
+      doomed?.remove()
+    } catch {
+      // Nothing points at this instance any more, so it cannot be drawn on or reported on.
+      // Swallowed so that this function is total: every caller may state that the map is down.
+    }
+    return outcome
+  }, [])
+
+  /**
+   * Builds a map from scratch over every named archive, centred on `focus`.
+   *
+   * Only for the case where there is no map yet — a cold start, or the first archive arriving
+   * on an empty phone. Everything else splices; see {@link sync}.
+   */
+  const buildMap = useCallback(
+    async (names: string[], focus: string): Promise<boolean> => {
       setError(null)
       setStyleReady(false)
       try {
-        const header = await mountBasemap(name)
+        // Sequential rather than `Promise.all`: each mount opens an OPFS sync access handle
+        // through the shared registry, and the registry de-duplicates in-flight opens per
+        // path rather than serialising across them. Sequential keeps the first-launch failure
+        // legible — the archive that would not open is named by the error that throws.
+        const headers = new Map<string, Awaited<ReturnType<typeof mountBasemap>>>()
+        for (const name of names) headers.set(name, await mountBasemap(name))
+        const header = headers.get(focus) ?? headers.values().next().value
+        if (!header) throw new Error('no archive to open')
 
         map.current?.remove()
         const created = new MapLibreMap({
           container: container.current!,
-          style: basemapStyle(name, themeRef.current, pathModeRef.current),
+          style: basemapStyle(names, themeRef.current, pathModeRef.current),
           center: header.center,
           zoom: 12,
-          // Past the archive's own max zoom, not at it: MapLibre overzooms vector tiles by
-          // scaling the deepest tile it has, so capping here would put street-level detail
-          // permanently out of reach on a map whose whole job is street-level detail.
-          maxZoom: Math.min(header.maxZoom + 5, 19),
+          // Past the deepest archive's own max zoom, not at it: MapLibre overzooms vector
+          // tiles by scaling the deepest tile it has, so capping here would put street-level
+          // detail permanently out of reach on a map whose whole job is street-level detail.
+          maxZoom: Math.min(Math.max(...[...headers.values()].map((h) => h.maxZoom)) + 5, 19),
           // Added by hand below so it can go bottom-*left*. The default corner is
           // bottom-right, which is where the control column and the action bar both live.
           attributionControl: false,
@@ -164,24 +212,12 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         })
 
         map.current = created
-        const info: BasemapInfo = {
-          name,
-          bytes: header.bytes,
-          minZoom: header.minZoom,
-          maxZoom: header.maxZoom,
-          center: header.center,
-        }
-        activeRef.current = info
-        setActive(info)
-        // A local archive is up, so there is no loan outstanding. This is what makes
-        // `endRemote` a no-op after a finished download, and after a hand-imported basemap.
-        remoteRef.current = null
+        mountedRef.current = [...names]
+        setMounted([...names])
+        activeRef.current = header
+        setActive(header)
         setStatus('ready')
-        try {
-          localStorage.setItem(LAST_BASEMAP_KEY, name)
-        } catch {
-          // Not remembering the archive is a small annoyance, not a failure.
-        }
+        rememberFocus(header.name)
         return true
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
@@ -189,77 +225,98 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         return false
       }
     },
-    [container],
+    [container, rememberFocus],
   )
 
   /**
-   * Shows a remote archive streamed over HTTP range, for the region picker.
+   * Brings the map in line with what is installed, and reports what the rider ended up with.
    *
-   * Follows `show` except in four ways: it mounts the archive by URL instead of an OPFS
-   * name, it opens on Britain rather than the archive's own centre, it never touches
-   * `archives` or `active` — a streamed archive is not installed, and the ride screen must
-   * never be able to mistake this backdrop for a downloaded region — and its `load` handler
-   * skips `ensureRouteLayers`. The picker draws no route, and `show()` rebuilds the map with
-   * those layers anyway when a real region is mounted, so adding the call here would be
-   * dead code, not a fix — do not "restore" it.
+   * Called on startup, whenever a download finishes, whenever an archive is imported by hand
+   * and whenever a region is removed. It is deliberately idempotent and cheap when nothing has
+   * changed: the common case after a background download is one `addSource` and one pass of
+   * `addLayer`, with the rest of the map — and everything the ride screen has drawn on it —
+   * untouched.
    *
-   * The ~25 lines of map construction below are a near-duplicate of `show`'s. Left
-   * duplicated rather than factored out for now: nothing in this repo tests `useMapLibre`
-   * (it needs a DOM and a live MapLibre instance), and this file's failure mode is the one
-   * that cost the project a whole phase — a broken map produces no error and no failed
-   * request, it simply never draws. An untested refactor of map construction is the wrong
-   * trade today; factoring the shared construction into a helper is recorded as a follow-up.
+   * Nothing here throws. Every outcome is a {@link MapOutcome} the caller can act on, which is
+   * the point: the failure worth naming is one that used to look like success.
    */
-  const showRemote = useCallback(
-    async (url: string) => {
-      setError(null)
-      setStyleReady(false)
-      // Only on the first loan: a second `showRemote` would otherwise record the *streamed*
-      // archive as the thing to go back to, which is nothing at all.
-      if (remoteRef.current === null) displacedRef.current = activeRef.current?.name ?? null
-      const generation = (loanGeneration.current += 1)
+  const sync = useCallback(
+    async (options: { focus?: string | null } = {}): Promise<MapOutcome> => {
+      let installed: { name: string; bytes: number }[]
       try {
-        const header = await mountRemoteBasemap(url)
-        // The map was handed back while this header was in flight. Mounting now would put a
-        // streamed archive over the ride screen's own map with nothing recorded to take it
-        // off again, so this loan is simply abandoned — the handback has already left the
-        // map in a state it reported to its caller.
-        if (generation !== loanGeneration.current) return
-        map.current?.remove()
-        const created = new MapLibreMap({
-          container: container.current!,
-          style: basemapStyle(url, themeRef.current, pathModeRef.current),
-          center: [-3.2, 54.8],
-          zoom: 4.6,
-          maxZoom: Math.min(header.maxZoom + 5, 19),
-          attributionControl: false,
-          pitchWithRotate: false,
-          dragRotate: false,
-        })
-        created.touchZoomRotate.disableRotation()
-        created.addControl(new AttributionControl({ compact: true }), 'bottom-left')
-        created.on('error', (e) => setError(e.error?.message ?? 'map error'))
-        created.once('load', () => setStyleReady(true))
-        map.current = created
-        remoteRef.current = url
-        setStatus('ready')
+        installed = await sharedEngine().installedBasemaps()
+        setArchives(installed)
       } catch (e) {
-        // The same test as the success path, and it belongs on both arms: a loan cancelled
-        // while its header was in flight has no standing to report anything. Without this, a
-        // slow mirror that eventually fails stamps `error` and `status: 'error'` on the map
-        // the rider was *given back* — a permanent alert quoting a fetch for an archive they
-        // are not looking at, over a map that is working, with nothing on the ride screen
-        // that can clear it.
-        if (generation !== loanGeneration.current) return
+        // `null` rather than an empty list, and the difference is a rider's next move.
+        // "Nothing is installed" sends them to download a region; "the engine is broken" is a
+        // fault with an entirely different remedy, and confident wrong advice is worse than
+        // none.
+        setError(e instanceof Error ? e.message : String(e))
+        return discardMap('unavailable')
+      }
+
+      const plan = mountPlan(installed, mountedRef.current, [options.focus, remembered()])
+      if (plan.action === 'discard') return discardMap(plan.outcome)
+
+      const instance = map.current
+      if (!instance || mountedRef.current.length === 0) {
+        return (await buildMap(plan.mount, plan.focus)) ? 'ready' : discardMap('unavailable')
+      }
+
+      try {
+        for (const name of plan.remove) {
+          removeArchiveFromMap(instance, name)
+        }
+        for (const name of plan.add) {
+          const header = await mountBasemap(name)
+          addArchiveToMap(instance, name, themeRef.current, pathModeRef.current)
+          instance.setMaxZoom(Math.min(Math.max(instance.getMaxZoom(), header.maxZoom + 5), 19))
+        }
+      } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
         setStatus('error')
+        // Not a discard: the archives that were already up are still up and still correct, so
+        // taking the whole map down would turn one archive that would not open into no map at
+        // all. The caller is told, and the rider keeps what works.
+        mountedRef.current = plan.mount.filter((name) => instance.getSource(sourceIdFor(name)))
+        setMounted([...mountedRef.current])
+        return 'partial'
       }
+
+      mountedRef.current = [...plan.mount]
+      setMounted([...plan.mount])
+      setStatus('ready')
+      if (options.focus && plan.mount.includes(options.focus)) rememberFocus(options.focus)
+      return 'ready'
     },
-    [container],
+    [buildMap, discardMap, rememberFocus],
   )
 
   /**
-   * Swaps the palette without touching the archive.
+   * Moves the camera to an archive without changing what is drawn.
+   *
+   * The counterpart to every region being on the map at once: "show me Yorkshire" is now a
+   * camera move rather than a mount, so it costs nothing and loses nothing.
+   */
+  const flyToArchive = useCallback(
+    async (name: string) => {
+      const instance = map.current
+      if (!instance) return
+      try {
+        const header = await mountBasemap(name)
+        instance.easeTo({ center: header.center, zoom: 10, duration: 700 })
+        activeRef.current = header
+        setActive(header)
+        rememberFocus(name)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [rememberFocus],
+  )
+
+  /**
+   * Swaps the palette without touching the archives.
    *
    * `setStyle` replaces every layer, which includes the route line and position dot, so they
    * have to be re-added afterwards — `styledata` fires once the new style is in place. The
@@ -273,10 +330,9 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
       // Not remembering the palette is a small annoyance, not a failure.
     }
     const instance = map.current
-    const name = activeRef.current?.name
-    if (!instance || !name) return
+    if (!instance || mountedRef.current.length === 0) return
     setStyleReady(false)
-    instance.setStyle(basemapStyle(name, next, pathModeRef.current))
+    instance.setStyle(basemapStyle(mountedRef.current, next, pathModeRef.current))
     instance.once('styledata', () => {
       ensureRouteLayers(instance, next)
       setStyleReady(true)
@@ -284,12 +340,16 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   }, [])
 
   /**
-   * Shows or hides path kinds, by swapping the `paths` layer's filter.
+   * Shows or hides path kinds, by swapping the filter on every `paths` layer.
    *
    * Deliberately **not** `setStyle`, which is what the theme swap has to use. `setStyle`
    * replaces every layer, so it takes the route line and position dot with it and they have to
    * be rebuilt — acceptable for a palette change, wasteful for a button a rider might tap three
-   * times in a row to cycle the modes. `setFilter` touches one layer and leaves the route alone.
+   * times in a row to cycle the modes.
+   *
+   * Every `paths` layer, plural: there is one per mounted archive, so filtering only the first
+   * would leave the neighbouring region's footways on screen after the rider asked for them to
+   * go. Found by role rather than by name so this does not need the archive list.
    */
   const setPathMode = useCallback((next: PathMode) => {
     setPathModeState(next)
@@ -298,156 +358,24 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     } catch {
       // Not remembering the path mode is a small annoyance, not a failure.
     }
-    // Guarded because the layer only exists once the style has loaded; a tap during the first
+    const instance = map.current
+    // Guarded because the layers only exist once the style has loaded; a tap during the first
     // load would otherwise throw. The style is built with the current mode anyway, so there is
     // nothing to catch up on.
-    if (map.current?.getLayer('paths')) map.current.setFilter('paths', pathFilter(next))
-  }, [])
-
-  /**
-   * Re-reads the installed archives, answering `null` if the engine could not be asked.
-   *
-   * `null` rather than an empty list, and the difference is a rider's next move. "Nothing is
-   * installed" sends them to Setup to download a region; "the engine is broken" is a fault
-   * with an entirely different remedy. Collapsing the second into the first — which an empty
-   * array did, because every caller then reported `no-basemap` — put a confident, wrong
-   * signpost in front of someone whose app was failing for another reason.
-   */
-  const refresh = useCallback(async (): Promise<{ name: string; bytes: number }[] | null> => {
-    try {
-      const installed = await sharedEngine().installedBasemaps()
-      setArchives(installed)
-      return installed
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setStatus('error')
-      return null
+    if (!instance || !instance.isStyleLoaded()) return
+    for (const layer of instance.getStyle().layers) {
+      if (layerRole(layer.id) === 'paths') instance.setFilter(layer.id, pathFilter(next))
     }
   }, [])
 
-  /**
-   * Takes the map down to nothing, leaving no loan outstanding, and says why.
-   *
-   * Both outcomes leave the rider with no map, but only one of them is a *fault*, and they
-   * are kept apart all the way to the words on screen: `nothing-installed` is an empty phone,
-   * which the ride screen explains and offers Setup for; `unavailable` means storage could
-   * not be read or the archive would not mount, where "download a region" is confident, wrong
-   * advice. So the error `refresh` or `show` already set is left standing rather than being
-   * papered over with `no-basemap`.
-   */
-  const discardMap = useCallback((outcome: 'nothing-installed' | 'unavailable'): Handback => {
-    // Refs first, map second, and the order is load-bearing. `remove()` is the one line here
-    // that can throw, and with the old order a throw left `remoteRef` set — so the caller
-    // reported a failed handback while the borrowed archive was still recorded as on screen,
-    // and "Carry on anyway" then opened the gate onto exactly the state this whole round
-    // exists to prevent. Clearing first means a throw can cost the pixels but not the
-    // invariant.
-    const doomed = map.current
-    map.current = null
-    remoteRef.current = null
-    activeRef.current = null
-    setActive(null)
-    setStyleReady(false)
-    // Kept through a fault: the archive this loan displaced is still the best hint for a
-    // retry, and losing it to a failure that had nothing to do with it makes the second
-    // attempt worse than the first. Dropped when nothing is installed, where it names an
-    // archive that is not there.
-    if (outcome === 'nothing-installed') {
-      displacedRef.current = null
-      setStatus('no-basemap')
-      // Nothing is installed, which is a state rather than a failure. A message left over
-      // from an earlier attempt would read as one.
-      setError(null)
-    } else if (statusRef.current !== 'error') {
-      // `refresh` and `show` are supposed to have set 'error' already before calling us with
-      // this outcome — but `openLocal`'s defensive catch-all cannot, since nothing throws
-      // through it with an error attached. Assert the invariant rather than let a caller see
-      // `unavailable` paired with a `status` that still says 'ready'.
-      setStatus('error')
-    }
-    try {
-      doomed?.remove()
-    } catch {
-      // A teardown that fails has already been accounted for above: nothing points at this
-      // instance any more, so it cannot be drawn on or reported on. Swallowed rather than
-      // rethrown so this function is *total* — every caller of it may state that the loan is
-      // closed, which is the guarantee the failure screen is built on.
-    }
-    return outcome
-  }, [])
-
-  /**
-   * Puts the best local archive on screen, or nothing at all — and reports which.
-   *
-   * The one place that decides what the map shows, shared by the first launch and by the
-   * handback, because they had drifted: the startup path and `endRemote` made the same
-   * choice from the same inputs in two pieces of code, and only one of them was fixed when
-   * `refresh` learned to answer `null`.
-   *
-   * Nothing here throws. Every outcome is a {@link Handback} the caller can act on, which is
-   * the point — the failure this function exists for is one that used to look like success.
-   */
-  const openLocal = useCallback(
-    async (preferences: (string | null)[]): Promise<Handback> => {
-      try {
-        const plan = handbackPlan(await refresh(), preferences)
-        if (plan.action === 'discard') return discardMap(plan.outcome)
-        // `show` reports rather than throws, and during a loan a failure here would otherwise
-        // leave the *streamed* archive up: it only removes the old map once the new one has
-        // mounted.
-        if (await show(plan.name)) return 'restored'
-      } catch {
-        // Neither `refresh` nor `show` is supposed to reach this — both report instead of
-        // throwing. It is here so the function is total anyway: a caller that is told the
-        // handback failed may rely on the map having been taken down, and an escaping throw
-        // is the one way that promise could have been broken.
-      }
-      return discardMap('unavailable')
-    },
-    [discardMap, refresh, show],
-  )
-
-  /**
-   * Gives the map back after a {@link showRemote} loan.
-   *
-   * Called on every exit from the borrowing screen, not only the successful one, because the
-   * unsuccessful exits are the ones that used to break. **It always closes the loan**: when
-   * it cannot put a local archive up it takes the borrowed one down instead. An earlier
-   * version returned early on an engine fault, which left the streamed archive on screen and
-   * told its caller the handback had finished — the exact state `showRemote`'s own comment
-   * says must never be reached. What comes back says which of the three things happened, and
-   * a caller that ignores it is making that mistake again.
-   *
-   * Storage is re-read rather than trusting what was there when the loan began: the borrowing
-   * screen's whole purpose is to change what is installed, and a rider may have imported a
-   * basemap by hand while it was up. The displaced archive is only the *preference*.
-   *
-   * **Total, and callers depend on it.** Every path either mounts a local archive or goes
-   * through {@link discardMap}, which cannot throw — so a caller told the handback failed may
-   * state, on screen, that the rider is not looking at a borrowed map. Anything added above
-   * `openLocal` that can throw breaks that promise silently.
-   */
-  const endRemote = useCallback(async (): Promise<Handback> => {
-    // Cancels any loan still loading, so a slow header cannot land after this returns.
-    loanGeneration.current += 1
-    // Nothing borrowed and a local archive already up: the ride screen's map is its own and
-    // there is nothing to give back. Anything else is worth an attempt — that is what makes
-    // a retry after a failed handback mean something rather than reporting the same fault
-    // back without having tried.
-    if (remoteRef.current === null && statusRef.current === 'ready') return 'restored'
-    return openLocal([displacedRef.current, remembered()])
-  }, [openLocal])
-
-  // Open on whatever is already imported. StrictMode double-invokes effects in dev, and
+  // Open on whatever is already installed. StrictMode double-invokes effects in dev, and
   // building two Maps over the same container leaks the first one, so this guards.
   const started = useRef(false)
   useEffect(() => {
     if (started.current) return
     started.current = true
-    // Same three outcomes as a handback, and the same reason they are distinguished: an
-    // engine that cannot be asked must not be reported as a phone with nothing on it.
-    void openLocal([remembered()])
-  }, [openLocal])
+    void sync()
+  }, [sync])
 
   useEffect(
     () => () => {
@@ -460,6 +388,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   return {
     map,
     archives,
+    mounted,
     active,
     status,
     error,
@@ -469,10 +398,10 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     setTheme,
     pathMode,
     setPathMode,
-    show,
-    showRemote,
-    endRemote,
-    refresh,
+    sync,
+    flyToArchive,
+    /** The archive the camera would open on, for a caller that wants to name it. */
+    preferred: () => archiveToOpen(archives, [remembered()]),
     setError,
   }
 }
