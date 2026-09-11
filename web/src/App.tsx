@@ -20,14 +20,22 @@ import './App.css'
 export default function App() {
   const container = useRef<HTMLDivElement | null>(null)
   const basemap = useMapLibre(container)
-  // Stable, so `closeSetup` below is not rebuilt on every render.
-  const { endRemote } = basemap
   const [setupOpen, setSetupOpen] = useState(false)
   /**
    * `null` until we know whether there is anything installed, so the guided flow does not
    * flash up for a moment on every launch before OPFS reports what is already there.
    */
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+  /**
+   * Whether the picker has been asked to stand down.
+   *
+   * A request, not the act. The picker borrowed the map and it is the one that gives it back,
+   * so flipping `needsSetup` from here would open the gate onto a map still on loan — and
+   * would do it from a second piece of code that has to get the same ordering right, which is
+   * how the last three attempts at this went wrong. `App` asks; the picker performs the
+   * handback, reports it, and calls `onDone` if it worked.
+   */
+  const [standDown, setStandDown] = useState(false)
 
   /**
    * Whether this phone has enough to ride on. The rule itself is `readyToRide`, which is
@@ -75,18 +83,31 @@ export default function App() {
     void (async () => {
       try {
         if (!(await askStorage())) return
-        // Awaited before the gate opens, never after. The picker borrowed the map, and the
-        // ride screen's effects wake up the instant `needsSetup` clears — so the map has to
-        // be back and `styleReady` back down first, or they run against a streamed archive
-        // that is about to be torn out from under them. See `RegionPicker`'s `leave`.
-        await endRemote()
-        setNeedsSetup(false)
+        // Asks the picker to leave rather than dropping it. It is holding the map, the
+        // handback has to finish before the ride screen's effects wake up, and it can fail —
+        // all three are the picker's to deal with, and it is the screen that is on top and
+        // can say so. When there is no picker this is inert, which is correct: nothing else
+        // ever borrows the map.
+        setStandDown(true)
       } catch {
         // Leave the gate where it is: a storage failure says nothing new about what is
         // installed, and the picker's own screen reports it better than this can.
       }
     })()
-  }, [askStorage, endRemote])
+  }, [askStorage])
+
+  /**
+   * The picker's way out, and stable by construction.
+   *
+   * It is a dependency of the picker's `leave`, which now runs from an effect as well as from
+   * a tap — a fresh arrow every render would make that effect re-fire on renders that mean
+   * nothing.
+   */
+  const standDownDone = useCallback(() => {
+    setStandDown(false)
+    setNeedsSetup(false)
+  }, [])
+  const openSetup = useCallback(() => setSetupOpen(true), [])
 
   return (
     <>
@@ -96,13 +117,14 @@ export default function App() {
         container={container}
         basemap={basemap}
         suspended={needsSetup === true}
-        onOpenSetup={() => setSetupOpen(true)}
+        onOpenSetup={openSetup}
       />
       {needsSetup === true && (
         <RegionPicker
           basemap={basemap}
-          onDone={() => setNeedsSetup(false)}
-          onOpenSetup={() => setSetupOpen(true)}
+          standDown={standDown}
+          onDone={standDownDone}
+          onOpenSetup={openSetup}
         />
       )}
       {setupOpen && <SetupView basemap={basemap} onClose={closeSetup} />}

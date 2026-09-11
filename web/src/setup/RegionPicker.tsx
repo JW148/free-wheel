@@ -17,10 +17,14 @@ import {
   downloadFailure,
   downloadStatus,
   failureCopy,
+  handbackCopy,
+  MAP_WOULD_NOT_OPEN,
+  mayStandDown,
   pickerFailure,
   sheetPrice,
   statesOf,
   summarise,
+  tidyMessage,
   type CatalogueFailure,
   type RegionSummary,
 } from './pickerModel'
@@ -73,10 +77,21 @@ import {
  */
 export default function RegionPicker({
   basemap,
+  standDown,
   onDone,
   onOpenSetup,
 }: {
   basemap: ReturnType<typeof useMapLibre>
+  /**
+   * Setup has closed and this phone is ready to ride, so the picker should hand the map back
+   * and stand down.
+   *
+   * A request rather than a gate flipped over this screen's head, and that is the whole
+   * point: the handback is the borrower's job, it can fail, and only the borrower is on
+   * screen to say so. `App` asking here is what stops there being two implementations of the
+   * same exit — which is how the ordering went wrong the last three times.
+   */
+  standDown: boolean
   onDone: () => void
   /**
    * The way through to manual import. Not optional: a phone that has never reached the
@@ -90,10 +105,29 @@ export default function RegionPicker({
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<RegionProgress | null>(null)
   const [failure, setFailure] = useState<unknown>(null)
+  /** Whether the handback is in flight, so the sheet can say so and offer nothing to tap. */
+  const [standingDown, setStandingDown] = useState(false)
+  /** Whether it came back unfinished, which is a state this screen has to hold and explain. */
+  const [handbackFailed, setHandbackFailed] = useState(false)
+  /**
+   * The same flag as `standingDown`, as a ref, because that is the one that actually guards:
+   * a second tap arrives long before React has re-rendered the first one's disabled button,
+   * and two handbacks over one container is two `show()`s racing to build a map in it.
+   */
+  const standingDownRef = useRef(false)
+  /**
+   * Latched the moment this screen starts leaving, and never cleared.
+   *
+   * It says the picker is done with the map: no backdrop may be mounted after it — a streamed
+   * Britain arriving over the map the rider was just given back is the fault this whole round
+   * is about, and a retry after a failed handback must not bring one back either — and the
+   * unmount cleanup below has nothing left to hand over.
+   */
+  const mapReleased = useRef(false)
 
   // The hook returns a fresh object every render, so effects depend on the callbacks — which
   // are stable — rather than on `basemap` itself.
-  const { map, styleReady, showRemote, show, endRemote, refresh } = basemap
+  const { map, styleReady, showRemote, show, endRemote, refresh, error: mapError } = basemap
 
   const summaries = useMemo(
     () =>
@@ -145,7 +179,7 @@ export default function RegionPicker({
   const backdrop = catalogue.phase === 'ready' ? assetUrl(catalogue.manifest.picker.url) : null
   const shownBackdrop = useRef<string | null>(null)
   useEffect(() => {
-    if (!backdrop || shownBackdrop.current === backdrop) return
+    if (!backdrop || mapReleased.current || shownBackdrop.current === backdrop) return
     shownBackdrop.current = backdrop
     void showRemote(backdrop)
   }, [backdrop, showRemote])
@@ -171,39 +205,70 @@ export default function RegionPicker({
   }, [map, styleReady, running, summaries])
 
   /**
-   * Leaving the picker, in the one order that works.
+   * Leaving the picker, in the one order that works — and only if the map came back.
    *
-   * The handback has to **finish** before the gate opens, and that is why this is a step on
-   * the way out rather than an unmount cleanup. A cleanup cannot await, and React runs an
-   * unmounting child's cleanups before the updated tree's effects in the same passive phase —
-   * so a handback started from a cleanup is still suspended at its first `await` when
-   * `RideView`'s newly unsuspended effects run, against a `styleReady` that is still true and
-   * a `map.current` that is still the streamed archive. Not a race: those closures captured
+   * Two things have to be true before the gate opens, and each of them cost a round of fixes:
+   *
+   * **The handback has to finish first.** A cleanup cannot await, and React runs an unmounting
+   * child's cleanups before the updated tree's effects in the same passive phase — so a
+   * handback started from a cleanup is still suspended at its first `await` when `RideView`'s
+   * newly unsuspended effects run, against a `styleReady` that is still true and a
+   * `map.current` that is still the streamed archive. Not a race: those closures captured
    * `styleReady === true` already, so it happened every time. It cost two silent faults — pins
    * created on an instance about to be detached and never re-added to the real one, and
    * `lastFitted` written for the streamed map so the restored map's `fitBounds` was skipped.
    *
-   * Awaited here, `endRemote` has already rebuilt the map and dropped `styleReady` by the time
-   * `onDone` flips the gate, so every ride-screen effect that wakes up bails on the same tick
-   * and runs properly once the restored map loads.
+   * **And it has to have worked.** `endRemote` reads storage, and storage is exactly what
+   * fails when a second copy of the app is open — the one collision this repo says the app can
+   * do nothing about except handle. It answers with which of three things the rider is now
+   * looking at, and two of them are somewhere they can be left. The third is not: the map is
+   * down, nobody has been told why, and the remedy is something only this screen can ask for.
+   * So the picker holds, says so, and offers a retry that is a real retry.
    */
   const leave = useCallback(async () => {
-    await endRemote()
-    onDone()
+    if (standingDownRef.current) return
+    standingDownRef.current = true
+    mapReleased.current = true
+    setStandingDown(true)
+    setHandbackFailed(false)
+    try {
+      const outcome = await endRemote()
+      if (!mayStandDown(outcome)) {
+        setHandbackFailed(true)
+        return
+      }
+      onDone()
+    } catch {
+      // `endRemote` reports rather than throws, and if that ever stops being true the rule is
+      // the same: do not open the gate onto a handback nobody can vouch for.
+      setHandbackFailed(true)
+    } finally {
+      standingDownRef.current = false
+      setStandingDown(false)
+    }
   }, [endRemote, onDone])
+
+  /**
+   * Setup has closed and the phone is ready, so stand down — through the same exit as every
+   * other one, rather than having the gate flipped from outside while the map is still lent.
+   */
+  useEffect(() => {
+    if (standDown) void leave()
+  }, [standDown, leave])
 
   // The outlines come off with the screen: the map outlives the picker — one controller, two
   // screens — so leaving them on paints region boxes across the ride screen.
   //
-  // `endRemote` is here only as a safety net, for an exit that bypasses `leave` entirely (the
-  // whole app unmounting, or a gate flipped from somewhere new). It is a no-op on every
-  // ordinary path, because `leave` has already closed the loan. Do not make this the
-  // mechanism again — see `leave` above for what that cost.
+  // `endRemote` is here only as a safety net, for an exit that bypasses `leave` entirely, and
+  // only while there is still a loan `leave` has not dealt with. It is a no-op on every
+  // ordinary path. Do not make this the mechanism again — see `leave` above for what that
+  // cost, and note that it cannot be awaited, so anything it starts finishes after the ride
+  // screen's effects have already run.
   useEffect(
     () => () => {
       const instance = map.current
       if (instance) removeRegionLayers(instance)
-      void endRemote()
+      if (shownBackdrop.current !== null && !mapReleased.current) void endRemote()
     },
     [map, endRemote],
   )
@@ -251,15 +316,28 @@ export default function RegionPicker({
       setProgress(null)
       try {
         await sharedEngine().downloadRegion(summary.region, manifest, setProgress)
+        // The screen let go of the map while this was running — Setup is reachable from the
+        // head throughout — so the region is recorded and kept, but mounting it now would be
+        // this screen redrawing a map it no longer owns.
+        if (mapReleased.current) return
         // The archive list is read from storage, not remembered, so it has to be re-read
         // before the map can be pointed at a name that only just appeared in it.
         await refresh()
         // The name `regionStore.basemapFileFor` writes it under. Kept as a literal rather than
         // imported, because importing it would pull the whole Worker-side storage module onto
         // the main thread for one string.
-        await show(`${summary.region.id}.pmtiles`)
-        // `show` has already closed the loan, so the handback inside `leave` is a no-op here.
-        // Gone through anyway, so there is one way out of this screen rather than two.
+        if (!(await show(`${summary.region.id}.pmtiles`))) {
+          // The bytes are down and the region is recorded; what failed was opening it, which
+          // is a different sentence and a different decision. Leaving here would slide the
+          // rider onto whatever *other* archive is installed with no explanation at all, so
+          // the screen holds the fault and the Retry costs nothing — the engine recomputes
+          // from disk and finds everything already present.
+          setFailure(MAP_WOULD_NOT_OPEN)
+          setRunning(false)
+          return
+        }
+        // One way out of this screen rather than two. `show` has closed the loan, so the
+        // handback is a no-op here.
         await leave()
       } catch (error) {
         // Deliberately no bookkeeping of what got through: the engine recomputes that from
@@ -271,6 +349,7 @@ export default function RegionPicker({
     [leave, refresh, show],
   )
 
+  const handback = handbackCopy()
   const status = downloadStatus(progress)
   const problem = failure === null ? null : downloadFailure(failure)
   const price = selected === null ? null : sheetPrice(selected.price, problem !== null)
@@ -299,100 +378,131 @@ export default function RegionPicker({
       </div>
 
       <div className="picker-sheet">
-        {catalogue.phase === 'loading' && (
+        {/* Three layers, in this order for a reason. The handback is what the rider is
+            waiting on, so it speaks over everything; a handback that failed is the only thing
+            on this screen that is still true, because the map behind it is gone and "tap your
+            area" would be an instruction nobody can follow. */}
+        {standingDown ? (
           <p className="picker-note" role="status">
-            Fetching the list of regions…
+            Opening your map…
           </p>
-        )}
-
-        {catalogue.phase === 'unavailable' && (
+        ) : handbackFailed ? (
           <>
-            <h2>{failureCopy(catalogue.cause).heading}</h2>
-            <p className="picker-note">{failureCopy(catalogue.cause).explanation}</p>
-            <p className="picker-detail">{catalogue.reason}</p>
-            <button type="button" className="primary" onClick={onOpenSetup}>
-              {failureCopy(catalogue.cause).action}
+            <h2>{handback.heading}</h2>
+            <p className="picker-note">{handback.explanation}</p>
+            {mapError && <p className="picker-detail">{tidyMessage(mapError)}</p>}
+            <button type="button" className="primary" onClick={() => void leave()}>
+              {handback.retry}
             </button>
-            {/* The way out, and the reason it is spelled out rather than implied: a phone
-                set up by hand stands the picker down by itself when Setup closes, but a
-                rider who wants to look at the app first should not have to find that out by
-                guessing. */}
-            <button type="button" className="picker-plain" onClick={() => void leave()}>
-              Carry on without a region
+            {/* Not a dead end, even here. The map is already down, so this lands on a ride
+                screen that reports the same fault rather than on a borrowed one pretending to
+                be theirs. */}
+            <button type="button" className="picker-plain" onClick={onDone}>
+              {handback.carryOn}
             </button>
           </>
-        )}
-
-        {catalogue.phase === 'ready' && selected === null && (
+        ) : (
           <>
-            <p className="picker-note">
-              {summaries.length > 0
-                ? 'Tap your area on the map, or choose it here.'
-                : 'There are no regions on offer yet. Set the phone up by hand for now.'}
-            </p>
-            <ul className="picker-list">
-              {summaries.map((summary) => (
-                <li key={summary.id}>
-                  <button type="button" onClick={() => setSelectedId(summary.id)}>
-                    <span className="picker-name">{summary.name}</span>
-                    <span className="picker-size">
-                      {summary.bytes > 0 ? summary.size : 'Already here'}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        {catalogue.phase === 'ready' && selected !== null && (
-          <>
-            {!running && (
-              <button type="button" className="picker-plain" onClick={() => setSelectedId(null)}>
-                ← All regions
-              </button>
+            {catalogue.phase === 'loading' && (
+              <p className="picker-note" role="status">
+                Fetching the list of regions…
+              </p>
             )}
-            <h2>{selected.name}</h2>
-            {selected.status && <p className="picker-note">{selected.status}</p>}
 
-            {running ? (
+            {catalogue.phase === 'unavailable' && (
               <>
-                {/* The size stays on screen while it downloads: it is the number that tells a
-                    rider how long to expect to wait. */}
-                <p className="picker-size">{selected.size} in total</p>
-                <div
-                  className="picker-bar"
-                  role="progressbar"
-                  aria-valuenow={status.percent}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label={`Downloading ${selected.name}`}
-                >
-                  <span style={{ width: `${status.percent}%` }} />
-                </div>
-                <p className="picker-note" role="status">
-                  {status.line}
-                </p>
-              </>
-            ) : (
-              <>
-                {/* Suppressed after a failure: the mount-time price is for the whole region,
-                    and the retry will resume. `sheetPrice` holds the rule and the reason, and
-                    what it hands back is what renders. */}
-                {price !== null && <p className="picker-size">{price}</p>}
-                {problem && (
-                  <div className="picker-problem" role="alert">
-                    <p>{problem.message}</p>
-                    {problem.advice && <p className="picker-note">{problem.advice}</p>}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => void start(selected, catalogue.manifest)}
-                >
-                  {problem ? 'Retry' : selected.action}
+                <h2>{failureCopy(catalogue.cause).heading}</h2>
+                <p className="picker-note">{failureCopy(catalogue.cause).explanation}</p>
+                <p className="picker-detail">{catalogue.reason}</p>
+                <button type="button" className="primary" onClick={onOpenSetup}>
+                  {failureCopy(catalogue.cause).action}
                 </button>
+                {/* The way out, and the reason it is spelled out rather than implied: a phone
+                    set up by hand stands the picker down by itself when Setup closes, but a
+                    rider who wants to look at the app first should not have to find that out by
+                    guessing. */}
+                <button type="button" className="picker-plain" onClick={() => void leave()}>
+                  Carry on without a region
+                </button>
+              </>
+            )}
+
+            {catalogue.phase === 'ready' && selected === null && (
+              <>
+                <p className="picker-note">
+                  {summaries.length > 0
+                    ? 'Tap your area on the map, or choose it here.'
+                    : 'There are no regions on offer yet. Set the phone up by hand for now.'}
+                </p>
+                <ul className="picker-list">
+                  {summaries.map((summary) => (
+                    <li key={summary.id}>
+                      <button type="button" onClick={() => setSelectedId(summary.id)}>
+                        <span className="picker-name">{summary.name}</span>
+                        <span className="picker-size">
+                          {summary.bytes > 0 ? summary.size : 'Already here'}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {catalogue.phase === 'ready' && selected !== null && (
+              <>
+                {!running && (
+                  <button
+                    type="button"
+                    className="picker-plain"
+                    onClick={() => setSelectedId(null)}
+                  >
+                    ← All regions
+                  </button>
+                )}
+                <h2>{selected.name}</h2>
+                {selected.status && <p className="picker-note">{selected.status}</p>}
+
+                {running ? (
+                  <>
+                    {/* The size stays on screen while it downloads: it is the number that tells a
+                        rider how long to expect to wait. */}
+                    <p className="picker-size">{selected.size} in total</p>
+                    <div
+                      className="picker-bar"
+                      role="progressbar"
+                      aria-valuenow={status.percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`Downloading ${selected.name}`}
+                    >
+                      <span style={{ width: `${status.percent}%` }} />
+                    </div>
+                    <p className="picker-note" role="status">
+                      {status.line}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {/* Suppressed after a failure: the mount-time price is for the whole region,
+                        and the retry will resume. `sheetPrice` holds the rule and the reason, and
+                        what it hands back is what renders. */}
+                    {price !== null && <p className="picker-size">{price}</p>}
+                    {problem && (
+                      <div className="picker-problem" role="alert">
+                        <p>{problem.message}</p>
+                        {problem.advice && <p className="picker-note">{problem.advice}</p>}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void start(selected, catalogue.manifest)}
+                    >
+                      {problem ? 'Retry' : selected.action}
+                    </button>
+                  </>
+                )}
               </>
             )}
           </>

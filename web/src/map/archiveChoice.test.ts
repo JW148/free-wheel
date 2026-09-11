@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { archiveToOpen } from './archiveChoice'
+import { archiveToOpen, handbackPlan } from './archiveChoice'
 
 const installed = [{ name: 'wessex.pmtiles' }, { name: 'central-scotland.pmtiles' }]
 
@@ -43,5 +43,48 @@ describe('archiveToOpen', () => {
    */
   it('answers null when nothing is installed, which is a real answer', () => {
     expect(archiveToOpen([], ['wessex.pmtiles'])).toBeNull()
+  })
+})
+
+describe('handbackPlan', () => {
+  /*
+   * The case this function exists for, and the one three rounds of fixes kept walking past.
+   * `refresh()` answers `null` when the engine could not be asked at all — two Safari tabs
+   * colliding over the same storage handles is the documented way in — and a handback that
+   * returns early there leaves the loan open and a streamed backdrop on screen while telling
+   * its caller it finished. There is nothing to restore *to*, so the only honest move is to
+   * take the borrowed map down and say why.
+   */
+  it('takes the map down when storage could not be read at all', () => {
+    expect(handbackPlan(null, ['wessex.pmtiles'])).toEqual({
+      action: 'discard',
+      outcome: 'unavailable',
+    })
+  })
+
+  /*
+   * Deliberately a different outcome from the one above, because they are different sentences
+   * on screen: "you have no map yet" sends a rider to download one, "free-wheel cannot read
+   * this phone" does not.
+   */
+  it('takes the map down when nothing is installed, which is a choice rather than a fault', () => {
+    expect(handbackPlan([], ['wessex.pmtiles'])).toEqual({
+      action: 'discard',
+      outcome: 'nothing-installed',
+    })
+  })
+
+  it('mounts the first preference that is installed', () => {
+    expect(handbackPlan(installed, ['central-scotland.pmtiles'])).toEqual({
+      action: 'mount',
+      name: 'central-scotland.pmtiles',
+    })
+  })
+
+  it('mounts whatever is there when no preference survives', () => {
+    expect(handbackPlan(installed, ['deleted.pmtiles', null])).toEqual({
+      action: 'mount',
+      name: 'wessex.pmtiles',
+    })
   })
 })

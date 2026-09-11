@@ -7,7 +7,10 @@ import {
   downloadStatus,
   failureCopy,
   formatMegabytes,
+  handbackCopy,
   itemWords,
+  MAP_WOULD_NOT_OPEN,
+  mayStandDown,
   pickerFailure,
   priceLine,
   readyToRide,
@@ -376,5 +379,80 @@ describe('sheetPrice', () => {
    */
   it('withholds a stale whole-region price above a resume', () => {
     expect(sheetPrice('137 MB — the map and the road data for this area.', true)).toBeNull()
+  })
+})
+
+describe('the map that would not open', () => {
+  /*
+   * The download finished, the bytes are on the phone, and mounting the archive failed
+   * anyway — the same storage collision that breaks a handback. Saying "the download
+   * stopped" there is false in both halves, and it is the sentence that decides whether a
+   * rider spends 137 MB again.
+   */
+  it('does not describe a finished download as a stopped one', () => {
+    const { message, advice } = downloadFailure(MAP_WOULD_NOT_OPEN)
+    expect(message).not.toMatch(/stopped|dropped/i)
+    expect(message).toMatch(/would not open/i)
+    expect(advice ?? '').toMatch(/another tab/i)
+  })
+
+  it('does not leak the sentinel itself', () => {
+    expect(downloadFailure(MAP_WOULD_NOT_OPEN).message).not.toMatch(/map-would-not-open/)
+  })
+
+  it('keeps the copy rule', () => {
+    const { message, advice } = downloadFailure(MAP_WOULD_NOT_OPEN)
+    expect(`${message} ${advice ?? ''}`).not.toMatch(/\.rd5|\.pmtiles|segment|OPFS|\btiles?\b/i)
+  })
+})
+
+describe('mayStandDown', () => {
+  it('lets the picker go once the ride screen has a map again', () => {
+    expect(mayStandDown('restored')).toBe(true)
+  })
+
+  /*
+   * "Carry on without a region" on an empty phone. Nothing to restore is a choice a rider
+   * made, not a failure, and the ride screen has its own words for it — blocking the exit
+   * here would put them back in the dead end the picker exists to remove.
+   */
+  it('lets the picker go with nothing installed at all', () => {
+    expect(mayStandDown('nothing-installed')).toBe(true)
+  })
+
+  /*
+   * The one that has to hold. A handback that could not be completed leaves the rider with no
+   * map and an engine that cannot be asked anything; walking them onto the ride screen without
+   * a word is how three rounds of this fix kept ending.
+   */
+  it('holds the picker when the handback could not be completed', () => {
+    expect(mayStandDown('unavailable')).toBe(false)
+  })
+})
+
+describe('handbackCopy', () => {
+  it('names the storage fault rather than blaming the network', () => {
+    const { heading, explanation } = handbackCopy()
+    expect(`${heading} ${explanation}`).not.toMatch(/internet|wifi|mobile data/i)
+    expect(explanation).toMatch(/another tab/i)
+  })
+
+  it('is not the no-list apology, which is a different fault with a different remedy', () => {
+    expect(handbackCopy().heading).not.toBe(failureCopy('list').heading)
+    expect(handbackCopy().heading).not.toBe(failureCopy('storage').heading)
+  })
+
+  it('offers both a retry and a way past it', () => {
+    const { retry, carryOn } = handbackCopy()
+    expect(retry).not.toBe(carryOn)
+    expect(retry.length).toBeGreaterThan(0)
+    expect(carryOn.length).toBeGreaterThan(0)
+  })
+
+  it('keeps the copy rule', () => {
+    const { heading, explanation, retry, carryOn } = handbackCopy()
+    expect(`${heading} ${explanation} ${retry} ${carryOn}`).not.toMatch(
+      /\.rd5|\.pmtiles|segment|OPFS|\btiles?\b/i,
+    )
   })
 })

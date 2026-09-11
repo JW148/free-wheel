@@ -21,6 +21,7 @@
 import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 import { downloadPlan, regionState, type RegionState } from '../data/regions'
 import type { RegionProgress } from '../engine/downloads'
+import type { Handback } from '../map/archiveChoice'
 
 /**
  * A size as a rider reads it: whole megabytes, decimal not binary.
@@ -115,6 +116,50 @@ export function failureCopy(cause: CatalogueFailure['cause']): {
     explanation:
       'free-wheel could not reach the internet, and it has never saved a copy of the list. Connect to a network and open the app again, or set it up by hand.',
     action: 'Set up by hand',
+  }
+}
+
+/**
+ * Whether the picker may stand down on a given handback.
+ *
+ * The picker borrows the one MapLibre instance the whole app shares, and every exit has to
+ * give it back before the ride screen's effects wake up. Three of the four outcomes of that
+ * handback are fine to leave on, and the rule is *not* "did it restore a map":
+ *
+ * - `restored` — obviously.
+ * - `nothing-installed` — an empty phone that chose to carry on without a region. The map is
+ *   torn down and the ride screen has copy for exactly this. Blocking here would rebuild the
+ *   dead end the picker exists to remove.
+ * - `unavailable` — the handback could not be completed. The borrowed map is down, so nothing
+ *   is masquerading as the rider's own, but nobody has been told why and the one thing that
+ *   might fix it (closing a second copy of the app) is not something the ride screen can ask
+ *   for. The picker holds, says so, and offers a retry.
+ */
+export function mayStandDown(outcome: Handback): boolean {
+  return outcome !== 'unavailable'
+}
+
+/**
+ * The words for a handback that could not be completed.
+ *
+ * Its own copy rather than {@link failureCopy}'s, because it is its own fault: the list
+ * arrived, the phone may well have a perfectly good map on it, and what failed was reading
+ * the record of what is there. The remedy is the one this repo has already written down —
+ * only one copy of the app can hold a storage handle, and a second tab is how that collides —
+ * so the explanation says that rather than sending anyone to look at their wifi.
+ */
+export function handbackCopy(): {
+  heading: string
+  explanation: string
+  retry: string
+  carryOn: string
+} {
+  return {
+    heading: 'free-wheel could not open your map',
+    explanation:
+      'It could not read what is saved on this phone, so there is nothing to put on screen. If free-wheel is open in another tab, close that tab — only one copy can use this phone’s storage at a time — and try again.',
+    retry: 'Try again',
+    carryOn: 'Carry on anyway',
   }
 }
 
@@ -341,6 +386,17 @@ export function tidyMessage(error: unknown): string {
   return message
 }
 
+/**
+ * The download finished and the archive would not mount.
+ *
+ * A marker rather than an error, because it is not one that was thrown: `show` reports a
+ * failed mount by answering `false`, and the same storage collision that breaks a handback
+ * breaks this. It matters because the honest sentence is the opposite of every other branch
+ * below — the bytes are *here*, and a rider told "the download stopped" may well decide to
+ * spend the whole region again over mobile data.
+ */
+export const MAP_WOULD_NOT_OPEN = 'map-would-not-open'
+
 export interface DownloadFailure {
   /** What happened, in one sentence. */
   message: string
@@ -360,6 +416,14 @@ export interface DownloadFailure {
  * Quota is called out separately because it is the one failure a retry alone cannot fix.
  */
 export function downloadFailure(error: unknown): DownloadFailure {
+  if (error === MAP_WOULD_NOT_OPEN) {
+    return {
+      message: 'The download finished, but the map would not open.',
+      advice:
+        'Nothing needs fetching again — it is all on the phone. If free-wheel is open in another tab, close that tab and try again.',
+    }
+  }
+
   const name = error instanceof Error ? error.name : ''
   const message = tidyMessage(error)
 

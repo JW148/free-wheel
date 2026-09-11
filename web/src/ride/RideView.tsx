@@ -63,6 +63,7 @@ export default function RideView({
 }) {
   const {
     map,
+    active: activeBasemap,
     error: mapError,
     status: mapStatus,
     styleReady,
@@ -436,6 +437,17 @@ export default function RideView({
                explain itself rather than looking like a failed load. */
             <p className="rail-hint panel">
               No map on this phone yet. Open Setup to download a region, or to import one.
+            </p>
+          ) : mapStatus === 'error' && activeBasemap === null ? (
+            /* The other way to arrive with no map, and it wants different words. Nothing is
+               missing from this phone, so "download a region" would be confident and wrong —
+               what failed was reading what is already here, and the remedy is the collision
+               this repo has already documented. The fault itself is in the alert below.
+               Narrowed to "and no archive is mounted", because `refresh` also reports `error`
+               for a failed import while a perfectly good map is on screen. */
+            <p className="rail-hint panel">
+              free-wheel could not open your map. If it is open in another tab, close that tab
+              and reload.
             </p>
           ) : routeCount > 1 ? (
             <p className="rail-hint panel">
