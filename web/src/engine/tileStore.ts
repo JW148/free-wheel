@@ -232,6 +232,11 @@ export async function installedBasemaps(): Promise<{ name: string; bytes: number
  * `current`, the picker stops offering it, and `downloadPlan` skips the segment because some
  * record still claims it — while BRouter reports no segment directory. See
  * `regionRecords.forgetSegments`.
+ *
+ * That `/regions.json` write has to be serialized against the region download loop, which
+ * rewrites the same file wholesale — but not here, because `regionStore.deleteRegionFiles`
+ * calls this from inside the queue already. `regionStore.deleteTileSerialized` is the wrapped
+ * entry point, and the one `engineApi` calls; the same goes for {@link resetTileStorage}.
  */
 export async function deleteTile(tile: string): Promise<void> {
   const path = `${SEGMENT_DIR}/${tile}.rd5`

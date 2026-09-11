@@ -9,12 +9,10 @@ import {
   readRangeFromOpfs,
 } from './opfsVfs'
 import {
-  deleteTile,
   importBasemapFile,
   importTileFile,
   installedBasemaps,
   installedTiles,
-  resetTileStorage,
   SEGMENT_DIR,
   type ImportProgress,
 } from './tileStore'
@@ -24,9 +22,11 @@ import { downloadPlan } from '../data/regions'
 import {
   completeRegionDownload,
   deleteRegionFiles,
+  deleteTileSerialized,
   opfsDownloadDeps,
   readRecords,
   recordsAfterRemoval,
+  resetTileStorageSerialized,
   runRegionDownload,
   serializeRegionOp,
   writeRecords,
@@ -190,12 +190,21 @@ const engineApi = {
     return installedBasemaps()
   },
 
+  /**
+   * Deletes one segment.
+   *
+   * Serialized against `downloadRegion` and `removeRegion`, because it retracts the segment's
+   * hash from `/regions.json` and a download committing across it would put the retraction
+   * straight back. See `regionStore.deleteTileSerialized` for why the wrap lives there and not
+   * in `tileStore`.
+   */
   async deleteTile(tile: string) {
-    await deleteTile(tile)
+    await deleteTileSerialized(tile)
   },
 
+  /** Clears every segment, serialized for the same reason as {@link deleteTile}. */
   async resetTileStorage() {
-    return resetTileStorage()
+    return resetTileStorageSerialized()
   },
 
   /**

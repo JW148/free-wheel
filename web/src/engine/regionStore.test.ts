@@ -7,6 +7,7 @@ import { installFakeOpfs } from './fakeOpfs'
 import {
   completeRegionDownload,
   deleteRegionFiles,
+  deleteTileSerialized,
   markDownloading,
   opfsDownloadDeps,
   pathForItem,
@@ -14,8 +15,10 @@ import {
   readRecords,
   recordAfterDownload,
   recordsAfterRemoval,
+  resetTileStorageSerialized,
   runRegionDownload,
   serializeRegionOp,
+  writeRecords,
   type DownloadLoopDeps,
 } from './regionStore'
 import { BASEMAP_DIR, installedTiles, SEGMENT_DIR } from './tileStore'
@@ -661,4 +664,86 @@ describe('deleteRegionFiles', () => {
     expect(await readPartialHash(path)).toBeNull()
     expect(opfs.read(path)).toBeNull()
   })
+})
+
+/**
+ * A tile deleted from Setup while a region download is finishing.
+ *
+ * `deleteTile` retracts the segment's hash from every region record, and
+ * `completeRegionDownload` rewrites the whole of `/regions.json` from a snapshot it took a few
+ * awaits earlier. Overlap them and the rewrite wins, restoring a claim on a file that has just
+ * been deleted — the record says `current`, the picker stops offering the region, and BRouter
+ * reports no segment directory. The queue is what keeps both operations' effects.
+ *
+ * Driven through the serialized entry points `engineApi` calls, not through `tileStore`
+ * directly, because the wrap is the thing under test.
+ */
+describe('a tile delete overlapping a region download', () => {
+  const items: DownloadItem[] = [
+    { kind: 'basemap', key: 'wessex', url: 'https://example/basemap.pmtiles', bytes: 10, hash: '1111aaaa' },
+    { kind: 'segment', key: 'W5_N50', url: 'https://example/W5_N50.rd5', bytes: 6, hash: 'bbbb2222' },
+  ]
+  const tilePath = `${SEGMENT_DIR}/W5_N50.rd5`
+
+  /**
+   * The shape of `engineApi.downloadRegion`: one queued call that snapshots the records, spends
+   * a long time on the network, and only then commits.
+   *
+   * The timer stands in for the network, and its length is the whole point. A delete that is
+   * not queued runs entirely inside it — every step of `deleteTile` is a resolved promise over
+   * the fake OPFS — and the commit that follows then writes the segment claim back against a
+   * file the delete has already removed. An `await` the test resolves by hand would not
+   * separate the two chains: they would interleave microtask by microtask and the delete would
+   * finish last by luck, which is how the first version of this test passed against the bug.
+   */
+  function downloadHolding(): Promise<InstalledRegion[]> {
+    return serializeRegionOp(async () => {
+      await readRecords()
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return completeRegionDownload(manifest.regions[0], manifest, items, 2)
+    })
+  }
+
+  beforeEach(async () => {
+    // South West England is installed and claims the same W5_N50 the download wants. A shared
+    // segment is the case that made the stale claim invisible: `downloadPlan` skips a segment
+    // as soon as any record claims it.
+    await writeRecords([
+      { id: 'south-west-england', basemapHash: '2222bbbb', segmentHashes: { W5_N50: 'bbbb2222' }, installedAt: 1 },
+    ])
+    for (const item of items) opfs.write(pathForItem('wessex', item), item.bytes)
+    await markDownloading(tilePath, { hash: 'bbbb2222', bytes: 6, started: true })
+  })
+
+  it('lands the download\'s record and the delete\'s retraction, not one or the other', async () => {
+    const download = downloadHolding()
+    await Promise.all([download, deleteTileSerialized('W5_N50')])
+
+    const records = await readRecords()
+    // The download landed: Wessex is recorded, basemap hash and all.
+    expect(records.map((r) => r.id)).toEqual(['south-west-england', 'wessex'])
+    expect(records.map((r) => r.basemapHash)).toEqual(['2222bbbb', '1111aaaa'])
+    // And so did the delete: no record claims the segment whose file is gone.
+    expect(records.map((r) => r.segmentHashes)).toEqual([{}, {}])
+    expect(opfs.read(tilePath)).toBeNull()
+    expect(await readPartialHash(tilePath)).toBeNull()
+  })
+
+  it('does the same for a storage reset', async () => {
+    const download = downloadHolding()
+    await Promise.all([download, resetTileStorageSerialized()])
+
+    const records = await readRecords()
+    expect(records.map((r) => r.id)).toEqual(['south-west-england', 'wessex'])
+    expect(records.map((r) => r.segmentHashes)).toEqual([{}, {}])
+    expect(opfs.read(tilePath)).toBeNull()
+  })
+
+  it('still lets a removal delete its segments from inside the queue', async () => {
+    // `removeRegion` runs `deleteRegionFiles` -> `deleteTile` with the queue already held. Wrap
+    // `deleteTile` itself instead of wrapping here and this waits on a link it is blocking: a
+    // deadlock nothing times out. The short timeout is the assertion.
+    await serializeRegionOp(() => deleteRegionFiles(['W5_N50'], ''))
+    expect(opfs.read(tilePath)).toBeNull()
+  }, 2000)
 })

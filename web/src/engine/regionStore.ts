@@ -14,7 +14,7 @@ import type { DownloadItem } from '../data/regions'
 import { downloadInto, resumeDecision, type ByteSink, type RegionProgress } from './downloads'
 import { openHandle, peekFileSize, refreshSize, removeFile } from './opfsVfs'
 import { readRecords, writeRecords } from './regionRecords'
-import { BASEMAP_DIR, deleteTile, recordTileInstalled, SEGMENT_DIR } from './tileStore'
+import { BASEMAP_DIR, deleteTile, recordTileInstalled, resetTileStorage, SEGMENT_DIR } from './tileStore'
 import { clearDownloading, markDownloading, readPartialHash, type PartialTarget } from './partials'
 
 // Re-exported so a caller assembling `DownloadLoopDeps` has one import for the loop and the
@@ -58,6 +58,45 @@ export function serializeRegionOp<T>(run: () => Promise<T>): Promise<T> {
     () => undefined,
   )
   return result
+}
+
+/**
+ * `tileStore.deleteTile`, queued behind every other region operation.
+ *
+ * Deleting a segment is a region operation, even though it is reached from the tile list rather
+ * than the picker: `deleteTile` calls `forgetSegments`, which is a read-modify-write of
+ * `/regions.json` exactly like `downloadRegion` and `removeRegion`. Unqueued, a delete from Setup that lands between
+ * `completeRegionDownload`'s read and its write is discarded by that write — and what comes back
+ * is the record the delete had just retracted, claiming a `.rd5` that is no longer on disk. That
+ * is the one state the picker offers no way out of, and the reason `forgetSegments` exists.
+ *
+ * ## Why the wrap is here and not inside `tileStore`
+ *
+ * `deleteTile` is also reached from *inside* the queue: `removeRegion` runs
+ * `deleteRegionFiles`, which deletes each segment that way. `serializeRegionOp` is a plain
+ * promise chain with no re-entrancy escape, so a queued call that queues another waits on a
+ * link it is itself blocking — `removeRegion` would hang forever, and nothing would time it
+ * out. Wrapping at the entry points that are *not* already inside the queue is what avoids
+ * that, which means here, called from `engineApi`, rather than in `deleteTile` itself.
+ *
+ * These live in this module rather than inline in `engineApi.ts` for the reason
+ * `completeRegionDownload` does: `engineApi.ts` calls `Comlink.expose()` at module scope and so
+ * cannot be imported under vitest, and wiring no test can reach is where these bugs keep
+ * living.
+ */
+export function deleteTileSerialized(tile: string): Promise<void> {
+  return serializeRegionOp(() => deleteTile(tile))
+}
+
+/**
+ * `tileStore.resetTileStorage`, queued for the same reason: its `forgetSegments('all')` is a
+ * read-modify-write of `/regions.json`, and a download finishing across it puts back a claim on
+ * a segment the reset has just deleted. Wrapped at the same boundary as
+ * {@link deleteTileSerialized} — not reachable from inside the queue today, but keeping both
+ * entry points wrapped in one place is what stops the next caller guessing.
+ */
+export function resetTileStorageSerialized(): Promise<string[]> {
+  return serializeRegionOp(() => resetTileStorage())
 }
 
 /** Where a plan item lands in OPFS. */
@@ -116,7 +155,9 @@ export function recordsAfterRemoval(
  *
  * Segments go through `tileStore.deleteTile` rather than a bare `removeFile`, because that is
  * also what removes the segment's entry from `/segments4/.imported.json` — otherwise a deleted
- * segment's stale age would linger in a manifest nothing else ever cleans up. Basemaps have no
+ * segment's stale age would linger in a manifest nothing else ever cleans up. Deliberately the
+ * bare `deleteTile` and not {@link deleteTileSerialized}: this runs inside `removeRegion`'s
+ * `serializeRegionOp`, and queueing from in there would deadlock. Basemaps have no
  * equivalent age-tracking manifest, but they do have download markers, so those are cleared
  * here explicitly.
  *
