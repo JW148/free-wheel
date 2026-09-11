@@ -7,6 +7,7 @@ import {
   provisionOpfs,
   provisionedFiles,
   readRangeFromOpfs,
+  refreshSize,
 } from './opfsVfs'
 import {
   deleteTile,
@@ -15,10 +16,28 @@ import {
   installedBasemaps,
   installedTiles,
   resetTileStorage,
+  BASEMAP_DIR,
   SEGMENT_DIR,
   type ImportProgress,
 } from './tileStore'
 import type { ProvisionProgress } from './opfsVfs'
+import { downloadInto, resumeDecision, type RegionProgress } from './downloads'
+import { downloadPlan } from '../data/regions'
+import {
+  basemapFileFor,
+  clearPartialHash,
+  readPartialHash,
+  readRecords,
+  recordAfterDownload,
+  recordsAfterRemoval,
+  deleteRegionFiles,
+  writePartialHash,
+  writeRecords,
+} from './regionStore'
+// `import type` is load-bearing here: this file runs in a Worker, which has no `localStorage`,
+// and `manifest.ts` contains `loadManifest`, which uses it. A value import would pull that
+// code into the Worker bundle even though nothing here calls it.
+import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 
 /**
  * The engine's Worker-side API, exposed over Comlink.
@@ -69,6 +88,13 @@ interface WasmEngine {
     probeList(path: string): string
     probeDepth(depth: number): number
   }
+}
+
+/** Where a plan item lands in OPFS. Shared between the download loop and the cleanup pass. */
+function pathForItem(regionId: string, item: { kind: 'basemap' | 'segment'; key: string }): string {
+  return item.kind === 'basemap'
+    ? `${BASEMAP_DIR}/${basemapFileFor(regionId)}`
+    : `${SEGMENT_DIR}/${item.key}.rd5`
 }
 
 let engine: WasmEngine | null = null
@@ -180,6 +206,115 @@ const engineApi = {
 
   async resetTileStorage() {
     return resetTileStorage()
+  },
+
+  /**
+   * Downloads a region's basemap and routing segments into OPFS.
+   *
+   * Runs here because sync access handles are Worker-only on iOS, and finishes by calling
+   * `installedTiles()` again: that call is what registers `/segments4` in the VFS's in-memory
+   * directory registry, and skipping it makes BRouter report that the segment directory does
+   * not exist while the file sits in OPFS. It only shows up on a cold start.
+   *
+   * `resumeDecision` is recomputed from the handle's actual size and the recorded partial hash
+   * immediately before every attempt — never cached across a retry. A retry is exactly a
+   * second call to this method (the caller sees the rejection and tries again), and each call
+   * starts from `readRecords()` and re-reads every handle's live size, so a previous attempt's
+   * partial or over-long file is judged fresh rather than assumed.
+   *
+   * A partial hash is cleared only once the *whole region* succeeds and its record is written,
+   * not as each item finishes. A multi-item region — basemap plus several segments — commits
+   * nothing to `regions.json` until every item is down, so a failure on the last segment would
+   * otherwise leave the earlier, already-correct items with no recorded hash: a retry's
+   * `downloadPlan` still lists them (the region isn't recorded as installed yet), and
+   * `resumeDecision` would see a `null` hash where it expects a match and restart them from
+   * byte zero — silently re-fetching a 90 MB basemap and a 137 MB segment that were already
+   * fine, on every retry after a late failure.
+   */
+  async downloadRegion(
+    region: RegionEntry,
+    manifest: DataManifest,
+    onProgress?: (progress: RegionProgress) => void,
+  ): Promise<InstalledRegion[]> {
+    const records = await readRecords()
+    const plan = downloadPlan(region, manifest, records)
+    let doneBytes = 0
+
+    for (const item of plan.items) {
+      const path = pathForItem(region.id, item)
+
+      try {
+        const handle = await openHandle(path)
+        const recordedHash = await readPartialHash(path)
+        const decision = resumeDecision(
+          { bytes: handle.getSize(), hash: recordedHash },
+          { bytes: item.bytes, hash: item.hash },
+        )
+
+        if (decision.action !== 'done') {
+          await writePartialHash(path, item.hash)
+          const sink = {
+            size: () => handle.getSize(),
+            truncate: (to: number) => handle.truncate(to),
+            write: (chunk: Uint8Array, at: number) => {
+              handle.write(chunk, { at })
+            },
+            flush: () => handle.flush(),
+          }
+          await downloadInto(sink, item.url, item.bytes, {
+            from: decision.action === 'resume' ? decision.at : 0,
+            onProgress: (received) =>
+              onProgress?.({
+                key: item.key,
+                kind: item.kind,
+                received,
+                total: item.bytes,
+                overallReceived: doneBytes + received,
+                overallTotal: plan.bytes,
+                state: 'downloading',
+              }),
+          })
+          refreshSize(path)
+        }
+
+        doneBytes += item.bytes
+        onProgress?.({
+          key: item.key, kind: item.kind, received: item.bytes, total: item.bytes,
+          overallReceived: doneBytes, overallTotal: plan.bytes, state: 'complete',
+        })
+      } catch (error) {
+        onProgress?.({
+          key: item.key, kind: item.kind, received: 0, total: item.bytes,
+          overallReceived: doneBytes, overallTotal: plan.bytes, state: 'failed',
+        })
+        throw error
+      }
+    }
+
+    const updated = recordAfterDownload(records, region, manifest, Date.now())
+    await writeRecords(updated)
+
+    // Only now, with the region durably recorded as installed, are the partial-hash entries
+    // safe to forget — see the doc comment above.
+    for (const item of plan.items) {
+      await clearPartialHash(pathForItem(region.id, item))
+    }
+
+    // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
+    await installedTiles()
+    return updated
+  },
+
+  async installedRegions(): Promise<InstalledRegion[]> {
+    return readRecords()
+  },
+
+  async removeRegion(id: string): Promise<InstalledRegion[]> {
+    const records = await readRecords()
+    const { records: remaining, deleteSegments, deleteBasemap } = recordsAfterRemoval(records, id)
+    await deleteRegionFiles(deleteSegments, deleteBasemap)
+    await writeRecords(remaining)
+    return remaining
   },
 
   /**

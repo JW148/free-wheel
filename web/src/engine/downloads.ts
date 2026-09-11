@@ -29,6 +29,17 @@ export interface DownloadOptions {
   onProgress?: (received: number, total: number) => void
 }
 
+/** Progress for one item of a region download, and the region's running total alongside it. */
+export interface RegionProgress {
+  key: string
+  kind: 'basemap' | 'segment'
+  received: number
+  total: number
+  overallReceived: number
+  overallTotal: number
+  state: 'downloading' | 'complete' | 'failed'
+}
+
 /**
  * Whether a partly-written file can be continued.
  *
