@@ -7,10 +7,11 @@ import { copyText, sendReport } from '../spike/report'
  * GPX parity check: replays the JVM reference corpus through the Wasm engine and compares
  * each route's GPX by byte length and CRC-32.
  *
- * Runs against whatever tiles are **already imported** — it never fetches routing data, in
- * keeping with the import-only design. A case whose tile is missing reports that plainly
- * rather than quietly downloading it, which is the honest behaviour and also what makes a
- * missing-tile failure distinguishable from a real parity failure.
+ * Runs against whatever tiles are **already on the phone** — from a region download or a
+ * manual import, this panel doesn't care which — and never fetches anything itself. A case
+ * whose tile is missing reports that plainly rather than quietly fetching it, which is the
+ * honest behaviour and also what makes a missing-tile failure distinguishable from a real
+ * parity failure.
  */
 export default function RoutePanel() {
   const [reference, setReference] = useState<JvmRoutes | null>(null)
