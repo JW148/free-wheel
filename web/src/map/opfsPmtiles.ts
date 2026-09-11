@@ -141,3 +141,23 @@ export async function mountBasemap(name: string) {
     center: [header.centerLon, header.centerLat] as [number, number],
   }
 }
+
+/**
+ * Makes a remote archive available to the map, read by HTTP range.
+ *
+ * Nothing is downloaded. The region picker shows Britain at z5 to z8 and pulls a few hundred
+ * kilobytes out of a 61 MB archive, which is why the first screen does not have to wait for a
+ * download to show a real map.
+ */
+export async function mountRemoteBasemap(url: string) {
+  registerPmtilesProtocol()
+  const archive = new PMTiles(url)
+  const header = await archive.getHeader()
+  return {
+    name: url,
+    bytes: 0,
+    minZoom: header.minZoom,
+    maxZoom: header.maxZoom,
+    center: [header.centerLon, header.centerLat] as [number, number],
+  }
+}

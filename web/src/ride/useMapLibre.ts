@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttributionControl, Map as MapLibreMap } from 'maplibre-gl'
-import { mountBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
+import { mountBasemap, mountRemoteBasemap, registerPmtilesProtocol } from '../map/opfsPmtiles'
 import { checkMapLibreWorker, configureMapLibreWorker } from '../map/maplibreWorker'
 import { basemapStyle, pathFilter, type MapTheme, type PathMode } from '../map/style'
 import { sharedEngine } from '../engine/engineClient'
@@ -139,6 +139,45 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   )
 
   /**
+   * Shows a remote archive streamed over HTTP range, for the region picker.
+   *
+   * Follows `show` except in three ways: it mounts the archive by URL instead of an OPFS
+   * name, it opens on Britain rather than the archive's own centre, and it never touches
+   * `archives` or `active` — a streamed archive is not installed, and the ride screen must
+   * never be able to mistake this backdrop for a downloaded region.
+   */
+  const showRemote = useCallback(
+    async (url: string) => {
+      setError(null)
+      setStyleReady(false)
+      try {
+        const header = await mountRemoteBasemap(url)
+        map.current?.remove()
+        const created = new MapLibreMap({
+          container: container.current!,
+          style: basemapStyle(url, themeRef.current, pathModeRef.current),
+          center: [-3.2, 54.8],
+          zoom: 4.6,
+          maxZoom: Math.min(header.maxZoom + 5, 19),
+          attributionControl: false,
+          pitchWithRotate: false,
+          dragRotate: false,
+        })
+        created.touchZoomRotate.disableRotation()
+        created.addControl(new AttributionControl({ compact: true }), 'bottom-left')
+        created.on('error', (e) => setError(e.error?.message ?? 'map error'))
+        created.once('load', () => setStyleReady(true))
+        map.current = created
+        setStatus('ready')
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+        setStatus('error')
+      }
+    },
+    [container],
+  )
+
+  /**
    * Swaps the palette without touching the archive.
    *
    * `setStyle` replaces every layer, which includes the route line and position dot, so they
@@ -235,6 +274,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     pathMode,
     setPathMode,
     show,
+    showRemote,
     refresh,
     setError,
   }
