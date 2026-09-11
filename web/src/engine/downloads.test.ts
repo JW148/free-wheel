@@ -28,27 +28,49 @@ const body = (text: string) => new TextEncoder().encode(text)
 
 describe('resumeDecision', () => {
   it('starts from scratch when nothing is on disk', () => {
-    expect(resumeDecision({ bytes: 0, hash: null }, { bytes: 100, hash: 'aaaa1111' }))
+    expect(resumeDecision({ bytes: 0, hash: null, started: false }, { bytes: 100, hash: 'aaaa1111' }))
       .toEqual({ action: 'start' })
   })
 
   it('resumes a partial download of the same file', () => {
-    expect(resumeDecision({ bytes: 40, hash: 'aaaa1111' }, { bytes: 100, hash: 'aaaa1111' }))
+    expect(resumeDecision({ bytes: 40, hash: 'aaaa1111', started: true }, { bytes: 100, hash: 'aaaa1111' }))
       .toEqual({ action: 'resume', at: 40 })
   })
 
   it('is done when the file is already the right length', () => {
-    expect(resumeDecision({ bytes: 100, hash: 'aaaa1111' }, { bytes: 100, hash: 'aaaa1111' }))
+    expect(resumeDecision({ bytes: 100, hash: 'aaaa1111', started: true }, { bytes: 100, hash: 'aaaa1111' }))
       .toEqual({ action: 'done' })
   })
 
   it('starts over when a different version is half-written, rather than splicing two files', () => {
-    expect(resumeDecision({ bytes: 40, hash: 'older111' }, { bytes: 100, hash: 'aaaa1111' }))
+    expect(resumeDecision({ bytes: 40, hash: 'older111', started: true }, { bytes: 100, hash: 'aaaa1111' }))
       .toEqual({ action: 'start' })
   })
 
   it('starts over when the file on disk is longer than the target', () => {
-    expect(resumeDecision({ bytes: 140, hash: 'aaaa1111' }, { bytes: 100, hash: 'aaaa1111' }))
+    expect(resumeDecision({ bytes: 140, hash: 'aaaa1111', started: true }, { bytes: 100, hash: 'aaaa1111' }))
+      .toEqual({ action: 'start' })
+  })
+
+  // A marker is written before the file is opened, so that the file is hidden from the moment
+  // it can change. Everything below is about the gap that opens up between those two moments:
+  // until the download has actually truncated the file, the marker records an intention, and
+  // the bytes on disk are still the previous download's.
+  it('will not resume onto a file the marker only claimed', () => {
+    expect(resumeDecision({ bytes: 40, hash: 'aaaa1111', started: false }, { bytes: 100, hash: 'aaaa1111' }))
+      .toEqual({ action: 'start' })
+  })
+
+  it('will not call a file done on the strength of a marker that never started', () => {
+    // The hash in a marker is the hash of what is being fetched, never of what is on disk. An
+    // unstarted marker over a file that happens to be the target length describes an older
+    // file of a coincidentally identical size, not a finished download.
+    expect(resumeDecision({ bytes: 100, hash: 'aaaa1111', started: false }, { bytes: 100, hash: 'aaaa1111' }))
+      .toEqual({ action: 'start' })
+  })
+
+  it('reads a marker from an older build, which has no state at all, as not started', () => {
+    expect(resumeDecision({ bytes: 40, hash: 'aaaa1111' }, { bytes: 100, hash: 'aaaa1111' }))
       .toEqual({ action: 'start' })
   })
 })

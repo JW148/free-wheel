@@ -188,7 +188,8 @@ export interface DownloadLoopDeps {
    * Called from inside the download's sink source, never before it: until a response is in
    * hand, the file on disk is untouched and may be a complete, valid older segment. Marking
    * runs *before* `openSink` there, so no window exists in which the file is registered and
-   * unmarked.
+   * unmarked — and then a second time, with `started: true`, once the truncate has succeeded.
+   * The first call hides the file; only the second authorises a later resume onto its bytes.
    */
   markDownloading(path: string, target: PartialTarget): Promise<void>
   readPartialHash(path: string): Promise<PartialTarget | null>
@@ -266,6 +267,27 @@ export const opfsDownloadDeps: DownloadLoopDeps = {
  * `start` and `resume` alike disturb the file once bytes flow, so both mark; `done` touches
  * nothing, opens nothing, and marks nothing.
  *
+ * ## A marker that has not started authorises nothing
+ *
+ * Marking before the open means a marker can outlive an attempt that never touched the file:
+ * `openSink` genuinely throws — `openHandle` gives up after about 820 ms when another tab holds
+ * the file, and `getFileHandle(create: true)` can fail under storage pressure — and then the
+ * durable marker records the *new* hash against the *old* bytes. A retry reading only that
+ * would see a hash match and a short file, resume at the old length, and append this month's
+ * tail to last month's prefix: a file of exactly the right length made of two different
+ * downloads, which is precisely what `resumeDecision`'s hash comparison exists to prevent.
+ *
+ * So the marker goes down as `started: false` — enough to hide the file, not enough to
+ * authorise anything — and is flipped to `true` only once the truncate has succeeded, which is
+ * the moment the file stops holding anyone else's bytes. Only a started marker lets
+ * `resumeDecision` return `resume` (or `done`). Every way this can be interrupted then errs the
+ * same way: a hidden file that the next attempt restarts from zero.
+ *
+ * Moving the mark *after* the truncate instead would remove the splice and open the opposite
+ * window — a file truncated to nothing with no marker saying so, which `installedTiles()` would
+ * hand to BRouter on every later cold start. The state field is what makes both orderings
+ * unnecessary to choose between.
+ *
  * A marker is deliberately left in place after an item completes, not cleared here:
  * clearing is the caller's job, done only once the whole region is durably recorded as
  * installed. A multi-item region — a basemap plus several segments — commits nothing to
@@ -305,7 +327,7 @@ export async function runRegionDownload(
       // normalisation belongs here, where the contract is, rather than being relied on there.
       const onDisk = Math.max(0, await deps.peekSize(path))
       const decision = resumeDecision(
-        { bytes: onDisk, hash: recorded?.hash ?? null },
+        { bytes: onDisk, hash: recorded?.hash ?? null, started: recorded?.started === true },
         { bytes: item.bytes, hash: item.hash },
       )
 
@@ -313,11 +335,22 @@ export async function runRegionDownload(
         await downloadInto(
           // Called once the response is in hand and the file is certain to be disturbed, and
           // never if the attempt dies before that. See the doc comment above. Marking precedes
-          // opening so the file is never registered — and so never visible — while unmarked.
-          async () => {
-            await deps.markDownloading(path, { hash: item.hash, bytes: item.bytes })
+          // opening so the file is never registered — and so never visible — while unmarked,
+          // and the flip to `started` follows the truncate for the reason given there.
+          //
+          // `from` is the offset `downloadInto` will actually write at, which is not always the
+          // one asked for: a server that ignores `Range` downgrades a resume to a restart, and
+          // that file needs truncating and re-marking like any other restart. A resume proper
+          // (`from > 0`) only happens on a marker that already says `started`, so writing it
+          // again is restating what is there.
+          async (from) => {
+            await deps.markDownloading(path, { hash: item.hash, bytes: item.bytes, started: from > 0 })
             const sink = await deps.openSink(path)
             touched = true
+            if (from === 0) {
+              sink.truncate(0)
+              await deps.markDownloading(path, { hash: item.hash, bytes: item.bytes, started: true })
+            }
             return sink
           },
           item.url,

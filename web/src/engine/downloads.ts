@@ -31,8 +31,14 @@ export interface ByteSink {
  * bridge — and registration alone is what makes a path visible to BRouter. A download that
  * fails before its first byte must leave the filesystem exactly as it found it, so a caller
  * that cares passes a function and {@link downloadInto} calls it only once bytes are certain.
+ *
+ * It is handed the offset the first write will land at — the *trusted* one, after the
+ * `Content-Range` check below, not the one the caller asked for — so that a source with
+ * bookkeeping of its own can tell a resume from a restart. A source may truncate at offset
+ * zero itself; {@link downloadInto} truncates too, and a second `truncate(0)` is a no-op, so
+ * the guarantee stays here rather than becoming something every caller has to remember.
  */
-export type ByteSinkSource = ByteSink | (() => Promise<ByteSink>)
+export type ByteSinkSource = ByteSink | ((from: number) => Promise<ByteSink>)
 
 export interface DownloadOptions {
   from?: number
@@ -55,12 +61,26 @@ export interface RegionProgress {
  * Whether a partly-written file can be continued.
  *
  * The hash comparison is what stops the worst outcome: half of last month's segment followed
- * by the tail of this month's, which is a file that parses and routes wrongly.
+ * by the tail of this month's, which is a file that parses and routes wrongly. It only stops it
+ * together with `existing.started` — see below.
  */
 export function resumeDecision(
-  existing: { bytes: number; hash: string | null },
+  existing: { bytes: number; hash: string | null; started?: boolean },
   target: { bytes: number; hash: string },
 ): ResumeDecision {
+  // A marker that has not started says nothing about the bytes on disk, so it authorises
+  // nothing. It is written before the file is opened — that is what hides a file from the
+  // moment it can change — and until the truncate has succeeded, the hash it carries is the
+  // hash of what is being fetched over a file that still holds the *previous* download. Reading
+  // that as a match is what turns a failed open into a resume at the old length: last month's
+  // prefix, this month's tail, the right number of bytes, and nothing left to catch it.
+  //
+  // `done` is refused for the same reason and not only `resume`: an unstarted marker over a
+  // file that happens to be the target length describes an older file of a coincidentally
+  // identical size, not a finished download. A marker written by a build from before this
+  // field existed has no state to read, and is treated the same way — a restart, never a
+  // splice.
+  if (existing.started !== true) return { action: 'start' }
   if (existing.hash !== target.hash) return { action: 'start' }
   if (existing.bytes === target.bytes) return { action: 'done' }
   if (existing.bytes === 0 || existing.bytes > target.bytes) return { action: 'start' }
@@ -112,7 +132,7 @@ export async function downloadInto(
   // visible to the engine — pays them only when the download has actually got this far.
   let target: ByteSink
   try {
-    target = typeof sink === 'function' ? await sink() : sink
+    target = typeof sink === 'function' ? await sink(offset) : sink
     if (offset === 0) target.truncate(0)
   } catch (error) {
     // Nobody is going to read this body now. Left un-cancelled it holds the connection until

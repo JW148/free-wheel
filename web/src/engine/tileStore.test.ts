@@ -58,7 +58,7 @@ async function abandonedDownload(path: string, wrote: number, target: number): P
   handle.write(new Uint8Array(wrote).fill(1), { at: 0 })
   handle.flush()
   refreshSize(path)
-  await markDownloading(path, { hash: 'old-mirror-hash', bytes: target })
+  await markDownloading(path, { hash: 'old-mirror-hash', bytes: target, started: true })
 }
 
 beforeEach(() => {
@@ -71,7 +71,7 @@ describe('a truncated download', () => {
     // Only the durable marker survives a Worker restart, so this is the state a fresh session
     // finds: an orphan file and a `/downloads.json` entry naming a size it never reached.
     opfs.write(TILE_PATH, 100)
-    await markDownloading(TILE_PATH, { hash: 'mirror', bytes: 143654912 })
+    await markDownloading(TILE_PATH, { hash: 'mirror', bytes: 143654912, started: true })
 
     expect(await installedTiles()).toEqual([])
     // Never opened is the point: opening is what registers a path with the bridge, and a
@@ -81,7 +81,7 @@ describe('a truncated download', () => {
 
   it('is hidden from the basemap listing too', async () => {
     opfs.write(BASEMAP_PATH, 100)
-    await markDownloading(BASEMAP_PATH, { hash: 'mirror', bytes: 90000000 })
+    await markDownloading(BASEMAP_PATH, { hash: 'mirror', bytes: 90000000, started: true })
 
     expect(await installedBasemaps()).toEqual([])
   })

@@ -29,6 +29,24 @@ const PARTIALS_PATH = '/downloads.json'
 export interface PartialTarget {
   hash: string
   bytes: number
+  /**
+   * Whether this download has actually truncated the file yet — that is, whether the bytes on
+   * disk are its own.
+   *
+   * A marker is written *before* the file is opened, so that no ordering can leave a file
+   * registered and unmarked, which means a marker exists for a moment during which the file
+   * still holds the previous download's bytes. Recording only `{ hash, bytes }` conflates the
+   * two: a retry reading a hash match and a short file resumes, appending this month's tail to
+   * last month's prefix, and the result is the right length — the one corruption
+   * `downloadInto`'s length check cannot see.
+   *
+   * So the marker goes down as `false` and is flipped to `true` once the truncate has
+   * succeeded, and only a `true` here lets `downloads.resumeDecision` resume (or skip). Not
+   * optional in the type, so no writer can forget it; a marker read back from `/downloads.json`
+   * as written by an older build has no such field at all, and anything that is not `true` is
+   * read as not started. That costs a restart and never a splice.
+   */
+  started: boolean
 }
 
 const decoder = new TextDecoder()
@@ -92,6 +110,10 @@ async function clearPartialHash(path: string): Promise<void> {
  * **Call only once the bytes are actually about to be disturbed** — see
  * `regionStore.runRegionDownload`. A download that fails before its first write must leave no
  * trace, because the file it did not touch may be a complete, perfectly good older segment.
+ *
+ * Called twice per download, in fact: once with {@link PartialTarget.started} `false` to claim
+ * the path before it is opened, and again with `true` once the truncate has happened and the
+ * file holds nobody else's bytes. See that field for what goes wrong with one call.
  */
 export async function markDownloading(path: string, target: PartialTarget): Promise<void> {
   await writePartialHash(path, target)

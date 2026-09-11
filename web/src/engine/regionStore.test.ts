@@ -193,7 +193,7 @@ function fakeDownloadEnv() {
       refreshSizeCalls.push(path)
     },
     markDownloading: async (path, target) => {
-      log.push(`mark:${path}`)
+      log.push(`mark:${target.started ? 'started' : 'claimed'}:${path}`)
       partials.set(path, target)
       pending.set(path, target.bytes)
     },
@@ -240,7 +240,7 @@ describe('runRegionDownload', () => {
     const path = pathForItem('wessex', item)
     const { sinks, partials, recorded, deps } = fakeDownloadEnv()
     sinks.set(path, fakeSink(text('abcdef')))
-    partials.set(path, { hash: 'hs', bytes: 6 })
+    partials.set(path, { hash: 'hs', bytes: 6, started: true })
     const fetchImpl = vi.fn()
 
     await runRegionDownload('wessex', [item], 6, { ...deps, fetchImpl: fetchImpl as unknown as typeof fetch })
@@ -285,8 +285,8 @@ describe('runRegionDownload', () => {
     // the caller's job once the whole region is recorded, which never happened here.
     expect(decode(sinks.get(pathA)!)).toBe('abcd')
     expect(decode(sinks.get(pathB)!)).toBe('efgh')
-    expect(partials.get(pathA)).toEqual({ hash: 'ha', bytes: 4 })
-    expect(partials.get(pathB)).toEqual({ hash: 'hb', bytes: 10 })
+    expect(partials.get(pathA)).toEqual({ hash: 'ha', bytes: 4, started: true })
+    expect(partials.get(pathB)).toEqual({ hash: 'hb', bytes: 10, started: true })
 
     const resumedFetch = vi.fn(async (url: string, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({ Range: 'bytes=4-' })
@@ -309,22 +309,27 @@ describe('runRegionDownload', () => {
 
     await runRegionDownload('region', [item], 6, { ...deps, fetchImpl: fetchImpl as unknown as typeof fetch })
 
-    // Ordering, not just occurrence. The truncate is what destroys whatever was there, so a
-    // marker written after it would leave a window in which a crash orphans a half-file with
-    // nothing recording that it is one — and `installedTiles()` would hand it to BRouter.
-    expect(log.indexOf(`mark:${path}`)).toBeGreaterThanOrEqual(0)
-    expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`truncate:${path}`))
-    expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`write:${path}`))
-
-    // And the open is deferred to the same moment, after the mark: opening creates and
-    // registers the file, so a path opened before it is marked is a path BRouter can see at
-    // whatever length it happens to have.
-    expect(log.indexOf(`mark:${path}`)).toBeLessThan(log.indexOf(`open:${path}`))
-    expect(log.indexOf(`open:${path}`)).toBeLessThan(log.indexOf(`truncate:${path}`))
+    // The whole sequence, in order, because each step is only safe in this position:
+    //
+    //   claim -> open -> truncate -> start -> write
+    //
+    // The claim comes first because it is what hides the file, and it has to be in place from
+    // the moment the file can change — including a failure of the open itself. The flip to
+    // `started` comes after the truncate because that is the moment the file stops holding
+    // anyone else's bytes: before it, a resume would append this download's tail to the last
+    // one's prefix, and the length check would not notice.
+    expect(log).toEqual([
+      `mark:claimed:${path}`,
+      `open:${path}`,
+      `truncate:${path}`,
+      `mark:started:${path}`,
+      `truncate:${path}`,
+      `write:${path}`,
+    ])
 
     // Both halves, from one call: the durable entry a restart reads, and the registry marker
     // this session reads. Neither is allowed to be set without the other.
-    expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 6 })
+    expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 6, started: true })
     expect(pending.get(path)).toBe(6)
   })
 
@@ -383,7 +388,7 @@ describe('runRegionDownload', () => {
     // This file really is short now, and both markers say so — the durable one so a restart
     // keeps it out of `installedTiles()`, the registry one so the VFS bridge answers absent for
     // the rest of this session.
-    expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 10 })
+    expect(partials.get(path)).toEqual({ hash: 'hw', bytes: 10, started: true })
     expect(pending.get(path)).toBe(10)
 
     // And the cached size is brought back in line: a file that previously held a full,
@@ -421,7 +426,7 @@ describe('runRegionDownload, against the real registry', () => {
   it('leaves a truncated orphan hidden when the retry fails before the first byte', async () => {
     // Last session died mid-segment: the file is short and durably marked.
     opfs.write(path, 500)
-    await markDownloading(path, { hash: 'bbbb2222', bytes: item.bytes })
+    await markDownloading(path, { hash: 'bbbb2222', bytes: item.bytes, started: true })
     // This is a cold start, so only the durable half survives — `pendingTargets` is in-memory.
     clearPending(path)
 
@@ -474,7 +479,7 @@ describe('runRegionDownload, against the real registry', () => {
     // `sink.size()` used to, or a resume restarts from zero and re-fetches 137 MB.
     const small: DownloadItem = { ...item, bytes: 10, hash: 'hs' }
     opfs.write(path, new TextEncoder().encode('efgh'))
-    await markDownloading(path, { hash: 'hs', bytes: 10 })
+    await markDownloading(path, { hash: 'hs', bytes: 10, started: true })
     clearPending(path)
 
     const resumed = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -490,6 +495,101 @@ describe('runRegionDownload, against the real registry', () => {
     expect(resumed).toHaveBeenCalledTimes(1)
     expect(new TextDecoder().decode(opfs.read(path)!)).toBe('efghijklmn')
   })
+
+  /**
+   * A mirror that behaves: a `Range` request gets a `206` and the tail, anything else the whole
+   * file. The behaviour matters, because the failure the next two tests pin is only visible in
+   * the bytes. A resume onto a file this download never truncated appends the new tail to the
+   * old prefix and lands on a file of exactly the right length — which is the one thing
+   * `downloadInto`'s length check can never catch.
+   */
+  const mirror = (content: string) =>
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      const range = (init?.headers as Record<string, string> | undefined)?.Range
+      if (!range) return new Response(text(content), { status: 200 })
+      const from = Number(/bytes=(\d+)-/.exec(range)![1])
+      return new Response(text(content.slice(from)), {
+        status: 206,
+        headers: { 'Content-Range': `bytes ${from}-${content.length - 1}/${content.length}` },
+      })
+    })
+
+  const thisMonth: DownloadItem = { ...item, bytes: 10, hash: 'this-month' }
+
+  /**
+   * Last month's segment on disk, complete and in use, and an attempt at this month's whose
+   * open fails — `openHandle` gives up after about 820 ms when a second tab holds the file, and
+   * `getFileHandle(create: true)` can fail under storage pressure. The fetch succeeds, so the
+   * attempt gets as far as wanting to write.
+   */
+  async function openFails(): Promise<void> {
+    opfs.write(path, text('LAST-MO'))
+    expect((await installedTiles()).map((t) => t.tile)).toEqual(['W5_N50'])
+    expect(bridge().exists(path)).toBe(true)
+
+    await expect(
+      runRegionDownload('wessex', [thisMonth], 10, {
+        ...opfsDownloadDeps,
+        openSink: async () => {
+          throw new Error(`${path} is already open elsewhere — one tab at a time`)
+        },
+        fetchImpl: mirror('0123456789') as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow('already open elsewhere')
+  }
+
+  it('leaves nothing a later attempt could resume onto when the open fails', async () => {
+    await openFails()
+
+    // The marker is there, and that is deliberate: it goes down before the open precisely so
+    // that no ordering can leave the file registered and unmarked. The cost is that a file
+    // nothing touched is now hidden, which is the safe direction — an honest "no data for this
+    // area" rather than a segment that may be about to be half-overwritten.
+    expect(await readPartialHash(path)).toEqual({ hash: 'this-month', bytes: 10, started: false })
+    expect(bridge().exists(path)).toBe(false)
+    expect(await installedTiles()).toEqual([])
+
+    // What the marker must not say is that this download has written anything. It records the
+    // *new* hash against the *old* bytes, and a marker that also claimed to have started would
+    // let the next attempt resume at byte 7 of last month's segment.
+    expect(new TextDecoder().decode(opfs.read(path)!)).toBe('LAST-MO')
+  })
+
+  it('restarts from zero after a failed open, rather than appending to last month\'s bytes', async () => {
+    await openFails()
+
+    const retry = mirror('0123456789')
+    await runRegionDownload('wessex', [thisMonth], 10, {
+      ...opfsDownloadDeps,
+      fetchImpl: retry as unknown as typeof fetch,
+    })
+
+    // No `Range` header: the whole file, from the top.
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(retry.mock.calls[0][1]?.headers).toBeUndefined()
+    // And so the file is this month's segment and nothing else. A resume would have produced
+    // `LAST-MO789` — ten bytes, the length check satisfied, and BRouter routing on a splice.
+    expect(new TextDecoder().decode(opfs.read(path)!)).toBe('0123456789')
+    expect(bridge().exists(path)).toBe(true)
+    expect((await installedTiles()).map((t) => t.tile)).toEqual(['W5_N50'])
+  })
+
+  it('treats a marker from a build with no state field as one that never started', async () => {
+    // Exactly what the previous build wrote: a hash and a byte count, and no way to tell an
+    // intention from a written prefix. The safe reading of a state that was never recorded is
+    // the conservative one.
+    opfs.write(path, text('efgh'))
+    opfs.write('/downloads.json', text(JSON.stringify({ [path]: { hash: 'this-month', bytes: 10 } })))
+
+    const retry = mirror('0123456789')
+    await runRegionDownload('wessex', [thisMonth], 10, {
+      ...opfsDownloadDeps,
+      fetchImpl: retry as unknown as typeof fetch,
+    })
+
+    expect(retry.mock.calls[0][1]?.headers).toBeUndefined()
+    expect(new TextDecoder().decode(opfs.read(path)!)).toBe('0123456789')
+  })
 })
 
 describe('completeRegionDownload', () => {
@@ -503,7 +603,7 @@ describe('completeRegionDownload', () => {
     const paths = items.map((item) => pathForItem('wessex', item))
     for (const [i, path] of paths.entries()) {
       opfs.write(path, items[i].bytes)
-      await markDownloading(path, { hash: items[i].hash, bytes: items[i].bytes })
+      await markDownloading(path, { hash: items[i].hash, bytes: items[i].bytes, started: true })
     }
     return paths
   }
@@ -544,7 +644,7 @@ describe('deleteRegionFiles', () => {
     // file is mid-download would outlive it and hide whatever lands at that path next.
     const path = `${BASEMAP_DIR}/wessex.pmtiles`
     opfs.write(path, 500)
-    await markDownloading(path, { hash: 'mirror', bytes: 90000000 })
+    await markDownloading(path, { hash: 'mirror', bytes: 90000000, started: true })
 
     await deleteRegionFiles([], 'wessex.pmtiles')
 
@@ -555,7 +655,7 @@ describe('deleteRegionFiles', () => {
   it('takes a segment\'s markers with the segment', async () => {
     const path = `${SEGMENT_DIR}/W5_N50.rd5`
     opfs.write(path, 500)
-    await markDownloading(path, { hash: 'mirror', bytes: 143654912 })
+    await markDownloading(path, { hash: 'mirror', bytes: 143654912, started: true })
 
     await deleteRegionFiles(['W5_N50'], '')
 
