@@ -8,10 +8,24 @@ import type { RegionState } from '../data/regions'
  * Chosen on chroma, like the route lines and for the same reason: every stroke in both
  * basemap palettes measures C 15.4 or less, so anything at C 45 or above cannot be mistaken
  * for a boundary that belongs to the map. `regionLayers.test.ts` asserts the floor.
+ *
+ * Each also clears ΔE 16 from **every** colour in both palettes — fills and label colours
+ * included, not only strokes. That distinction is not academic: an earlier `available` here
+ * (`#7aa2f7`) cleared every stroke at 16.94 but sat at ΔE 14.02 from `dark.text.labelWater`,
+ * the exact class of gap `profiles.ts` records for the route palette (`fastbike` was ΔE 15.5
+ * from that same label, behind a quoted figure of 18.0 that had only been checked against
+ * fills and strokes). `#43b1ff`, floated as a fix, turned out to fail the same widened check
+ * at ΔE 15.93 against `light.water`. All three colours below were swept at held chroma across
+ * hue and lightness against every colour in both palettes; each clears the floor with more
+ * margin than the route palette's own worst case (ΔE 17.15):
+ *
+ * - `available` `#00abff` — worst ΔE 18.00, vs `dark.text.labelWater`.
+ * - `current`   `#008b15` — worst ΔE 27.14, vs `light.land.wood`.
+ * - `outdated`  `#ffb347` — worst ΔE 19.29, vs `light.line.pathTrack` (unchanged; already clear).
  */
 export const REGION_COLOURS = {
-  available: '#7aa2f7',
-  current: '#3ddc97',
+  available: '#00abff',
+  current: '#008b15',
   outdated: '#ffb347',
 } as const
 

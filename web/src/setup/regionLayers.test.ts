@@ -2,7 +2,28 @@ import { describe, expect, it } from 'vitest'
 import type { RegionEntry } from '../data/manifest'
 import { chroma, deltaE2000 } from '../map/colour'
 import { PALETTES } from '../map/style'
+import type { Palette } from '../map/style'
 import { REGION_COLOURS, regionsGeoJson } from './regionLayers'
+
+/**
+ * Every colour in a palette, not just its strokes.
+ *
+ * `style.test.ts` has its own copy of this shape for exactly the reason recorded in
+ * `profiles.ts`: a figure once measured over fills and strokes but not label colours (ΔE 18.0,
+ * quoted for the route palette) was wrong, because `fastbike` sat 15.5 from the dark water
+ * label the whole time. Scoping this to `.line` would reintroduce precisely that gap for
+ * region colours instead of route colours.
+ */
+function every(palette: Palette): [string, string][] {
+  return [
+    ['earth', palette.earth],
+    ['water', palette.water],
+    ['building', palette.building],
+    ...Object.entries(palette.land).map(([k, v]): [string, string] => [`land.${k}`, v]),
+    ...Object.entries(palette.line).map(([k, v]): [string, string] => [`line.${k}`, v]),
+    ...Object.entries(palette.text).map(([k, v]): [string, string] => [`text.${k}`, v]),
+  ]
+}
 
 const regions: RegionEntry[] = [
   { id: 'central-scotland', name: 'Central Scotland', bbox: [-5.0, 55.4, -2.4, 56.4],
@@ -51,8 +72,8 @@ describe('REGION_COLOURS', () => {
   it('keeps every boundary clear of both basemap palettes, labels included', () => {
     for (const [name, colour] of Object.entries(REGION_COLOURS)) {
       for (const theme of ['dark', 'light'] as const) {
-        for (const [key, against] of Object.entries(PALETTES[theme].line)) {
-          expect(deltaE2000(colour, against), `${name} vs ${theme}.line.${key}`)
+        for (const [key, against] of every(PALETTES[theme])) {
+          expect(deltaE2000(colour, against), `${name} vs ${theme}.${key}`)
             .toBeGreaterThanOrEqual(16)
         }
       }
