@@ -57,7 +57,10 @@ export default function SetupView({
   return (
     <div className="setup">
       <header className="setup-header">
-        <h1>{gate && !ready ? 'Welcome' : 'Setup'}</h1>
+        {/* The title names the screen, not the rider's situation. "Welcome" belongs to the
+            first run of the *Maps* tab and used to follow them into Rider and Diagnostics,
+            where it was a greeting with nothing to do with what was on screen. */}
+        <h1>{gate && !ready && tab === 'maps' ? 'Welcome' : 'Setup'}</h1>
         <button type="button" className="setup-close" onClick={onClose}>
           {ready ? 'Done' : 'Not now'}
         </button>
@@ -67,15 +70,27 @@ export default function SetupView({
           who wandered into Rider settings while 400 MB arrives should not have to guess. */}
       {queue && (
         <p className="setup-queue" role="status">
+          <span className="setup-queue-dot" aria-hidden="true" />
           {queue.line}
         </p>
       )}
 
-      <nav className="setup-tabs">
+      {/* One control with a current position, not three buttons to decide between. The
+          indicator is placed from `--tab`; see `.setup-tabs` in `App.css`. */}
+      <nav
+        className="setup-tabs"
+        style={
+          {
+            '--tab': TABS.findIndex(([id]) => id === tab),
+            '--tab-count': TABS.length,
+          } as React.CSSProperties
+        }
+      >
         {TABS.map(([id, label]) => (
           <button
             key={id}
             type="button"
+            aria-current={tab === id ? 'page' : undefined}
             data-selected={tab === id ? 'yes' : 'no'}
             onClick={() => setTab(id)}
           >

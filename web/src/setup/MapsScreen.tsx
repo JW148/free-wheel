@@ -407,7 +407,7 @@ export default function MapsScreen({
       {notice && <p className="picker-detail">{notice}</p>}
 
       {mine.length === 0 ? (
-        <p className="picker-note">Nothing downloaded yet.</p>
+        <p className="setup-empty">Nothing downloaded yet.</p>
       ) : (
         <ul className="maps-list">
           {mine.map((summary) => {

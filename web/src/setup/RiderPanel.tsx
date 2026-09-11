@@ -17,6 +17,9 @@ import type { Rider } from '../ride/useRider'
  * one that can be checked against experience. A rider who knows they hold about 200 W on a
  * climb can see immediately whether the model agrees.
  *
+ * It is also the only loud thing on this screen, and that is deliberate: it is the one element
+ * here worth looking at rather than reading.
+ *
  * ## Why it says what it cannot do
  *
  * Every estimate here is blind to wind, brakes, a wet road and a rucksack. Saying so once, in
@@ -45,27 +48,27 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
   return (
     <section className="panel-block">
       <h2>You and the bike</h2>
-      <p className="step-note">
-        Used to estimate power and effort while riding. Nothing here leaves the phone.
-      </p>
 
-      <div className="rider-masses">
+      <h3>Weight</h3>
+      <div className="setup-group">
         <Mass
-          label="You, in kg"
+          label="You"
           value={setup.riderKg}
           limits={MASS_LIMITS.riderKg}
           onCommit={(riderKg) => update({ riderKg })}
         />
         <Mass
-          label="Bike and bags, in kg"
+          label="Bike and bags"
           value={setup.bikeKg}
           limits={MASS_LIMITS.bikeKg}
           onCommit={(bikeKg) => update({ bikeKg })}
         />
       </div>
 
+      {/* The radio groups keep the drawer's own row treatment, so a choice made here looks like
+          a choice made there. */}
+      <h3>How you sit</h3>
       <fieldset className="profiles">
-        <legend className="section-label">How you sit</legend>
         {POSITIONS.map((option) => (
           <div
             key={option.id}
@@ -87,8 +90,8 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
         ))}
       </fieldset>
 
+      <h3>What you are riding on</h3>
       <fieldset className="profiles">
-        <legend className="section-label">What you are riding on</legend>
         {TYRES.map((option) => (
           <div
             key={option.id}
@@ -110,7 +113,8 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
         ))}
       </fieldset>
 
-      <dl className="detail-stats">
+      <h3>What that adds up to</h3>
+      <dl className="rider-preview">
         <div>
           <dd>{preview(25, 0)} W</dd>
           <dt>25 km/h, flat</dt>
@@ -124,39 +128,58 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
           <dt>all in</dt>
         </div>
       </dl>
-      <p className="step-note">
-        If those two numbers do not match what you know you can hold, the settings above are the
-        thing to adjust. The estimate cannot see wind, a wet road, or your brakes — so it will
-        read high on a descent and low into a headwind.
+      <p className="setup-footer">
+        If those watts do not match what you know you can hold, the settings above are the thing
+        to adjust. The estimate cannot see wind, a wet road or your brakes, so it reads high on a
+        descent and low into a headwind. Nothing here leaves the phone.
       </p>
 
       <h2>On the road</h2>
-      <label className="switch-row">
-        <input
-          type="checkbox"
-          checked={setup.autoReroute}
-          onChange={(e) => update({ autoReroute: e.target.checked })}
-        />
-        <span>
-          <strong>Reroute when I leave the route</strong>
-          <span className="profile-note">
-            Routes again from where you are, through whatever waypoints are still ahead. Turn it
-            off if you would rather find your own way back to the line.
+      <div className="setup-group">
+        <label className="setup-row switch-row">
+          <span className="setup-row-text">
+            <span className="setup-row-label">Reroute when I leave the route</span>
+            <span className="setup-row-note">
+              Routes again from where you are, through the waypoints still ahead.
+            </span>
           </span>
-        </span>
-      </label>
+          <input
+            type="checkbox"
+            checked={setup.autoReroute}
+            onChange={(e) => update({ autoReroute: e.target.checked })}
+          />
+        </label>
+      </div>
+      <p className="setup-footer">
+        Turn it off if you would rather find your own way back to the line.
+      </p>
 
       <h2>Storage</h2>
-      <p className="step-note">
-        {persisted === true
-          ? 'This app’s data is marked persistent — the browser will not reclaim your maps and routing tiles under storage pressure.'
-          : 'Browsers reclaim storage from sites under pressure, and a reclaimed basemap is discovered in airplane mode at the side of a road. Asking for persistence is usually granted for an app added to the Home Screen.'}
+      <div className="setup-group">
+        <div className="setup-row">
+          <span className="setup-row-text">
+            <span className="setup-row-label">Keep my maps and road data</span>
+            <span className="setup-row-note">
+              {persisted === true
+                ? 'Granted. The browser will not reclaim your downloads under storage pressure.'
+                : 'Not granted yet. Usually allowed for an app added to the Home Screen.'}
+            </span>
+          </span>
+          {persisted === true ? (
+            <span className="setup-value">
+              <strong>On</strong>
+            </span>
+          ) : (
+            <button type="button" onClick={() => void requestPersistence().then(setPersisted)}>
+              Ask
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="setup-footer">
+        Browsers reclaim storage from sites under pressure, and a reclaimed basemap is discovered
+        in airplane mode at the side of a road.
       </p>
-      {persisted !== true && (
-        <button type="button" onClick={() => void requestPersistence().then(setPersisted)}>
-          Ask to keep my data
-        </button>
-      )}
     </section>
   )
 }
@@ -171,6 +194,10 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
  *
  * So the field holds its own text while focused and commits a clamped number on blur. `min`
  * and `max` stay on the input for the numeric keyboard and for assistive technology.
+ *
+ * The unit lives beside the field rather than in the label ("You, in kg"), so the label says
+ * what the setting is and the row says what the number means — which is how every other row on
+ * this screen reads.
  */
 function Mass({
   label,
@@ -193,20 +220,25 @@ function Mass({
   }
 
   return (
-    <label>
-      <span className="section-label">{label}</span>
-      <input
-        type="number"
-        inputMode="decimal"
-        min={limits[0]}
-        max={limits[1]}
-        value={text ?? String(value)}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-        }}
-      />
+    <label className="setup-row">
+      <span className="setup-row-text">
+        <span className="setup-row-label">{label}</span>
+      </span>
+      <span>
+        <input
+          type="number"
+          inputMode="decimal"
+          min={limits[0]}
+          max={limits[1]}
+          value={text ?? String(value)}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+          }}
+        />
+        <span className="setup-unit">kg</span>
+      </span>
     </label>
   )
 }

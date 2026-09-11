@@ -393,6 +393,21 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **Every route is drawn in its profile's colour, including a lone one.** The near-white
   single-route colour was invisible on the daylight map, and keeping the rule uniform means the
   map does not repaint when a second profile is ticked.
+- **Setup is built from the ride screen's tokens, and a setting is a row.** It is the app's one
+  *document* surface, so it is the easy place to drift into browser defaults — which is exactly
+  what happened: 17px prose, a `<dl>` with a 9rem label column, bare `<button>`s at a radius
+  nothing else uses. The vocabulary is in `App.css`: `.setup-group` holds `.setup-row`s (label
+  left, value right, note under), explanation goes *below* a group as `.setup-footer` in the
+  muted size, group headers are sentence case, and separation is an inset hairline ring — there
+  are no shadows anywhere in this app.
+- **A class that clears `border` and `background` does not clear `box-shadow`.** `App.css` gives
+  every `button` a hairline ring, so `.picker-plain` — which only reset the first two — left
+  every quiet text button in Setup outlined and hanging off the left margin. If you add a
+  property to the element rule, add its reset to the quiet classes.
+- **A class name with no rule behind it fails silently and looks like a spacing bug.**
+  `RiderPanel` marked three paragraphs `.step-note` and no stylesheet ever defined it, so they
+  rendered at full body size and outweighed every heading on the screen. That was most of what
+  "Setup doesn't feel like the rest of the app" was. Grep the CSS before trusting a class name.
 - **Setup is an overlay over the ride screen, never a replacement.** Unmounting the map drops
   its OPFS handles and its whole tile cache; the map controller therefore lives in `App.tsx`.
 - **A fix is snapped to the route with a *hint*, and the hint is load-bearing.** Nearest-point

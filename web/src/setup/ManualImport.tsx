@@ -176,7 +176,7 @@ export default function ManualImport({
           there was no way to see what had been imported, or to take it back off. */}
       <h3 className="subhead">Maps in storage</h3>
       {basemap.archives.length === 0 ? (
-        <p className="meta">Nothing imported by hand.</p>
+        <p className="setup-empty">No maps yet — imported or downloaded.</p>
       ) : (
         <ul className="maps-list">
           {basemap.archives.map((archive) => {
@@ -257,7 +257,7 @@ export default function ManualImport({
         Road data in storage — {installed.length} tiles, {formatBytes(installed.reduce((sum, t) => sum + t.bytes, 0))}
       </h3>
       {installed.length === 0 ? (
-        <p className="meta">Nothing imported by hand.</p>
+        <p className="setup-empty">No road data yet.</p>
       ) : (
         <table>
           <tbody>

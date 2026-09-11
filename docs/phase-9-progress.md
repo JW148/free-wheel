@@ -138,6 +138,38 @@ archive froze at 102 MB and the queued region never started at all.
   reported 133 MB of 141 MB and finished in about a second.
 - Roughly **400 MB** of mirror egress across the whole verification session.
 
+## The Setup screen, after the fact
+
+Adding a library to Setup made it obvious that Setup did not look like the rest of the app, so
+it got its own pass. The cause was not taste — it was two design systems in one binary. The ride
+screen has a specific vocabulary (one hueless slate ramp, inset hairlines, no shadows, dense
+0.76–0.95rem type, tabular numerals, rows at 2.9rem) and Setup was rendering browser defaults
+next to it: 17px prose, `<dl>` with a 9rem label column, `<table>`s on the page background,
+bare `<button>`s at a radius nothing else in the app uses.
+
+The worst of it was a class that did not exist. `RiderPanel` marked its three explanatory
+paragraphs `.step-note`, no stylesheet ever defined it, and so the prose rendered at full body
+size and outweighed every heading on the screen. A dead class name fails silently and reads as
+a spacing problem.
+
+What changed:
+
+- **A setting is a row.** `.setup-group` holds `.setup-row`s — label left, value right, note
+  under — with dividers inset from the left so a group reads as one object rather than a stack
+  of cards. Explanation moved *below* what it explains, in the muted size.
+- **The tabs became one control**, a track with a sliding indicator, and they stay pinned under
+  the header. Switching tabs after scrolling no longer means scrolling back up.
+- **The emphasis is spent once**: the rider power preview. Three large tabular figures that move
+  as the settings above them change are the only thing on the screen asking to be looked at, and
+  they are the thing that makes "CdA 0.40" falsifiable against experience.
+- The header stopped saying "Welcome" on tabs that are not Maps, went from 92% to 97% opaque
+  (the blur alone does not defeat text at its own size scrolling under it), and links stopped
+  being browser blue — the one colour on the screen nobody had chosen, in a palette whose whole
+  point is that the route line is the only thing with a hue.
+- `.picker-plain` gained an explicit `box-shadow: none`. `App.css` gives every `button` a
+  hairline ring, and a class that clears `border` and `background` but not `box-shadow` left
+  every quiet text button outlined.
+
 ## What is not done
 
 - **Never ridden, never on a physical iPhone.** Two WebGL contexts at once is the new cost and
