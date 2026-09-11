@@ -61,6 +61,18 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
  */
 const SEGMENT_NAME = /^[EW]\d{1,3}_[NS]\d{1,2}$/
 
+/**
+ * A region id is a slug, for the same structural reason a segment name is a grid cell id: it
+ * becomes a file path. `regionStore.basemapFileFor` turns it straight into
+ * `/basemap/<id>.pmtiles`, so an id carrying a `/` or a `..` writes a region's basemap into
+ * some other directory — `opfsVfs.normalise` resolves `..` within the OPFS root, so nothing
+ * escapes origin storage, but the wrong directory is still the wrong directory. The manifest
+ * is ours, so this is a data-authoring mistake rather than an attack; the mirror's own
+ * `regions.json` tests already require this shape, and checking it here is what makes the two
+ * agree where every other shape in the manifest is already checked.
+ */
+const REGION_ID = /^[a-z0-9-]+$/
+
 function asset(
   value: unknown,
   where: string,
@@ -96,7 +108,9 @@ export function parseManifest(value: unknown): DataManifest {
   const regions = value.regions.map((raw): RegionEntry => {
     if (!isObject(raw)) throw new Error('region: expected an object')
     const id = typeof raw.id === 'string' ? raw.id : ''
-    if (!id) throw new Error('region has no id')
+    if (!REGION_ID.test(id)) {
+      throw new Error(`region id ${JSON.stringify(id)} is not a slug of lowercase letters, digits and hyphens`)
+    }
     if (typeof raw.name !== 'string') throw new Error(`${id}: no name`)
     if (!Array.isArray(raw.bbox) || raw.bbox.length !== 4 || raw.bbox.some((n) => typeof n !== 'number')) {
       throw new Error(`${id}: bbox must be four numbers`)

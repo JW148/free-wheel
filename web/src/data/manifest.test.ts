@@ -91,6 +91,25 @@ describe('parseManifest', () => {
     const raw = JSON.parse(JSON.stringify(good).replace(/W5_N55/g, '__proto__'))
     expect(() => parseManifest(raw)).toThrow(/__proto__/)
   })
+
+  it('rejects a region id that is not a plain slug, because the id becomes a file path', () => {
+    // `regionStore.basemapFileFor` turns an id straight into an OPFS path, so an id carrying a
+    // separator writes a region's basemap into some other directory. `opfsVfs.normalise`
+    // resolves `..` inside the OPFS root, so nothing escapes origin storage — this is a
+    // data-authoring mistake rather than an attack — but the wrong directory is still wrong,
+    // and the parser is where every other shape is already checked.
+    for (const id of ['../segments4/W5_N55', 'kent/sussex', 'Kent-Sussex', 'kent sussex', '']) {
+      const raw = JSON.parse(JSON.stringify(good))
+      raw.regions[0].id = id
+      expect(() => parseManifest(raw)).toThrow(/region id/)
+    }
+  })
+
+  it('names the id it rejected, so a manifest build can be fixed without guessing', () => {
+    const raw = JSON.parse(JSON.stringify(good))
+    raw.regions[0].id = 'kent/sussex'
+    expect(() => parseManifest(raw)).toThrow('kent/sussex')
+  })
 })
 
 describe('loadManifest', () => {
