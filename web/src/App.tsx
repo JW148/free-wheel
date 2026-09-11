@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
-import FirstRun from './setup/FirstRun'
+import RegionPicker from './setup/RegionPicker'
 import { useMapLibre } from './ride/useMapLibre'
 import { sharedEngine } from './engine/engineClient'
 import './ride/ride.css'
@@ -29,14 +29,17 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const [archives, tiles] = await Promise.all([
+        const [regions, archives, tiles] = await Promise.all([
+          sharedEngine().installedRegions(),
           sharedEngine().installedBasemaps(),
           sharedEngine().installedTiles(),
         ])
-        setNeedsSetup(archives.length === 0 || tiles.length === 0)
+        // A phone that imported files by hand before regions existed is set up, and must not
+        // be sent back to the picker.
+        setNeedsSetup(regions.length === 0 && (archives.length === 0 || tiles.length === 0))
       } catch {
-        // If the engine cannot even be asked, the guided flow is the more useful screen —
-        // it is the one that explains what the app needs.
+        // If the engine cannot even be asked, the picker is the more useful screen — it is
+        // the one that explains what the app needs.
         setNeedsSetup(true)
       }
     })()
@@ -50,7 +53,11 @@ export default function App() {
         onOpenSetup={() => setSetupOpen(true)}
       />
       {needsSetup === true && (
-        <FirstRun basemap={basemap} onDone={() => setNeedsSetup(false)} />
+        <RegionPicker
+          basemap={basemap}
+          onDone={() => setNeedsSetup(false)}
+          onOpenSetup={() => setSetupOpen(true)}
+        />
       )}
       {setupOpen && <SetupView basemap={basemap} onClose={() => setSetupOpen(false)} />}
     </>

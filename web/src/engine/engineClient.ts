@@ -2,6 +2,8 @@ import * as Comlink from 'comlink'
 import type { EngineApi, RouteOutcome } from './engineApi'
 import type { ProvisionProgress } from './opfsVfs'
 import type { ImportProgress } from './tileStore'
+import type { RegionProgress } from './downloads'
+import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 
 /**
  * The one engine instance for the whole app.
@@ -76,6 +78,28 @@ export class EngineClient {
   async installedBasemaps() {
     await this.init()
     return this.spawn().installedBasemaps()
+  }
+
+  /**
+   * Downloads a region, reporting progress as it goes.
+   *
+   * `onProgress` has to cross into the Worker, and a plain function does not survive
+   * structured cloning — `Comlink.proxy` is what turns it into something callable from the
+   * other side. Forgetting it is not a type error, it is a `DataCloneError` at the moment the
+   * download starts, which is the least convenient moment to find out.
+   */
+  async downloadRegion(
+    region: RegionEntry,
+    manifest: DataManifest,
+    onProgress?: (progress: RegionProgress) => void,
+  ): Promise<InstalledRegion[]> {
+    await this.init()
+    return this.spawn().downloadRegion(region, manifest, onProgress ? Comlink.proxy(onProgress) : undefined)
+  }
+
+  async installedRegions(): Promise<InstalledRegion[]> {
+    await this.init()
+    return this.spawn().installedRegions()
   }
 
   async deleteTile(tile: string) {
