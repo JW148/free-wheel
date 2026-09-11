@@ -5,10 +5,11 @@ import { defineConfig } from 'vitest/config'
 // slow enough to make the test loop annoying.
 export default defineConfig({
   test: {
-    // The only unit-tested code is pure (GPX parsing), so no DOM is needed. Anything
-    // needing a Map or OPFS is verified on-device instead, per the project's rule that
-    // desktop proves nothing about the device.
+    // No DOM. The pure modules need none, and the ones that touch storage run against
+    // `src/engine/fakeOpfs.ts` rather than a browser. Anything needing a real Map, real
+    // OPFS or a network is verified on-device instead, per the project's rule that desktop
+    // proves nothing about the device.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'tools/**/*.test.mjs'],
   },
 })

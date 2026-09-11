@@ -86,16 +86,41 @@ type RailControl = {
 export default function RideView({
   container,
   basemap,
+  suspended,
   rider,
   onOpenSetup,
 }: {
   container: React.RefObject<HTMLDivElement | null>
   basemap: ReturnType<typeof useMapLibre>
+  /**
+   * Whether another screen currently owns the map.
+   *
+   * There is one MapLibre instance for the whole app — `App.tsx` owns the controller and
+   * hands it to both screens — so while the region picker is up, the map it draws Britain on
+   * is this one. Every effect below that *writes* to the map or *listens* to it is gated on
+   * this, and gated by not running at all rather than by running and ignoring itself: the
+   * tap handler is never registered, the pins are never added, the camera is never fitted.
+   *
+   * The ride screen's chrome is hidden by CSS in the same situation, and that is not the same
+   * guarantee. Markers and handlers live on the map instance, inside `.ride-map`, which is a
+   * sibling of the element that rule hides.
+   */
+  suspended: boolean
   rider: Rider
   onOpenSetup: () => void
 }) {
-  const { map, error: mapError, styleReady, workerProblem, theme, setTheme, pathMode, setPathMode } =
-    basemap
+  const {
+    map,
+    active: activeBasemap,
+    error: mapError,
+    status: mapStatus,
+    styleReady,
+    workerProblem,
+    theme,
+    setTheme,
+    pathMode,
+    setPathMode,
+  } = basemap
   const plan = useRoute()
   const sheet = useRouteSheet(plan)
   const [riding, setRiding] = useState(false)
@@ -250,9 +275,13 @@ export default function RideView({
   // Three intents, one gesture. `mapTapAction` owns the precedence and is tested directly.
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    if (!instance || !styleReady || suspended) return
     const onClick = (e: MapMouseEvent) => {
       const action = mapTapAction({
+        // Always false by the time this runs — the effect does not register the handler
+        // otherwise — but passed rather than hardcoded, so the rule lives in one place and
+        // the closure cannot go stale against it.
+        suspended,
         profileUnderTap: canChoose.current ? routeAt(instance, e.point) : null,
         choosing: canChoose.current,
         clearableChoice: clearable.current,
@@ -266,14 +295,14 @@ export default function RideView({
     return () => {
       instance.off('click', onClick)
     }
-  }, [map, styleReady])
+  }, [map, styleReady, suspended])
 
   // ── Panning pauses following ──────────────────────────────────────────────────────────
   // Only a *user* drag: `originalEvent` is absent on the programmatic `easeTo` that follow
   // mode itself issues, and without that check following would cancel itself on the first fix.
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    if (!instance || !styleReady || suspended) return
     const onDrag = (e: { originalEvent?: unknown }) => {
       if (e.originalEvent) setFollowPaused(true)
     }
@@ -281,7 +310,7 @@ export default function RideView({
     return () => {
       instance.off('dragstart', onDrag)
     }
-  }, [map, styleReady])
+  }, [map, styleReady, suspended])
 
   useEffect(() => {
     if (!followPaused) return
@@ -296,6 +325,15 @@ export default function RideView({
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady) return
+
+    // A pin is map content, not chrome, so no CSS rule takes it off a map the picker is
+    // drawing Britain on. Any that were already placed come off — a plan saved before the
+    // app was updated must not reappear as stray letters over a region list.
+    if (suspended) {
+      for (const [, marker] of markers.current) marker.remove()
+      markers.current.clear()
+      return
+    }
 
     const live = new Set(plan.waypoints.map((w) => w.id))
     for (const [id, marker] of markers.current) {
@@ -344,13 +382,16 @@ export default function RideView({
         editable ? `${role} point ${label}. Tap to remove.` : `${role} point ${label}`,
       )
     })
-  }, [map, styleReady, plan.waypoints, editable])
+  }, [map, styleReady, suspended, plan.waypoints, editable])
 
   // ── The routes ────────────────────────────────────────────────────────────────────────
   const lastFitted = useRef<string | null>(null)
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    // `setRoutes` is harmless on the picker's backdrop — `showRemote` never adds the route
+    // source, so it no-ops — but `fitBounds` below is not: a plan saved from an earlier
+    // session would yank the picker's camera off Britain and onto last week's ride.
+    if (!instance || !styleReady || suspended) return
 
     // While riding, the comparison is over: only the route being ridden is drawn, and it is
     // drawn as a lone route — neutral near-white, maximum contrast for a glance at speed. The
@@ -374,7 +415,7 @@ export default function RideView({
       }
     }
     if (drawn.length === 0) lastFitted.current = null
-  }, [map, styleReady, plan.routes, plan.chosen, plan.waypoints.length, riding])
+  }, [map, styleReady, suspended, plan.routes, plan.chosen, plan.waypoints.length, riding])
 
   // ── Progress and the climb ahead, on the map ──────────────────────────────────────────
   // Quantised to 25 m so the two GeoJSON sources are not rebuilt on every fix. At 25 km/h that
@@ -386,7 +427,7 @@ export default function RideView({
     : null
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    if (!instance || !styleReady || suspended) return
     const geometry = telemetry.geometry
     if (!riding || !geometry || travelledM === null) {
       setTravelled(instance, [])
@@ -403,7 +444,7 @@ export default function RideView({
     // fix as the remaining distance ticks down, but the *stretch being highlighted* only
     // changes when the climb does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, styleReady, riding, telemetry.geometry, travelledM, climbSpan])
+  }, [map, styleReady, suspended, riding, telemetry.geometry, travelledM, climbSpan])
 
   // ── The camera ────────────────────────────────────────────────────────────────────────
   /**
@@ -423,7 +464,7 @@ export default function RideView({
    */
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    if (!instance || !styleReady || suspended) return
 
     // The arrow is drawn only while following. On the planning screen a heading arrow implies
     // a live orientation the rider is not being given, and the plain dot says "you are here"
@@ -451,7 +492,7 @@ export default function RideView({
     } else if (bearing !== null) {
       instance.easeTo({ bearing, duration: 400 })
     }
-  }, [map, styleReady, fix, following, followPaused, courseUp, heading.heading])
+  }, [map, styleReady, suspended, fix, following, followPaused, courseUp, heading.heading])
 
   /**
    * Grows the rider's marker for the road and shrinks it again for the planning screen.
@@ -461,9 +502,9 @@ export default function RideView({
    */
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady) return
+    if (!instance || !styleReady || suspended) return
     setPositionEmphasis(instance, riding)
-  }, [map, styleReady, riding])
+  }, [map, styleReady, suspended, riding])
 
   /**
    * Swallows the undo iOS offers when the phone is shaken.
@@ -493,12 +534,13 @@ export default function RideView({
   }, [riding])
 
   const centreOnMe = useCallback(async () => {
+    if (suspended) return
     setFollowPaused(false)
     const here = await locateOnce()
     if (here && map.current) {
       map.current.easeTo({ center: [here.lon, here.lat], zoom: Math.max(map.current.getZoom(), 15) })
     }
-  }, [locateOnce, map])
+  }, [locateOnce, map, suspended])
 
   /**
    * Turning the voice on has to speak *something*, immediately, from inside this tap.
@@ -556,6 +598,7 @@ export default function RideView({
   }, [riding, telemetry.offRoute, telemetry.progress, rerouting, rider.setup.autoReroute, reroute])
 
   const startRiding = useCallback(async () => {
+    if (suspended) return
     setRiding(true)
     setPlacing(false)
     setFollowPaused(false)
@@ -575,13 +618,26 @@ export default function RideView({
       zoom: RIDING_ZOOM,
       duration: 900,
     })
-  }, [locateOnce, map, courseUp, heading, announcer, voice])
+  }, [locateOnce, map, suspended, courseUp, heading, announcer, voice])
 
   /**
    * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
    * the collapse animation can index off it — the travel and stagger are both functions of a
    * button's position in the stack, and hand-numbering them would rot the first time one moved.
    */
+  /**
+   * The rail's imperative map writers, behind the same flag as the effects.
+   *
+   * Unreachable today: `body:has(.picker) .ride-chrome { display: none }` takes the rail out
+   * of hit-testing entirely. But that leaves a CSS rule load-bearing for who owns the map,
+   * which is precisely the guarantee the `suspended` doc comment above says CSS cannot give —
+   * and a comment that contradicts the code beside it is worse than no comment. One flag, one
+   * rule, in both places.
+   */
+  const ifLive = (act: () => void) => () => {
+    if (!suspended) act()
+  }
+
   const controls: RailControl[] = [
     {
       key: 'place',
@@ -601,14 +657,14 @@ export default function RideView({
       key: 'theme',
       icon: theme === 'dark' ? <SunIcon /> : <MoonIcon />,
       label: theme === 'dark' ? 'Switch to the daylight map' : 'Switch to the dark map',
-      onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+      onClick: ifLive(() => setTheme(theme === 'dark' ? 'light' : 'dark')),
     },
     {
       key: 'paths',
       icon: <PathIcon />,
       label: PATH_MODE_LABEL[pathMode],
       active: pathMode !== 'none',
-      onClick: () => setPathMode(nextPathMode(pathMode)),
+      onClick: ifLive(() => setPathMode(nextPathMode(pathMode))),
     },
     { key: 'setup', icon: <SettingsIcon />, label: 'Setup', onClick: onOpenSetup },
     {
@@ -729,6 +785,24 @@ export default function RideView({
                 <dt>climbing</dt>
               </div>
             </dl>
+          ) : mapStatus === 'no-basemap' ? (
+            /* The one state where the routing hints below are nonsense: there is no map to
+               tap. It is reachable by choice — "carry on without a region" — so it has to
+               explain itself rather than looking like a failed load. */
+            <p className="rail-hint panel">
+              No map on this phone yet. Open Setup to download a region, or to import one.
+            </p>
+          ) : mapStatus === 'error' && activeBasemap === null ? (
+            /* The other way to arrive with no map, and it wants different words. Nothing is
+               missing from this phone, so "download a region" would be confident and wrong —
+               what failed was reading what is already here, and the remedy is the collision
+               this repo has already documented. The fault itself is in the alert below.
+               Narrowed to "and no archive is mounted", because `refresh` also reports `error`
+               for a failed import while a perfectly good map is on screen. */
+            <p className="rail-hint panel">
+              free-wheel could not open your map. If it is open in another tab, close that tab
+              and reload.
+            </p>
           ) : routeCount > 1 ? (
             <p className="rail-hint panel">
               {routeCount} routes — tap one to choose it.

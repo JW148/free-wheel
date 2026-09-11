@@ -9,16 +9,32 @@ import {
   readRangeFromOpfs,
 } from './opfsVfs'
 import {
-  deleteTile,
   importBasemapFile,
   importTileFile,
   installedBasemaps,
   installedTiles,
-  resetTileStorage,
   SEGMENT_DIR,
   type ImportProgress,
 } from './tileStore'
 import type { ProvisionProgress } from './opfsVfs'
+import type { RegionProgress } from './downloads'
+import { downloadPlan } from '../data/regions'
+import {
+  completeRegionDownload,
+  deleteRegionFiles,
+  deleteTileSerialized,
+  opfsDownloadDeps,
+  readRecords,
+  recordsAfterRemoval,
+  resetTileStorageSerialized,
+  runRegionDownload,
+  serializeRegionOp,
+  writeRecords,
+} from './regionStore'
+// `import type` is load-bearing here: this file runs in a Worker, which has no `localStorage`,
+// and `manifest.ts` contains `loadManifest`, which uses it. A value import would pull that
+// code into the Worker bundle even though nothing here calls it.
+import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 
 /**
  * The engine's Worker-side API, exposed over Comlink.
@@ -139,7 +155,7 @@ const engineApi = {
   },
 
   /**
-   * Imports user-supplied `.rd5` files — the only way tiles enter the app.
+   * Imports user-supplied `.rd5` files — the escape hatch beside the region download.
    *
    * `File` survives structured cloning, so the picker can live on the main thread while the
    * OPFS writing stays here, where sync access handles exist.
@@ -174,12 +190,81 @@ const engineApi = {
     return installedBasemaps()
   },
 
+  /**
+   * Deletes one segment.
+   *
+   * Serialized against `downloadRegion` and `removeRegion`, because it retracts the segment's
+   * hash from `/regions.json` and a download committing across it would put the retraction
+   * straight back. See `regionStore.deleteTileSerialized` for why the wrap lives there and not
+   * in `tileStore`.
+   */
   async deleteTile(tile: string) {
-    await deleteTile(tile)
+    await deleteTileSerialized(tile)
   },
 
+  /** Clears every segment, serialized for the same reason as {@link deleteTile}. */
   async resetTileStorage() {
-    return resetTileStorage()
+    return resetTileStorageSerialized()
+  },
+
+  /**
+   * Downloads a region's basemap and routing segments into OPFS.
+   *
+   * Runs here because sync access handles are Worker-only on iOS, and finishes by calling
+   * `installedTiles()` again: that call is what registers `/segments4` in the VFS's in-memory
+   * directory registry, and skipping it makes BRouter report that the segment directory does
+   * not exist while the file sits in OPFS. It only shows up on a cold start.
+   *
+   * The per-item resume/restart/skip loop lives in `regionStore.runRegionDownload`, tested there
+   * without OPFS — this is thin wiring around it plus the bookkeeping that has to happen once
+   * for the whole region: reading and writing `regions.json`, and only then clearing the
+   * download markers `runRegionDownload` deliberately leaves behind (see its doc comment).
+   *
+   * The whole call is serialized through `serializeRegionOp` against every other
+   * `downloadRegion`/`removeRegion` call.
+   */
+  async downloadRegion(
+    region: RegionEntry,
+    manifest: DataManifest,
+    onProgress?: (progress: RegionProgress) => void,
+  ): Promise<InstalledRegion[]> {
+    return serializeRegionOp(async () => {
+      const records = await readRecords()
+      const plan = downloadPlan(region, manifest, records)
+
+      await runRegionDownload(region.id, plan.items, plan.bytes, opfsDownloadDeps, onProgress)
+
+      // Records the region, and only then forgets its download markers — see
+      // `completeRegionDownload`, and `runRegionDownload`'s doc comment for why not sooner.
+      const updated = await completeRegionDownload(region, manifest, plan.items, Date.now())
+
+      // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
+      await installedTiles()
+      return updated
+    })
+  },
+
+  async installedRegions(): Promise<InstalledRegion[]> {
+    return readRecords()
+  },
+
+  /**
+   * Removes a region: writes the record first, deletes files second.
+   *
+   * That order matters. `removeFile` swallows `NotFoundError` but not
+   * `NoModificationAllowedError` — a real scenario when a second Safari tab holds a lock — so a
+   * partial failure has to leave orphaned bytes with no record (self-healed by the next
+   * download) rather than a record for a region whose basemap is already gone and which
+   * `downloadPlan` would then refuse to ever re-fetch.
+   */
+  async removeRegion(id: string): Promise<InstalledRegion[]> {
+    return serializeRegionOp(async () => {
+      const records = await readRecords()
+      const { records: remaining, deleteSegments, deleteBasemap } = recordsAfterRemoval(records, id)
+      await writeRecords(remaining)
+      await deleteRegionFiles(deleteSegments, deleteBasemap)
+      return remaining
+    })
   },
 
   /**

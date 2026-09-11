@@ -7,14 +7,16 @@ import type { ImportProgress, InstalledTile } from './tileStore'
 const BROUTER_SEGMENTS = 'https://brouter.de/brouter/segments4/'
 
 /**
- * Regions and tiles — **import only**.
+ * Regions and tiles — the manual escape hatch.
  *
- * The app does not download routing data. It works out which tiles a region needs, says how
- * big they are and links to them; fetching is the user's job, and importing brings them in.
+ * The region picker (`RegionPicker.tsx`) downloading from our mirror is the app's primary way
+ * onto a phone now. This panel is what is left for the cases the mirror can't cover: a bucket
+ * outage, or a custom extract the region list doesn't carry. It works out which tiles a region
+ * needs, says how big they are, links to them on brouter.de, and imports what the user fetches.
  *
- * That is a deliberate simplification rather than a limitation forced on us, though it does
- * neatly sidestep the fact that brouter.de sends no CORS header and so could never be fetched
- * from a browser anyway. The cost is staleness, which the UI surfaces rather than hides.
+ * The app still never fetches from brouter.de itself, here or anywhere else: it sends no CORS
+ * header, so a browser could not fetch from it directly regardless of whether we wanted to. The
+ * cost of this manual path is staleness, which the UI surfaces rather than hides.
  */
 export default function TilesPanel() {
   const [catalogue, setCatalogue] = useState<TileCatalogue | null>(null)
@@ -99,9 +101,10 @@ export default function TilesPanel() {
     <section>
       <h2>Regions and tiles</h2>
       <p className="sub">
-        Routing data comes as 5°×5° tiles named by their south-west corner. Pick a region to see
-        which you need, download them from brouter.de, then import them here — the app never
-        downloads them for you.
+        Routing data comes as 5°×5° tiles named by their south-west corner. This is the manual
+        way in, for a bucket outage or an extract the region picker's list doesn't cover — pick
+        a region to see which tiles you need, download them from brouter.de, then import them
+        here.
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -257,9 +260,10 @@ export default function TilesPanel() {
 /**
  * Says how old an imported tile is.
  *
- * The whole cost of import-only is that tiles do not update themselves, so the app should be
- * candid about it rather than let a rider discover a year-old road layout on the road.
- * brouter.de rebuilds weekly, so anything beyond a few weeks is worth re-importing.
+ * A manually imported file carries no hash to compare against upstream, unlike a mirror
+ * download — it is a snapshot that will not update itself, so the app should be candid about
+ * its age rather than let a rider discover a year-old road layout on the road. brouter.de
+ * rebuilds weekly, so anything beyond a few weeks is worth re-importing.
  */
 function StaleNote({
   installed,

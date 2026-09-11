@@ -11,7 +11,10 @@
     "spike-server": "node tools/report-server.mjs",
     "spike-server-https": "node tools/report-server.mjs --https",
     "build-catalogue": "node tools/build-tile-catalogue.mjs",
-    "fetch-map-assets": "node tools/fetch-map-assets.mjs"
+    "fetch-map-assets": "node tools/fetch-map-assets.mjs",
+    "mirror:segments": "node tools/mirror/sync-segments.mjs",
+    "mirror:configure": "node tools/mirror/configure-bucket.mjs",
+    "mirror:basemaps": "node tools/mirror/cut-basemaps.mjs"
   },
   "dependencies": {
     "comlink": "^4.4.2",
@@ -22,6 +25,7 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1130.0",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

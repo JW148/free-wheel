@@ -54,6 +54,52 @@ interface FileEntry {
 }
 
 /**
+ * Paths a write is in flight to, and the size each must reach before the VFS bridge will treat
+ * it as present again. In-memory only.
+ *
+ * Keyed by path rather than held on the {@link FileEntry}, and that is load-bearing: a marker
+ * has to be settable *before* the file is opened. Opening is what creates and registers a path,
+ * and registration alone makes it visible to the bridge — so a marker that could only be set on
+ * an already-open file left a window in which a truncated orphan, reopened for a retry, answered
+ * `exists: true` at its short length. Marking first and opening second closes it, and it means
+ * a failure to open leaves a marker rather than an unmarked file.
+ *
+ * This is the same-session complement to `partials.isTruncated`, which protects a *fresh*
+ * worker from ever opening a file an interrupted download left short. Within a session it also
+ * covers the case `isTruncated` cannot: a file that previously held a full, *different* segment,
+ * whose registry size is stale and too large over bytes a resumed download truncated and only
+ * partly rewrote — BRouter would read past what is really there into whatever the file used to
+ * be.
+ *
+ * Deliberately touches no handle: a resume already in flight, or about to retry, still needs it.
+ *
+ * **Every path that sets this must name the path that clears it.** A marker that outlives the
+ * write it describes hides a file that is perfectly fine, which is a worse failure than the one
+ * it exists to prevent — the file is *there*, complete and correct, and BRouter is told it is
+ * not. Set only in {@link markPending}, always via `partials.markDownloading`, and only once a
+ * response is in hand and the bytes are certain to land. Cleared by:
+ *
+ * - {@link clearPending} — via `partials.clearDownloading`, on a completed region download, a
+ *   hand import over the same path, a tile delete, a storage reset, or a region removal.
+ * - {@link removeFile} — the file is gone, so the marker goes with it.
+ * - a Worker restart, or {@link closeOpfs} — this map is in-memory, and the durable half in
+ *   `/downloads.json` is what survives instead.
+ * - reaching the target: {@link isPending} compares against the entry's live `size`, so a
+ *   `refreshSize` that brings `size` up to the target resolves it without anyone asking.
+ */
+const pendingTargets = new Map<string, number>()
+
+/** Whether `key` is mid-write and has not yet reached the size it is being written toward. */
+function isPending(key: string): boolean {
+  const target = pendingTargets.get(key)
+  if (target === undefined) return false
+  const entry = files.get(key)
+  // An unopened path is not visible to the bridge anyway; answering `true` keeps the two
+  // questions — "is this marked" and "is it there yet" — from disagreeing in between.
+  return !entry || entry.size < target
+}
+
+/**
  * A single fixed timestamp for every file.
  *
  * `ProfileCache` invalidates on `File.lastModified()`, so this must not move between calls
@@ -219,6 +265,9 @@ export function openHandle(path: string): Promise<SyncAccessHandle> {
  */
 export async function removeFile(path: string): Promise<void> {
   const key = normalise(path)
+  // The file is going, so anything claiming it is mid-write goes with it. The durable half is
+  // cleared by `partials.clearDownloading`, which every caller of this pairs with.
+  pendingTargets.delete(key)
 
   const entry = files.get(key)
   if (entry) {
@@ -298,6 +347,109 @@ export function knownSize(path: string): number {
 }
 
 /**
+ * Marks `path` as not yet reaching `bytes`, so the VFS bridge treats it as absent until its
+ * real size catches up. See {@link pendingTargets} for why nothing needs to be open first, and
+ * `partials.markDownloading`, which is the only thing that should call this.
+ */
+export function markPending(path: string, bytes: number): void {
+  pendingTargets.set(normalise(path), bytes)
+}
+
+/**
+ * Forgets that a path was ever mid-write, so the VFS bridge judges it on its own bytes again.
+ *
+ * The counterpart {@link markPending} needs and did not have. Waiting for the file to reach its
+ * target is not a clearing path for the case that matters: a rider whose region download died
+ * mid-segment and who then hand-imports that segment from brouter.de, which rebuilds weekly and
+ * so is essentially never the byte count the abandoned mirror snapshot recorded. If the import
+ * is the smaller of the two — a coin flip — the stale marker hides a complete, correct file for
+ * the rest of the session while the UI cheerfully lists it as installed.
+ *
+ * Always called through `partials.clearDownloading`, which clears the durable half in the same
+ * breath. The two markers describe one fact and must not be able to drift apart.
+ */
+export function clearPending(path: string): void {
+  pendingTargets.delete(normalise(path))
+}
+
+/**
+ * Walks down to a path's parent directory without creating anything along the way.
+ *
+ * Deliberately distinct from `directoryFor`, which passes `{ create: true }` because callers
+ * that reach it are about to write. `peekFileSize` is a read-only glance — a path that doesn't
+ * exist yet should stay that way, not get a directory created as a side effect of asking about
+ * it. Returns `null` only for a directory that genuinely is not there.
+ *
+ * `NotFoundError` and nothing else, deliberately — the same convention the `getFile()` half of
+ * `peekFileSize` settled on. A blanket `catch` here would fold every other reason the walk
+ * could fail (a lock held by a second tab, a file sitting where a directory should be) into
+ * "absent", and absent is not a neutral answer: `isTruncated` reads a `-1` size as *short of
+ * target* and hides the file. A directory we could not read must not be able to hide a tile
+ * that is fine.
+ */
+async function directoryForPeek(path: string): Promise<FileSystemDirectoryHandle | null> {
+  const parts = path.split('/').filter(Boolean)
+  parts.pop()
+  let dir = await navigator.storage.getDirectory()
+  for (const part of parts) {
+    try {
+      dir = await dir.getDirectoryHandle(part)
+    } catch (error) {
+      if ((error as DOMException)?.name !== 'NotFoundError') throw error
+      return null
+    }
+  }
+  return dir
+}
+
+/**
+ * The size of a file that might not be open yet, without opening — and thereby registering —
+ * it.
+ *
+ * `listDirectoryEntries` deliberately avoids `getFile()` because its behaviour is unreliable on
+ * a file that already holds an open sync access handle elsewhere — but that caveat only
+ * applies to a path already in the registry, and this checks the registry first and answers
+ * from it directly in that case. For everything else — typically an orphan left by a session
+ * that crashed or was killed mid-download, discovered fresh after a restart with nothing yet
+ * open on it — a `getFile()` peek is safe, and lets a caller decide whether a file is worth
+ * opening (and thereby exposing to the VFS bridge as present) at all before doing so.
+ *
+ * Returns -1 only for genuine absence — no such directory, no such file. Anything else that
+ * stops `getFile()` from answering (a second tab holding an incompatible lock, say) is a real
+ * error and is thrown rather than folded into "-1 means absent": conflating the two would make
+ * `isTruncated` (the only caller) silently drop a merely-locked, perfectly good tile out of
+ * `installedTiles()` instead of surfacing the same honest "already open elsewhere" failure the
+ * rest of this module raises for that scenario.
+ */
+export async function peekFileSize(path: string): Promise<number> {
+  const key = normalise(path)
+  const cached = files.get(key)
+  if (cached) return cached.size
+
+  const dir = await directoryForPeek(key)
+  if (!dir) return -1
+  const name = key.slice(key.lastIndexOf('/') + 1)
+
+  let fileHandle: FileSystemFileHandle
+  try {
+    fileHandle = await dir.getFileHandle(name)
+  } catch (error) {
+    if ((error as DOMException)?.name !== 'NotFoundError') throw error
+    return -1 // no such file
+  }
+
+  try {
+    const file = await fileHandle.getFile()
+    return file.size
+  } catch (error) {
+    throw new Error(
+      `${path} could not be sized, and is likely open elsewhere — free-wheel can only run in ` +
+        `one tab at a time. (${error instanceof Error ? error.message : String(error)})`,
+    )
+  }
+}
+
+/**
  * Ensures every asset is present in OPFS, downloading what is missing, and leaves a sync
  * access handle open for each.
  *
@@ -331,6 +483,11 @@ export async function provisionOpfs(
       asset.bytes !== undefined ? currentSize === asset.bytes : currentSize > 0
 
     if (complete) {
+      // Re-registering neither sets nor clears a pending marker — markers live in
+      // `pendingTargets`, keyed by path, not in the entry. That is the safe direction: this
+      // function is only ever used for the bundled profiles, which nothing marks, and if it
+      // were ever pointed at a marked path the marker would survive until something cleared it
+      // deliberately rather than being dropped as a side effect of a re-register.
       files.set(path, { handle, size: currentSize })
       registerDirectories(path)
       onProgress?.({ path, received: currentSize, total: currentSize, state: 'skipped' })
@@ -377,13 +534,18 @@ export async function provisionOpfs(
  */
 export function installVfsBridge(): void {
   const bridge = {
+    // Every lookup below treats a pending path (see `pendingTargets`) as though it doesn't
+    // exist — the same-session complement to `partials.isTruncated` keeping a cross-restart
+    // orphan out of the registry in the first place.
     exists(path: string): boolean {
       const key = normalise(path)
+      if (isPending(key)) return false
       return files.has(key) || directories.has(key)
     },
 
     isFile(path: string): boolean {
-      return files.has(normalise(path))
+      const key = normalise(path)
+      return files.has(key) && !isPending(key)
     },
 
     isDirectory(path: string): boolean {
@@ -391,7 +553,10 @@ export function installVfsBridge(): void {
     },
 
     size(path: string): number {
-      return files.get(normalise(path))?.size ?? -1
+      const key = normalise(path)
+      const entry = files.get(key)
+      if (!entry || isPending(key)) return -1
+      return entry.size
     },
 
     lastModified(_path: string): number {
@@ -405,6 +570,7 @@ export function installVfsBridge(): void {
 
       for (const candidate of [...files.keys(), ...directories]) {
         if (candidate === prefix || !candidate.startsWith(base)) continue
+        if (isPending(candidate)) continue
         const rest = candidate.slice(base.length)
         const head = rest.split('/')[0]
         if (head) names.add(head)
@@ -421,8 +587,9 @@ export function installVfsBridge(): void {
      * thousands of chunks, and allocating each one would make the GC do the work instead.
      */
     read(path: string, position: number, length: number): Int8Array {
-      const entry = files.get(normalise(path))
-      if (!entry || length <= 0 || position >= entry.size) {
+      const key = normalise(path)
+      const entry = files.get(key)
+      if (!entry || isPending(key) || length <= 0 || position >= entry.size) {
         return new Int8Array(0)
       }
 
@@ -443,6 +610,7 @@ export function installVfsBridge(): void {
 export function closeOpfs(): void {
   for (const { handle } of files.values()) handle.close()
   files.clear()
+  pendingTargets.clear()
   opening.clear()
   directories.clear()
   directories.add('/')

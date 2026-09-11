@@ -248,12 +248,22 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   Enterprise licence. Replacing it is the first mapcn change.
 - **Do not route against `brouter.de`.** Download-only usage of `segments4/` is the respectful
   pattern; the API has no published rate limits or ToS.
-- **Tiles are import-only. The app never downloads routing data** — the user fetches `.rd5`
-  files from brouter.de and imports them. Do not add a downloader: it is a deliberate
-  simplification, and `brouter.de` sends no CORS header so a browser could not fetch from it
-  anyway. The app's job is to say *which* tiles are needed and link to them.
-- **Imported tiles go stale.** brouter.de rebuilds weekly; imports are snapshots that never
-  update. Surface the age rather than hiding it.
+- **Routing data comes from our mirror, never from brouter.de.** The app downloads regions
+  from a bucket the mirror publishes to. The two scripts that fill it, their shared pure logic,
+  the bucket layout, the CORS rule, the refresh commands and the five environment variables they
+  need all live in `web/tools/mirror/` — start at its `README.md`. They are written and tested;
+  what has never happened is the first upload, because that needs credentials (see
+  `docs/phase-8-progress.md`). **Nothing is scheduled**: both scripts are run by hand from a
+  laptop, and that run is the only thing that ever talks to brouter.de, at five conditional
+  requests per refresh — the 14 regions share just five BRouter grid cells. Cadence is not load-bearing — staleness is decided by
+  comparing hashes, never by a calendar, so the app cannot tell when the last run happened.
+  Never fetch from brouter.de in the app: it sends no CORS header, so a browser could not
+  anyway, and never route against its API.
+  Manual `.rd5` and `.pmtiles` import stays as an escape hatch for a bucket outage and for
+  testing custom extracts.
+- **Imported data goes stale, and the mirror is what tells you.** Every object in the bucket is
+  content-addressed, so an update is offered only when the bytes actually differ. A weekly
+  upstream rebuild with identical bytes is not an update.
 - **Only one open OPFS sync access handle per file.** The engine's VFS and the tile downloader
   therefore share one registry in `opfsVfs.ts` — never open handles elsewhere. The registry
   also de-duplicates *in-flight* opens: two concurrent `openHandle` calls for one path would
