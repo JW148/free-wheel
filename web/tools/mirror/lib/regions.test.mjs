@@ -19,8 +19,17 @@ const covers = (lon, lat) =>
  * anyway.
  *
  * Mainland only. Offshore islands — Wight, Anglesey, Man, Arran, Skye, the Hebrides, Orkney,
- * Shetland, Scilly — are outside this ring and therefore not swept. Of those, only Shetland
- * falls in no region; see the accepted gaps below.
+ * Shetland, Scilly — are outside this ring and so are never swept; they are asserted by name in
+ * `covers the offshore islands` below instead. Two of them fall in no region:
+ *
+ * - **the Isles of Scilly** (−6.31, 49.92), below 50.0°N, out for the same reason as the Lizard
+ *   tip that `ACCEPTED_GAPS` declares: the row beneath is Brittany and the Bay of Biscay.
+ * - **Shetland**, above 59.5°N. Not a segment-cost decision, whatever an earlier version of this
+ *   comment said: a *standalone* Shetland region computes to `W5_N55` + `W5_N60`, which passes
+ *   the two-segment rule below, and `W5_N60` is **327,756 bytes** — a third of a megabyte, and
+ *   `docs/phase-2-progress.md` measured adding Shetland as costing almost nothing. What it
+ *   actually costs is a fifteenth region and a basemap cut of its own. That is the owner's call
+ *   and needs a measurement of the cut, so nothing here bans the cell.
  */
 const MAINLAND = [
   [-5.72, 50.07], [-5.48, 50.21], [-5.08, 50.41], [-4.55, 50.83], [-4.20, 51.02], [-4.12, 51.20],
@@ -61,7 +70,9 @@ const ACCEPTED_GAPS = [
   {
     what: 'the Lizard tip, south of 50.0°N',
     // south-west-england stops at exactly 50.0. Below that line the grid hands out W5_N45 and
-    // W10_N45 — Brittany and the Bay of Biscay — for a few square kilometres of Cornwall.
+    // W10_N45 — Brittany and the Bay of Biscay — for a few square kilometres of Cornwall. The
+    // Isles of Scilly are out on the same line; they are offshore, so the sweep never reaches
+    // them and they are asserted by name instead.
     box: [-5.4, 49.90, -5.15, 50.0],
   },
   {
@@ -146,6 +157,30 @@ describe('regions.json', () => {
     }
   })
 
+  /**
+   * The islands, which the mainland sweep cannot reach.
+   *
+   * Asserted rather than described, for the reason `ACCEPTED_GAPS` is declared rather than
+   * commented: the comment above claimed for a while that Shetland was the only island in no
+   * region, while the Isle of Man and the Isles of Scilly were uncovered too and only one of
+   * them was written down anywhere.
+   */
+  it('covers the offshore islands, and names the two it does not', () => {
+    expect(covers(-1.30, 50.68), 'Isle of Wight').toBe(true)
+    expect(covers(-4.40, 53.28), 'Anglesey').toBe(true)
+    // Reached by widening north-west-england to −4.9, which still computes to one segment.
+    expect(covers(-4.48, 54.15), 'Isle of Man').toBe(true)
+    expect(covers(-5.22, 55.58), 'Arran').toBe(true)
+    expect(covers(-6.20, 57.40), 'Skye').toBe(true)
+    expect(covers(-6.60, 58.20), 'Lewis').toBe(true)
+    expect(covers(-2.96, 58.98), 'Orkney').toBe(true)
+
+    // The two that are not, both recorded in the sweep comment above and in
+    // `docs/phase-6-progress.md`. If one of these starts passing, delete it from both.
+    expect(covers(-6.31, 49.92), 'Isles of Scilly').toBe(false)
+    expect(covers(-1.15, 60.15), 'Shetland').toBe(false)
+  })
+
   it('covers the towns an earlier bbox set left in no region', () => {
     // Regression cases, all of them real holes this file's own test used to pass over.
     expect(covers(-1.26, 51.75), 'Oxford').toBe(true)
@@ -168,14 +203,24 @@ describe('regions.json', () => {
   })
 
   it('asks for no segment outside the British Isles', () => {
-    // The five cells Britain actually sits on. A bbox that reaches below 50°N picks up
-    // W5_N45 or W10_N45 — Brittany, Normandy, the Bay of Biscay — and one that reaches past
-    // 60°N picks up W5_N60 for Shetland; either is a third file nobody asked for. Naming the
-    // permitted set makes the next widening say so out loud.
-    const allowed = new Set(['W10_N50', 'W5_N50', 'E0_N50', 'W10_N55', 'W5_N55'])
+    // Expressed as the box the isles sit in rather than a list of cell names, because a list
+    // encodes today's regions as a rule. The previous version named five cells and so banned
+    // `W5_N60` outright — which would have failed anyone covering Shetland, for a file of
+    // 327,756 bytes. The cost this test is about is the one that is actually large:
+    //
+    // - **south of 50°N** the grid hands out `W10_N45`, `W5_N45` and `E0_N45` — the Bay of
+    //   Biscay, Brittany, Normandy. `E0_N45` alone is 126 MB, for a cell whose only British
+    //   land is the Lizard and the Scillies.
+    // - **west of 10°W** is open Atlantic, and **east of 5°E** is the wrong country.
+    //
+    // Ireland is not excludable by name and is deliberately not tried: `W10_N50` and `W10_N55`
+    // hold it, and also hold Cornwall, Pembrokeshire and Kintyre, so nothing here can tell an
+    // Irish cell bought on purpose from a Welsh coastline bought by necessity. What keeps one
+    // from being paid for is the two-segment budget above, not this test.
+    const britishIsles = new Set(segmentsForBbox([-10, 50, 5, 61]))
     for (const region of regions) {
       for (const name of segmentsForBbox(region.bbox)) {
-        expect(allowed.has(name), `${region.id} wants ${name}`).toBe(true)
+        expect(britishIsles.has(name), `${region.id} wants ${name}`).toBe(true)
       }
     }
   })

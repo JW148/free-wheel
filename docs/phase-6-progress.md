@@ -108,7 +108,8 @@ of Kintyre. The named-cities test could not have found any of them; the holes a 
 rectangles leaves are between the places anyone thinks to name.
 
 All six are closed by widening a bbox, and every region still needs at most two segments, from
-the same five grid cells as before. Two of the closures are worth recording:
+the same five grid cells as before. Three of the closures are worth recording, the last of
+them found long afterwards:
 
 - **Kintyre** took `central-scotland` from one segment to two. That is only tolerable because
   the second is `W10_N55` at **5.5 MB** — by far the cheapest cell on the grid, being almost
@@ -116,20 +117,36 @@ the same five grid cells as before. Two of the closures are worth recording:
   Scotland and Argyll*. `east-anglia` likewise becomes *East Anglia and Lincolnshire*.
 - **Orkney** came in free: the Highlands' north edge moved from 58.7 to 59.5, still inside the
   same `N55` row of the grid.
+- **the Isle of Man** came in free too, later: `north-west-england`'s west edge moved from −3.7
+  to −4.9, which is still inside `W5_N50` — the region's only segment, and unchanged. It had
+  been uncovered the whole time and, unlike Scilly and Shetland, was not written down anywhere.
 
-Three accepted gaps remain, each one a bbox edge sitting on a grid line where the next nudge
+Two accepted gaps remain, each one a bbox edge sitting on a grid line where the next nudge
 outward costs a whole extra segment:
 
 - **the Lizard tip and the Isles of Scilly**, below 50.0°N — the next row down is `W5_N45` and
-  `W10_N45`, Brittany and the Bay of Biscay.
+  `W10_N45`, Brittany and the Bay of Biscay. `E0_N45` alone is 126 MB.
 - **the Rhins of Galloway** (Stranraer, Portpatrick), west of −5.0 — reaching them takes
   `southern-scotland` from two segments to four.
-- **Shetland**, above 59.5°N — `W5_N60` would be a third segment for the Highlands.
 
-The first two are declared in `regions.test.mjs`, which asserts both that no other mainland
-point is uncovered *and* that each declared gap is still real, so closing one without deleting
-its declaration fails the build. Shetland is not on the mainland, so the sweep never reaches
-it; it is recorded here and nowhere else.
+Both are declared in `regions.test.mjs`, which asserts both that no other mainland point is
+uncovered *and* that each declared gap is still real, so closing one without deleting its
+declaration fails the build. Offshore islands sit outside the mainland outline the sweep
+traces, so they are asserted by name in the same file: Wight, Anglesey, Man, Arran, Skye,
+Lewis and Orkney covered, Scilly and Shetland not.
+
+**Shetland is out, and not for the reason this document used to give.** It said `W5_N60` would
+be a third segment for the Highlands. That is true only of the way it was imagined —
+stretching `highlands-islands` north to 61° pulls in `W10_N60` as well, so four segments — and
+it is not the way it would be done. A *standalone* Shetland region computes to exactly
+`W5_N55` + `W5_N60`, which passes the two-segment rule, and `W5_N60` is **327,756 bytes**: a
+third of a megabyte, which is why `docs/phase-2-progress.md` recorded adding Shetland as
+costing almost nothing. The real cost is a fifteenth region in the picker and a basemap cut of
+its own, and the size of that cut cannot be measured until the bucket exists. It is therefore
+an open product decision rather than a budget one, and `regions.test.mjs` no longer bans the
+cell — the test now checks that a region's segments fall inside the box the British Isles
+occupy, which lets a future Shetland region through while still rejecting Brittany, Biscay and
+the open Atlantic.
 
 ### Task 1's geometry had the same clamp bug in two places, on purpose, and it was wrong in both
 
