@@ -51,6 +51,28 @@ export interface ProvisionProgress {
 interface FileEntry {
   handle: SyncAccessHandle
   size: number
+  /**
+   * The size this path must reach before the VFS bridge will treat it as present — set while a
+   * write to it is in flight, in-memory only.
+   *
+   * This is the same-session complement to `partials.isTruncated`, which protects a *fresh*
+   * worker from ever opening (and thereby registering) a file an interrupted download left
+   * short. Once a path is already open here, though, a failed or still-running write must not
+   * let the bridge keep answering with whatever size the entry had before that write started —
+   * on a file that previously held a full, different segment, that is a stale, too-large size
+   * over bytes a resumed download truncated and only partly rewrote, and BRouter would read
+   * past what is really there into whatever the rest of the file used to be.
+   *
+   * Deliberately does not touch, close, or remove the handle: a resume already in flight, or
+   * about to retry, still needs it. And nothing has to explicitly clear this once the write
+   * finishes — `isPending` compares against the entry's live `size`, so a `refreshSize` call
+   * that brings `size` up to `targetSize` resolves it on its own.
+   */
+  targetSize?: number
+}
+
+function isPending(entry: FileEntry): boolean {
+  return entry.targetSize !== undefined && entry.size < entry.targetSize
 }
 
 /**
@@ -298,6 +320,41 @@ export function knownSize(path: string): number {
 }
 
 /**
+ * Marks `path` as not yet reaching `bytes`, so the VFS bridge treats it as absent until its
+ * real size catches up. See `FileEntry.targetSize` for why this is what the same-session half
+ * of an interrupted download needs, and why nothing needs to explicitly clear it again.
+ *
+ * A no-op if the path isn't open yet — nothing to mark, and a caller that hasn't opened it
+ * couldn't be about to write to it either.
+ */
+export function markPending(path: string, bytes: number): void {
+  const entry = files.get(normalise(path))
+  if (entry) entry.targetSize = bytes
+}
+
+/**
+ * Walks down to a path's parent directory without creating anything along the way.
+ *
+ * Deliberately distinct from `directoryFor`, which passes `{ create: true }` because callers
+ * that reach it are about to write. `peekFileSize` is a read-only glance — a path that doesn't
+ * exist yet should stay that way, not get a directory created as a side effect of asking about
+ * it. Returns `null` if any segment of the path is missing.
+ */
+async function directoryForPeek(path: string): Promise<FileSystemDirectoryHandle | null> {
+  const parts = path.split('/').filter(Boolean)
+  parts.pop()
+  let dir = await navigator.storage.getDirectory()
+  for (const part of parts) {
+    try {
+      dir = await dir.getDirectoryHandle(part)
+    } catch {
+      return null
+    }
+  }
+  return dir
+}
+
+/**
  * The size of a file that might not be open yet, without opening — and thereby registering —
  * it.
  *
@@ -307,22 +364,39 @@ export function knownSize(path: string): number {
  * from it directly in that case. For everything else — typically an orphan left by a session
  * that crashed or was killed mid-download, discovered fresh after a restart with nothing yet
  * open on it — a `getFile()` peek is safe, and lets a caller decide whether a file is worth
- * opening (and thereby exposing to the VFS bridge as present) at all before doing so. Returns
- * -1 if the file cannot be sized, including "does not exist".
+ * opening (and thereby exposing to the VFS bridge as present) at all before doing so.
+ *
+ * Returns -1 only for genuine absence — no such directory, no such file. Anything else that
+ * stops `getFile()` from answering (a second tab holding an incompatible lock, say) is a real
+ * error and is thrown rather than folded into "-1 means absent": conflating the two would make
+ * `isTruncated` (the only caller) silently drop a merely-locked, perfectly good tile out of
+ * `installedTiles()` instead of surfacing the same honest "already open elsewhere" failure the
+ * rest of this module raises for that scenario.
  */
 export async function peekFileSize(path: string): Promise<number> {
   const key = normalise(path)
   const cached = files.get(key)
   if (cached) return cached.size
 
+  const dir = await directoryForPeek(key)
+  if (!dir) return -1
+  const name = key.slice(key.lastIndexOf('/') + 1)
+
+  let fileHandle: FileSystemFileHandle
   try {
-    const dir = await directoryFor(key)
-    const name = key.slice(key.lastIndexOf('/') + 1)
-    const fileHandle = await dir.getFileHandle(name)
+    fileHandle = await dir.getFileHandle(name)
+  } catch {
+    return -1 // no such file
+  }
+
+  try {
     const file = await fileHandle.getFile()
     return file.size
-  } catch {
-    return -1
+  } catch (error) {
+    throw new Error(
+      `${path} could not be sized, and is likely open elsewhere — free-wheel can only run in ` +
+        `one tab at a time. (${error instanceof Error ? error.message : String(error)})`,
+    )
   }
 }
 
@@ -406,13 +480,19 @@ export async function provisionOpfs(
  */
 export function installVfsBridge(): void {
   const bridge = {
+    // Every lookup below treats a `targetSize`-pending entry (see `FileEntry.targetSize`) as
+    // though it doesn't exist — the same-session complement to `partials.isTruncated` keeping
+    // a cross-restart orphan out of the registry in the first place.
     exists(path: string): boolean {
       const key = normalise(path)
+      const entry = files.get(key)
+      if (entry && isPending(entry)) return false
       return files.has(key) || directories.has(key)
     },
 
     isFile(path: string): boolean {
-      return files.has(normalise(path))
+      const entry = files.get(normalise(path))
+      return !!entry && !isPending(entry)
     },
 
     isDirectory(path: string): boolean {
@@ -420,7 +500,9 @@ export function installVfsBridge(): void {
     },
 
     size(path: string): number {
-      return files.get(normalise(path))?.size ?? -1
+      const entry = files.get(normalise(path))
+      if (!entry || isPending(entry)) return -1
+      return entry.size
     },
 
     lastModified(_path: string): number {
@@ -434,6 +516,8 @@ export function installVfsBridge(): void {
 
       for (const candidate of [...files.keys(), ...directories]) {
         if (candidate === prefix || !candidate.startsWith(base)) continue
+        const entry = files.get(candidate)
+        if (entry && isPending(entry)) continue
         const rest = candidate.slice(base.length)
         const head = rest.split('/')[0]
         if (head) names.add(head)
@@ -451,7 +535,7 @@ export function installVfsBridge(): void {
      */
     read(path: string, position: number, length: number): Int8Array {
       const entry = files.get(normalise(path))
-      if (!entry || length <= 0 || position >= entry.size) {
+      if (!entry || isPending(entry) || length <= 0 || position >= entry.size) {
         return new Int8Array(0)
       }
 

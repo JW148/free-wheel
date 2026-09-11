@@ -3,6 +3,7 @@
 import * as Comlink from 'comlink'
 import {
   installVfsBridge,
+  markPending,
   openHandle,
   provisionOpfs,
   provisionedFiles,
@@ -248,6 +249,7 @@ const engineApi = {
         {
           openSink,
           refreshSize,
+          markPending,
           readPartialHash,
           writePartialHash,
           recordSegmentWritten: (name, bytes) => recordTileInstalled(name, bytes, Date.now()),

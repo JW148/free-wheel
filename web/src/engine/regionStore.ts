@@ -155,6 +155,12 @@ export interface DownloadLoopDeps {
   openSink(path: string): Promise<ByteSink>
   /** Re-reads a file's size into whatever registry the real implementation keeps. */
   refreshSize(path: string): void
+  /**
+   * Marks `path` as not yet reaching `bytes`, so the same-session VFS bridge treats it as
+   * absent until the real size catches up — see `opfsVfs.markPending`. A no-op for the fake
+   * deps in tests that don't model the bridge at all.
+   */
+  markPending(path: string, bytes: number): void
   readPartialHash(path: string): Promise<PartialTarget | null>
   writePartialHash(path: string, target: PartialTarget): Promise<void>
   /**
@@ -217,6 +223,10 @@ export async function runRegionDownload(
 
       if (decision.action !== 'done') {
         await deps.writePartialHash(path, { hash: item.hash, bytes: item.bytes })
+        // Same-session guard: until this write finishes, the file must not answer as present
+        // and full-length to anything reading through the VFS bridge in *this* session — see
+        // `opfsVfs.markPending`.
+        deps.markPending(path, item.bytes)
         await downloadInto(sink, item.url, item.bytes, {
           from: decision.action === 'resume' ? decision.at : 0,
           fetchImpl: deps.fetchImpl,
@@ -243,6 +253,13 @@ export async function runRegionDownload(
         overallReceived: doneBytes, overallTotal: totalBytes, state: 'complete',
       })
     } catch (error) {
+      // A failed attempt may have truncated-and-partly-rewritten a file that previously held a
+      // full, different version — refreshing brings the registry's cached size back in line
+      // with what is actually on disk, so the rest of this session sees an honest (possibly
+      // still-pending) size rather than the stale, too-large one from before this attempt.
+      // `markPending` above already keeps the bridge from treating a short file as present at
+      // all; this is what makes that comparison correct once the size itself is stale too.
+      deps.refreshSize(path)
       onProgress?.({
         key: item.key, kind: item.kind, received: lastReceived, total: item.bytes,
         overallReceived: doneBytes + lastReceived, overallTotal: totalBytes, state: 'failed',

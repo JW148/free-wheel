@@ -1,5 +1,5 @@
 import { listDirectoryEntries, openHandle, refreshSize, removeFile } from './opfsVfs'
-import { isTruncated } from './partials'
+import { clearPartialHash, isTruncated } from './partials'
 
 /**
  * Tile storage — **import only**.
@@ -139,6 +139,13 @@ export async function importTileFile(
   manifest[tile] = { bytes: offset, importedAt: Date.now() }
   await writeManifest(manifest)
 
+  // A hand import can land on the same path a previously interrupted download left a partial
+  // entry for — brouter.de rebuilds weekly, so an import is essentially never byte-identical
+  // to whatever the mirror snapshot the entry recorded. Left in place, `isTruncated` would
+  // compare this complete, correct file against that unrelated target forever and hide it from
+  // `installedTiles()` regardless of how it got here.
+  await clearPartialHash(path)
+
   onProgress?.({ tile, received: offset, total: offset, state: 'complete' })
   return tile
 }
@@ -194,7 +201,13 @@ export async function installedBasemaps(): Promise<{ name: string; bytes: number
   const result: { name: string; bytes: number }[] = []
   for (const name of names) {
     if (!/\.pmtiles$/i.test(name)) continue
-    const handle = await openHandle(`${BASEMAP_DIR}/${name}`)
+    const path = `${BASEMAP_DIR}/${name}`
+
+    // Same reasoning as installedTiles(): a region basemap an interrupted download left short
+    // of its target must not reach PMTiles as a short, unreadable archive.
+    if (await isTruncated(path)) continue
+
+    const handle = await openHandle(path)
     result.push({ name, bytes: handle.getSize() })
   }
   return result
@@ -202,7 +215,9 @@ export async function installedBasemaps(): Promise<{ name: string; bytes: number
 
 /** Removes a tile from OPFS and forgets it. */
 export async function deleteTile(tile: string): Promise<void> {
-  await removeFile(`${SEGMENT_DIR}/${tile}.rd5`)
+  const path = `${SEGMENT_DIR}/${tile}.rd5`
+  await removeFile(path)
+  await clearPartialHash(path)
   const manifest = await readManifest()
   delete manifest[tile]
   await writeManifest(manifest)
@@ -266,7 +281,9 @@ export async function resetTileStorage(): Promise<string[]> {
   const names = await listDirectoryEntries(SEGMENT_DIR)
   const removed: string[] = []
   for (const name of names) {
-    await removeFile(`${SEGMENT_DIR}/${name}`)
+    const path = `${SEGMENT_DIR}/${name}`
+    await removeFile(path)
+    await clearPartialHash(path)
     const match = /^([EW]\d{1,3}_[NS]\d{1,2})\.rd5$/.exec(name)
     if (match) removed.push(match[1])
   }

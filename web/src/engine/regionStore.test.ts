@@ -146,13 +146,20 @@ function fakeDownloadEnv() {
   const sinks = new Map<string, ByteSink & { bytes: Uint8Array }>()
   const partials = new Map<string, PartialTarget>()
   const recorded: { name: string; bytes: number }[] = []
+  const pending = new Map<string, number>()
+  const refreshSizeCalls: string[] = []
 
   const deps: DownloadLoopDeps = {
     openSink: async (path) => {
       if (!sinks.has(path)) sinks.set(path, fakeSink())
       return sinks.get(path)!
     },
-    refreshSize: () => {},
+    refreshSize: (path) => {
+      refreshSizeCalls.push(path)
+    },
+    markPending: (path, bytes) => {
+      pending.set(path, bytes)
+    },
     readPartialHash: async (path) => partials.get(path) ?? null,
     writePartialHash: async (path, target) => {
       partials.set(path, target)
@@ -162,7 +169,7 @@ function fakeDownloadEnv() {
     },
   }
 
-  return { sinks, partials, recorded, deps }
+  return { sinks, partials, recorded, pending, refreshSizeCalls, deps }
 }
 
 describe('runRegionDownload', () => {
@@ -258,5 +265,30 @@ describe('runRegionDownload', () => {
     expect(resumedFetch).toHaveBeenCalledTimes(1)
     expect(resumedFetch.mock.calls[0][0]).toBe(segmentB.url)
     expect(decode(sinks.get(pathB)!)).toBe('efghijklmn')
+  })
+
+  it('brings the registry back in line on a failed attempt, not just a completed one', async () => {
+    const item: DownloadItem = { kind: 'segment', key: 'W5_N50', url: 'https://example/w.rd5', bytes: 10, hash: 'hw' }
+    const path = pathForItem('region', item)
+    const { deps, pending, refreshSizeCalls } = fakeDownloadEnv()
+
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('network down')
+    })
+
+    await expect(
+      runRegionDownload('region', [item], 10, { ...deps, fetchImpl: fetchImpl as unknown as typeof fetch }),
+    ).rejects.toThrow('network down')
+
+    // Marked pending before the write started, so anything reading through the VFS bridge
+    // during the attempt — or after it fails, in the same session — sees this path as not yet
+    // present rather than whatever size or content it held before this attempt began.
+    expect(pending.get(path)).toBe(10)
+
+    // And the registry's cached size is refreshed even though the attempt failed. Without
+    // this, a file that previously held a full, different segment would keep answering with
+    // that old size for the rest of the session — a `read()` past what a truncated-and-partly-
+    // rewritten file actually contains, instead of an honest short length.
+    expect(refreshSizeCalls).toContain(path)
   })
 })
