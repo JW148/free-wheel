@@ -10,11 +10,9 @@ import {
   itemWords,
   MAP_WOULD_NOT_OPEN,
   pickerFailure,
-  priceLine,
+  regionLine,
   readyToRide,
-  sheetPrice,
   statesOf,
-  statusLine,
   summarise,
   tidyMessage,
 } from './pickerModel'
@@ -81,7 +79,7 @@ describe('summarise', () => {
     expect(scotland.bytes).toBe(34_000_000 + 90_000_000)
     expect(scotland.size).toBe('124 MB')
     expect(scotland.action).toBe('Download')
-    expect(scotland.status).toBeNull()
+    expect(scotland.line).toBe('124 MB · map and road data')
   })
 
   it('charges nothing for what is already here', () => {
@@ -94,7 +92,7 @@ describe('summarise', () => {
   it('reports unknown rather than current when the list came from the cache', () => {
     const [scotland] = summarise(manifest, [installedScotland], false)
     expect(scotland.state).toBe('unknown')
-    expect(scotland.status).toMatch(/no way to check/)
+    expect(scotland.line).toMatch(/not checked/)
   })
 
   it('prices an update at only the part that changed', () => {
@@ -122,21 +120,37 @@ describe('summarise', () => {
   })
 })
 
-describe('priceLine', () => {
+describe('regionLine', () => {
   it('puts the number in front of the button, with no invented warning around it', () => {
-    expect(priceLine('not-installed', 124_000_000, '124 MB')).toBe(
-      '124 MB — the map and the road data for this area.',
-    )
+    expect(regionLine('not-installed', 124_000_000, '124 MB')).toBe('124 MB · map and road data')
   })
 
   it('does not charge an update for both halves when only one changed', () => {
-    expect(priceLine('map-outdated', 34_000_000, '34 MB')).toBe(
-      '34 MB to bring this region up to date.',
-    )
+    expect(regionLine('map-outdated', 34_000_000, '34 MB')).toBe('34 MB · update available')
   })
 
   it('says so plainly when there is nothing to fetch', () => {
-    expect(priceLine('current', 0, '0 MB')).toBe('Everything this region needs is already on the phone.')
+    expect(regionLine('current', 0, '0 MB')).toBe('Already on this phone')
+  })
+
+  it('never claims a list saved offline proves a region is current', () => {
+    expect(regionLine('unknown', 0, '0 MB')).toMatch(/not checked/)
+    expect(regionLine('unknown', 0, '0 MB')).not.toBe(regionLine('current', 0, '0 MB'))
+    expect(regionLine('unknown', 12_000_000, '12 MB')).toMatch(/saved list/)
+  })
+
+  /*
+   * The middle slot of the bar is 176 px on a 390 px screen. The sentence this replaced — "137
+   * MB — the map and the road data for this area." — wrapped to three lines there, which grew
+   * the bar and moved Download out from under the rider's thumb. The first shortening still
+   * ellipsised mid-word, hence a bound rather than a glance.
+   */
+  it('stays short enough for the bar it is drawn in', () => {
+    for (const state of ['not-installed', 'current', 'unknown', 'map-outdated', 'road-data-outdated'] as const) {
+      for (const bytes of [0, 137_000_000]) {
+        expect(regionLine(state, bytes, '137 MB').length, `${state}/${bytes}`).toBeLessThanOrEqual(28)
+      }
+    }
   })
 })
 
@@ -144,18 +158,6 @@ describe('actionLabel', () => {
   it('does not offer to update nothing when a shared download already covered it', () => {
     expect(actionLabel('road-data-outdated', 0)).toBe('Use this region')
     expect(actionLabel('road-data-outdated', 1)).toBe('Update')
-  })
-})
-
-describe('statusLine', () => {
-  it('says nothing about a region with nothing on the phone', () => {
-    expect(statusLine('not-installed')).toBeNull()
-  })
-
-  it('never claims a cached list proves a region is current', () => {
-    expect(statusLine('current')).toBe('Already on this phone, and up to date.')
-    expect(statusLine('unknown')).toMatch(/no way to check/)
-    expect(statusLine('unknown')).not.toBe(statusLine('current'))
   })
 })
 
@@ -360,23 +362,6 @@ describe('failureCopy', () => {
       const { heading, explanation, action } = failureCopy(cause)
       expect(`${heading} ${explanation} ${action}`).not.toMatch(forbidden)
     }
-  })
-})
-
-describe('sheetPrice', () => {
-  it('shows the price before anything has been tried', () => {
-    expect(sheetPrice('137 MB — the map and the road data for this area.', false)).toBe(
-      '137 MB — the map and the road data for this area.',
-    )
-  })
-
-  /*
-   * A download that died at 130 of 137 MB resumes. Repeating the whole-region price one line
-   * above advice that says the retry picks up where it stopped is two contradictory sentences
-   * next to each other, and only the engine knows the honest remaining figure.
-   */
-  it('withholds a stale whole-region price above a resume', () => {
-    expect(sheetPrice('137 MB — the map and the road data for this area.', true)).toBeNull()
   })
 })
 

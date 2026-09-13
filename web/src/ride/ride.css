@@ -1312,13 +1312,17 @@
 /* ── Choosing a region ──────────────────────────────────────────────────────────────── */
 
 /*
- * The browse map is a full-bleed layer *above* Setup, not a panel inside it.
+ * The browse screen is a map with one bar on it.
  *
  * Sized by `--app-height`, never `inset: 0`. In a browser tab `inset: 0` runs underneath
  * Safari's collapsible bottom toolbar, which is exactly where this screen's buttons live. The
  * `(display-mode: standalone)` rule at the top of this file — the one that makes the *document*
- * screen-high — is what makes the bottom of the sheet paint at all in a home-screen app;
- * nothing here may stop it applying.
+ * screen-high — is what makes the bottom of the bar paint at all in a home-screen app; nothing
+ * here may stop it applying.
+ *
+ * `justify-content: flex-end` and nothing else: the map layer is absolutely positioned and out
+ * of flow, so the bar is the only child in flow and belongs at the bottom. There used to be a
+ * second bar at the top holding the back button, which is why this was `space-between`.
  */
 .browse {
   position: fixed;
@@ -1327,50 +1331,9 @@
   height: var(--app-height);
   display: flex;
   flex-direction: column;
-  /* The bar to the top and the sheet to the bottom. `flex-end` stacked them both at the
-     bottom — the map layer is absolutely positioned and so out of flow, which leaves these two
-     as the only children and made "push everything down" look plausible right up until it put
-     the back button in the middle of the screen. */
-  justify-content: space-between;
+  justify-content: flex-end;
   color: var(--text);
   background: var(--bg);
-}
-
-/* Over the map, and the only part of this screen that never scrolls away. */
-.browse-bar {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: max(env(safe-area-inset-top), 0.7rem) max(env(safe-area-inset-right), 0.7rem) 0
-    max(env(safe-area-inset-left), 0.7rem);
-  padding: 0.35rem 0.5rem;
-  border-radius: var(--radius);
-  /* Firmer than `--panel-strong`. These two surfaces sit over a whole country at z5, which is
-     the busiest thing either of them will ever cover — the ride screen's chrome only ever has
-     to hold its own against a street map at z14. */
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-}
-
-.browse-back {
-  min-height: 2.75rem;
-  padding: 0 0.7rem;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.browse-title {
-  color: var(--muted);
-  font-size: 0.85rem;
 }
 
 .browse-map {
@@ -1392,62 +1355,134 @@
 }
 
 /*
- * The sheet's ceiling. A length rather than a percentage because the app is locked to portrait,
- * so the shortest screen it can meet is a 667px phone — which this still leaves a usable band
- * of map on.
+ * Three slots and no more: out, what is chosen, what to do about it.
+ *
+ * Built from the ride screen's `.sheet-bar` vocabulary — the middle *is* `.sheet-toggle`, the
+ * action *is* `.primary` — because it is the same idea: a permanent strip that names the
+ * current decision and opens a drawer for the rest. The only difference is a screen with no
+ * chrome above it, so this one floats and is blurred rather than sitting on a solid panel.
  */
-:root {
-  --picker-sheet-max: 21rem;
-}
-
-.browse-sheet {
+.browse-bar {
   position: relative;
-  display: grid;
-  gap: 0.7rem;
-  justify-items: start;
-  max-height: var(--picker-sheet-max);
-  overflow-y: auto;
-  margin: max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-right), 0.7rem)
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin: 0 max(env(safe-area-inset-right), 0.7rem)
     max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-left), 0.7rem);
-  padding: 1rem;
+  padding: 0.5rem;
   border-radius: var(--radius);
+  /* Firmer than `--panel-strong`. This sits over a whole country at z5, which is the busiest
+     thing it will ever cover — the ride screen's chrome only ever has to hold its own against
+     a street map at z14. */
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
 }
 
-.browse-sheet h2 {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+/* One line each, whatever the region is called. "Southern Scotland and the Borders" over a
+   price that wrapped to three lines grew the bar and moved the button out from under the
+   rider's thumb — the bar's height has to be a constant. */
+.browse-bar .sheet-profile,
+.browse-bar .sheet-count {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.browse-sheet .primary {
-  width: 100%;
+/* Narrower than the ride screen's, where the bar holds two controls rather than three. The
+   region's price has to fit beside it without being ellipsised mid-word. */
+.browse-bar .primary {
+  min-width: 6rem;
+  padding: 0 0.8rem;
 }
 
-/* Stacked, not side by side. Set beside the prompt, "Use my location" wrapped to two lines on
-   a 390px screen and read as part of the sentence next to it. */
-.browse-sheet-head {
-  display: grid;
-  gap: 0.3rem;
-  justify-items: start;
-  width: 100%;
+/* The swatch is a flex child of a block now, so it needs putting back on the line. */
+.browse-bar .sheet-profile .swatch {
+  display: inline-block;
+  vertical-align: 0.02em;
+  margin-right: 0.42rem;
 }
 
+/* Square, because it holds a chevron rather than a word. The label moved into `aria-label`
+   when the bar it used to own was deleted; a back arrow beside the name of where you are is
+   not ambiguous, and the 44px target is what actually matters. */
+.browse-back,
 .browse-locate {
-  min-height: 2.75rem;
-  padding: 0 0.9rem;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 3rem;
+  min-height: 3rem;
+  padding: 0;
   border: none;
-  border-radius: 999px;
+  border-radius: 10px;
   background: var(--panel-row);
   box-shadow: inset 0 0 0 1px var(--hairline);
   color: var(--text);
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
   cursor: pointer;
+}
+
+.browse-back svg,
+.browse-locate svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.browse-locate:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* A ring rather than a word, so the button does not change width while it waits. */
+.browse-locating {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--slate-500);
+  border-top-color: var(--slate-100);
+  border-radius: 50%;
+  animation: browse-spin 0.8s linear infinite;
+}
+
+@keyframes browse-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browse-locating {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Under the bar, not in it. The bar's three slots are fixed; a fourth thing appearing inside it
+   every time a download starts would move the buttons out from under the rider's thumb. */
+.browse-bar-progress {
+  position: relative;
+  z-index: 1;
+  width: auto;
+  margin: -0.2rem max(env(safe-area-inset-right), 0.7rem)
+    max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-left), 0.7rem);
+}
+
+/*
+ * The dot beside a region's name takes its colour from `regionSwatch`, inline, exactly as a
+ * route row takes its profile's. Writing the three hexes out here as well would be a second
+ * copy of `REGION_COLOURS`, and only one copy ever gets updated.
+ */
+
+/* The chosen row, so the drawer and the map agree about what is selected. */
+.picker-list button[data-selected='yes'] {
+  background: var(--panel-strong);
+  box-shadow: inset 0 0 0 1px var(--slate-500);
 }
 
 .picker-note {
@@ -1686,12 +1721,11 @@
   bottom: calc(env(safe-area-inset-bottom) + 4.5rem);
 }
 
-/* Tucked under the browse bar. Attribution is a licence requirement rather than decoration, so
-   it goes in the one part of this screen nothing else claims — the sheet owns the bottom third
-   and grows and shrinks as regions are selected, so anything parked above it would either be
-   buried or forever shuffling. */
+/* The top-right corner, which on this screen nothing else claims. Attribution is a licence
+   requirement rather than decoration, and the bar owns the bottom — so it goes as far from the
+   bar as the screen allows. */
 .browse .maplibregl-ctrl-top-right {
-  top: calc(env(safe-area-inset-top) + 4.2rem);
+  top: max(env(safe-area-inset-top), 0.7rem);
   right: max(env(safe-area-inset-right), 0.7rem);
 }
 

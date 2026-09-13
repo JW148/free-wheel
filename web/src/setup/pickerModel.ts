@@ -128,10 +128,8 @@ export interface RegionSummary {
   bytes: number
   /** {@link bytes} as a rider reads it. */
   size: string
-  /** What is already here, or `null` when nothing is. */
-  status: string | null
-  /** The sentence that sits in front of the button. */
-  price: string
+  /** The one line under the name: what it costs, or what is already here. */
+  line: string
   /** What the button says. */
   action: string
   /** Kept so the caller can hand it straight back to the engine and to the outline layer. */
@@ -169,8 +167,7 @@ export function summarise(
       state,
       bytes,
       size: formatMegabytes(bytes),
-      status: statusLine(state),
-      price: priceLine(state, bytes, formatMegabytes(bytes)),
+      line: regionLine(state, bytes, formatMegabytes(bytes)),
       action: actionLabel(state, bytes),
       region,
     })
@@ -184,30 +181,40 @@ export function statesOf(summaries: RegionSummary[]): Record<string, RegionState
 }
 
 /**
- * What is already on the phone for this region, in a sentence, or `null` for a region with
- * nothing here yet — where a status line would only be noise.
+ * The one line under a region's name in the bar: what it costs, or what is already here.
  *
- * `unknown` says so out loud. An offline phone cannot tell whether its copy is current, and
- * the cost of guessing "current" is a rider following road data that no longer matches the
- * roads.
+ * One line, and short, because there is one place left in this screen that says any of this —
+ * the middle slot of the bar over the map, which is 176 px wide between a back button and a
+ * Download. It replaced three sentences written for a sheet that is gone: at that width "137 MB
+ * — the map and the road data for this area." wrapped to three lines, which grew the bar, which
+ * moved the Download button out from under the rider's thumb. Shortened once more after the
+ * first attempt was ellipsised mid-word.
+ *
+ * The number goes in front of the tap rather than after it. Safari implements no
+ * `NetworkInformation`, so there is no honest way to know whether a rider is on wifi or on a
+ * metered plan with a fortnight left — hedging with "this may use a lot of data" would be
+ * inventing a warning we cannot substantiate. The number is the whole of what we know.
+ *
+ * `unknown` says so out loud. An offline phone cannot tell whether its copy is current, and the
+ * cost of guessing "current" is a rider following road data that no longer matches the roads.
+ *
+ * An update never claims to be fetching both halves: a region whose map is current and whose
+ * road data is not costs only the road data.
  */
-export function statusLine(state: RegionState): string | null {
-  switch (state) {
-    case 'not-installed':
-      return null
-    case 'current':
-      return 'Already on this phone, and up to date.'
-    case 'road-data-outdated':
-      return 'The road data here has changed since you downloaded it.'
-    case 'map-outdated':
-      return 'The map here has changed since you downloaded it.'
-    case 'unknown':
-      return 'Already on this phone. Without a connection there is no way to check whether it is still up to date.'
+export function regionLine(state: RegionState, bytes: number, size: string): string {
+  // Keyed on the price before the state, because the price is what the tap costs. A region can
+  // be `road-data-outdated` and still have nothing to fetch — a neighbour already downloaded
+  // the road data it shares — and quoting 0 MB to update reads as broken.
+  if (bytes === 0) {
+    return state === 'unknown' ? 'On this phone · not checked' : 'Already on this phone'
   }
+  if (state === 'not-installed') return `${size} · map and road data`
+  if (state === 'unknown') return `${size} · from a saved list`
+  return `${size} · update available`
 }
 
 /**
- * The label on the one button in the sheet.
+ * The label on the bar's one button.
  *
  * Keyed on the price rather than only on the state, because the price is what the tap costs.
  * A region can be `road-data-outdated` and still have nothing to fetch — another region
@@ -216,39 +223,6 @@ export function statusLine(state: RegionState): string | null {
 export function actionLabel(state: RegionState, bytes: number): string {
   if (bytes === 0) return 'Use this region'
   return state === 'not-installed' ? 'Download' : 'Update'
-}
-
-/**
- * The size, in the sentence that goes in front of the button.
- *
- * In front, and not behind: Safari implements no `NetworkInformation`, so there is no honest
- * way to tell whether a rider is on wifi or on a metered plan with a fortnight left in the
- * month. Hedging — "this may use a lot of data" — would be inventing a warning we cannot
- * substantiate. The number is the whole of what we know, so the number is what we say, before
- * the tap rather than after it.
- *
- * An update does not claim to be fetching both halves. A region whose map is current and whose
- * road data is not costs only the road data, and saying otherwise would overstate the price of
- * the one tap on the screen.
- */
-export function priceLine(state: RegionState, bytes: number, size: string): string {
-  if (bytes === 0) return 'Everything this region needs is already on the phone.'
-  if (state === 'not-installed') return `${size} — the map and the road data for this area.`
-  return `${size} to bring this region up to date.`
-}
-
-/**
- * The price line above the button, or nothing.
- *
- * Nothing after a failure, and that is the whole of this function. `price` is the cost of the
- * *whole* region, worked out when the screen loaded; a download that died at 130 of 137 MB
- * will resume, so repeating the full figure one line above advice that says the retry picks up
- * where it stopped puts two contradictory sentences next to each other. The honest remaining
- * number is known only to the engine, which recomputes it from what is on disk at the start of
- * the next attempt — so the advice carries it and the stale price gets out of the way.
- */
-export function sheetPrice(price: string, failed: boolean): string | null {
-  return failed ? null : price
 }
 
 export interface DownloadStatus {

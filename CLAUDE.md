@@ -45,6 +45,7 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
                  hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
   src/setup/     Overlay, and the first-run screen: the maps library, the region browser,
                  the download queue, rider settings and the diagnostics/parity harness.
+                 `regionShapes.ts` turns the published bboxes into areas painted onto the map.
   src/engine/    Worker, Comlink client, OPFS VFS and tile store.
   src/map/       PMTiles-over-OPFS source, basemap style, the MapLibre worker fix.
 brouter-link/    Read-only symlink to upstream BRouter. See above.
@@ -254,6 +255,13 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   hand-imported archive and a removed region all go through it; it reads storage and reconciles.
   One entry point, because the previous arrangement had two pieces of code making the same
   decision from the same inputs and only one of them ever got fixed.
+- **The browse screen is a map with one bar on it.** The bar is built from the ride screen's
+  `.sheet-bar` vocabulary and holds three fixed slots — the way back, what is chosen, the one
+  action — and the list is the ride screen's `vaul` drawer, starting closed. Both bar lines are
+  clamped to one line: the height has to be constant, or a long region name moves the button out
+  from under the rider's thumb. Picking from the list frames that region and closes the drawer;
+  picking on the map moves nothing, and `BrowseMap` tells them apart by the *identity* of its
+  `frame` prop, because both produce the same `selectedId`.
 - **The region browser owns its own MapLibre instance and does not borrow the ride screen's.**
   The old picker streamed Britain over the shared map and handed it back, which was the most
   delicate thing in the app — an async teardown racing React's effect ordering, three rounds of
@@ -429,12 +437,39 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   `gradeAt` reads BRouter's own SRTM elevations over a ±60 m window. The corollary is that
   power and recorded ascent are only meaningful on the route, and both are cleared the moment a
   reroute replaces the geometry.
-- **There is no fourth region-boundary colour, and this has been checked.** A sweep of the RGB
-  cube for a colour at C >= 46 clearing ΔE 16 from both basemap palettes, the three existing
-  boundary colours and the six route colours returns nothing — the usable circle is full. A
-  region that is downloading therefore keeps the `available` blue and separates on a **dashed
-  outline**. Unselected fills are 0.06, not 0.18: alpha compounds, and fourteen overlapping
-  boxes at 0.18 washed the coastline out entirely.
+- **Regions are painted *under* the basemap's water, and that is what clips them to the coast.**
+  `regionLayers.ensureRegionLayers` inserts its fills and divides before the first `water` role
+  layer. Water is opaque, so it renders in MapLibre's opaque pass and writes depth; the region
+  fills are translucent and fail the depth test behind it. The shapes themselves are
+  square-cornered blocks running well out to sea and none of that is ever seen — so nothing has
+  to know where the coast is, and it stays right in both themes at every zoom. `fill-antialias`
+  must be **false**: it outlines every ring, which would trace each merged rectangle in the fill
+  colour and put the grid back on screen.
+- **A region's painted area comes from a written-down seed, not from its bbox.** The published
+  boxes are download extents with generous, asymmetric overlap, so no measurement of them
+  recovers which region a place *belongs* to. Nearest box centre painted the Central Belt as the
+  Borders; deepest-inside-the-box then put Manchester in Yorkshire, Hull in East Anglia and
+  Carlisle in Scotland. `regionShapes.REGION_SEEDS` names the heart of each region and a cell
+  goes to the nearest seed **among the regions whose box covers it** — the clip is what keeps it
+  honest, since a seed can only redistribute published coverage, never invent it. A long region
+  needs two seeds. The first seed is also where the name is drawn.
+- **There is no fourth region colour, and this has been checked.** A sweep of the RGB cube for a
+  colour at C >= 46 clearing ΔE 16 from both basemap palettes, the three existing region colours
+  and the six route colours returns nothing — the usable circle is full. So the divides, the
+  selected ring and the region names are achromatic by theme, and a region in flight keeps the
+  `available` blue. Fills are 0.30 / 0.44 / 0.62 only because the partition removed the overlap;
+  under the old boxes alpha compounded fourteen deep and 0.06 was the most Britain could take.
+- **MapLibre places symbols top down, so the topmost symbol layer wins a collision.**
+  `PauseablePlacement.continuePlacement` counts the layer order *down* from the end. The region
+  names are therefore the last layer added; moving them under the basemap's own labels, on the
+  theory that placement ran bottom-up, took the count of names actually drawn from 13 to 10.
+  Collisions are also why the map uses `REGION_SHORT_NAMES` below z6.5 and `text-padding: 2` —
+  padding *is* collision margin, and a dropped label leaves an area with no name at all.
+- **A region divide is drawn twice, once by each side, so a dash cannot read as gaps.** The
+  neighbour's hairline sits in them. An in-flight region separates on the *weight* of its divide
+  (3 px at 0.9 against 1 px at 0.4) as well as the dash. Keep the dash data-driven on **both**
+  line layers: as its own layer it drew under the selection ring, so a region downloading because
+  the rider had just tapped it looked exactly like one sitting still.
 - **The two ride overlays are achromatic, and that is a rule not a preference.** Six route hues
   at C ≥ 45 already fill the usable circle under the ΔE ≥ 16 clearance floor. "Already ridden"
   is neutral grey — it has stopped being a route — and "climb ahead" is a blurred halo in black

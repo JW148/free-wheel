@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Drawer } from 'vaul'
 import type { useMapLibre } from '../ride/useMapLibre'
-import { loadManifest, type DataManifest, type InstalledRegion } from '../data/manifest'
+import {
+  loadManifest,
+  type DataManifest,
+  type InstalledRegion,
+  type RegionEntry,
+} from '../data/manifest'
 import { assetUrl } from '../data/origin'
 import { sharedEngine } from '../engine/engineClient'
 import ManualImport from './ManualImport'
@@ -27,7 +33,7 @@ import {
   type CatalogueFailure,
   type RegionSummary,
 } from './pickerModel'
-import type { PaintedState } from './regionLayers'
+import { regionSwatch, type PaintedState } from './regionLayers'
 
 /**
  * Everything to do with the maps on this phone: what is here, and how to get more.
@@ -48,6 +54,14 @@ import type { PaintedState } from './regionLayers'
  * queue four regions and put the phone in a pocket. The rows here are a *view* of that queue,
  * which is why they survive being unmounted and why the same progress can be shown anywhere
  * else that asks.
+ *
+ * ## Browse is a map, and the map is the control
+ *
+ * The regions are painted *into* Britain rather than boxed on top of it — see
+ * `regionShapes.ts`. That changes what the screen has to be: the list stops being the way in
+ * and becomes the way to find a name you already know, so it lives in the same drawer the ride
+ * screen uses and starts closed. What is left on screen is a bar with three things in it — the
+ * way back, what is chosen, and the one action worth taking — over a full-height map.
  *
  * ## Nothing here is a dead end
  *
@@ -70,6 +84,10 @@ export default function MapsScreen({
   const [openRow, setOpenRow] = useState<string | null>(null)
   const [removing, setRemoving] = useState<string | null>(null)
   const [here, setHere] = useState<string[]>([])
+  /** The region drawer, which starts closed so that the map is the first thing a rider meets. */
+  const [listOpen, setListOpen] = useState(false)
+  /** Set only when the choice came from the list; see `BrowseMap`'s `frame` prop. */
+  const [frame, setFrame] = useState<{ region: RegionEntry } | null>(null)
   const [locating, setLocating] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -134,10 +152,11 @@ export default function MapsScreen({
     (summary: RegionSummary) => {
       if (catalogue.phase !== 'ready') return
       downloads.start(summary.region, catalogue.manifest, summary.bytes)
-      // Deselected rather than dismissed: the next tap should be able to land on the next
-      // region straight away. Queueing four regions is the thing this screen exists to make
-      // possible, so it must not cost four round trips through a detail sheet.
-      setSelectedId(null)
+      // The selection *stays*. It used to be cleared so the next tap could land on the next
+      // region without a trip back out of a detail sheet — but the sheet is gone, the map is
+      // the whole screen, and the next tap lands wherever it likes whether or not something is
+      // selected. What clearing cost was the one thing worth showing: the bar is where this
+      // download's progress is, and dropping the selection dropped it.
     },
     [catalogue],
   )
@@ -182,8 +201,16 @@ export default function MapsScreen({
         setHere(regions)
         if (regions.length === 0) {
           setNotice('You are outside every region on offer, so nothing has moved to the top.')
-        } else if (regions.length === 1) {
-          setSelectedId(regions[0])
+          return
+        }
+        // One region covering the fix is an answer, not a shortlist: choose it, show it, and
+        // get the list out of the way. Several means the rider is in an overlap and still has
+        // a decision, so the list stays up with those regions at the top.
+        const only = regions.length === 1 ? catalogue.manifest.regions.find((r) => r.id === regions[0]) : null
+        if (only) {
+          setSelectedId(only.id)
+          setFrame({ region: only })
+          setListOpen(false)
         }
       },
       () => {
@@ -193,6 +220,35 @@ export default function MapsScreen({
       { enableHighAccuracy: false, timeout: 10_000, maximumAge: 600_000 },
     )
   }, [catalogue])
+
+  /**
+   * Chosen by name, which is the one case where the map has to move.
+   *
+   * The list and the map are two ways into the same decision, and a name is worth nothing until
+   * a rider can see where it is — so this frames the region and closes the drawer over it. A tap
+   * on the map itself goes straight to `setSelectedId`, because the ground must not shift under
+   * the finger that just landed on it.
+   */
+  const chooseFromList = useCallback((summary: RegionSummary) => {
+    setSelectedId(summary.id)
+    setFrame({ region: summary.region })
+    setListOpen(false)
+  }, [])
+
+  const openBrowse = useCallback(() => {
+    setSelectedId(null)
+    setFrame(null)
+    setListOpen(false)
+    setNotice(null)
+    setMode('browse')
+  }, [])
+
+  const leaveBrowse = useCallback(() => {
+    setSelectedId(null)
+    setFrame(null)
+    setListOpen(false)
+    setMode('library')
+  }, [])
 
   const installed = catalogue.phase === 'ready' ? catalogue.installed : []
   const manifest = catalogue.phase === 'ready' ? catalogue.manifest : null
@@ -242,17 +298,9 @@ export default function MapsScreen({
 
   if (mode === 'browse') {
     const ordered = withNearestFirst(summaries, here)
+    const job = selected ? jobFor(selected.id) : null
     return (
       <div className="browse">
-        {/* Above the map and always visible. The way back used to be the last row of a
-            scrolling sheet, which on a phone meant scrolling past fourteen regions to leave. */}
-        <div className="browse-bar">
-          <button type="button" className="browse-back" onClick={() => setMode('library')}>
-            ‹ Maps
-          </button>
-          <span className="browse-title">Add a region</span>
-        </div>
-
         <BrowseMap
           archiveUrl={assetUrl(catalogue.manifest.picker.url)}
           theme={theme}
@@ -260,79 +308,167 @@ export default function MapsScreen({
           states={painted}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          frame={frame}
+          padding={BROWSE_PADDING}
         />
 
-        <div className="browse-sheet">
-          {selected === null ? (
-            <>
-              <div className="browse-sheet-head">
-                <p className="picker-note">Tap your area on the map, or choose it below.</p>
-                <button type="button" className="browse-locate" onClick={locate} disabled={locating}>
-                  {locating ? 'Locating…' : 'Use my location'}
-                </button>
-              </div>
-              {notice && <p className="picker-detail">{notice}</p>}
-              <ul className="picker-list">
-                {ordered.map((summary) => {
-                  const job = jobFor(summary.id)
-                  return (
-                    <li key={summary.id}>
-                      <button type="button" onClick={() => setSelectedId(summary.id)}>
-                        <span className="picker-name">
-                          {summary.name}
-                          {here.includes(summary.id) && <span className="maps-chip">Where you are</span>}
-                        </span>
-                        <span className="picker-size">
-                          {job
-                            ? jobLine(job)
-                            : summary.bytes > 0
-                              ? summary.size
-                              : summary.state === 'not-installed'
-                                ? 'Nothing to fetch'
-                                : 'Already here'}
-                        </span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </>
-          ) : (
-            <>
-              <button type="button" className="picker-plain" onClick={() => setSelectedId(null)}>
-                ← All regions
-              </button>
-              <h2>{selected.name}</h2>
-              {selected.status && <p className="picker-note">{selected.status}</p>}
-              {jobFor(selected.id) ? (
+        {/*
+          The whole of the chrome, and the only thing over the map.
+
+          There used to be a bar at the top holding nothing but the way back, and a sheet at the
+          bottom deep enough to bury England. The back button is a single control and belongs
+          beside the other two rather than on a strip of its own — and the list it used to sit
+          above is now a drawer, so the map has the screen.
+
+          Three slots, always in the same places: out, what is chosen, and the one thing to do
+          about it. The middle is the way into the list, which is what makes the drawer
+          discoverable without it having to be open.
+        */}
+        <div className="browse-bar">
+          <button
+            type="button"
+            className="browse-back"
+            onClick={leaveBrowse}
+            aria-label="Back to the maps on this phone"
+          >
+            <ChevronLeftIcon />
+          </button>
+
+          <button type="button" className="sheet-toggle" onClick={() => setListOpen(true)}>
+            <span className="sheet-profile">
+              {selected ? (
                 <>
-                  <p className="picker-note" role="status">
-                    {jobLine(jobFor(selected.id)!)}
-                  </p>
-                  <button
-                    type="button"
-                    className="picker-plain"
-                    onClick={() => downloads.cancel(selected.id)}
-                  >
-                    Stop this download
-                  </button>
+                  <span
+                    className="swatch"
+                    style={{ background: regionSwatch(painted[selected.id] ?? 'not-installed') }}
+                  />
+                  {selected.name}
                 </>
               ) : (
-                <>
-                  <p className="picker-size">{selected.price}</p>
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={selected.bytes === 0}
-                    onClick={() => start(selected)}
-                  >
-                    {selected.bytes === 0 ? 'Already on this phone' : selected.action}
-                  </button>
-                </>
+                'Add a region'
               )}
-            </>
+            </span>
+            <span className="sheet-count">
+              {job
+                ? jobLine(job)
+                : selected
+                  ? selected.line
+                  : 'Tap an area, or browse the list'}
+            </span>
+          </button>
+
+          {job && job.state !== 'failed' ? (
+            <button type="button" className="primary busy" onClick={() => downloads.cancel(job.id)}>
+              Stop
+            </button>
+          ) : job ? (
+            <button type="button" className="primary" onClick={() => downloads.retry(job.id)}>
+              Retry
+            </button>
+          ) : selected ? (
+            <button
+              type="button"
+              className="primary"
+              disabled={selected.bytes === 0}
+              onClick={() => start(selected)}
+            >
+              {selected.bytes === 0 ? 'Got it' : selected.action}
+            </button>
+          ) : (
+            // Nothing is chosen, so there is nothing to download and the useful offer is the
+            // one shortcut past choosing at all. It is an icon because it is the third control
+            // on a 390px bar, and it disappears the moment a region is selected — one primary
+            // action at a time, and by then the decision is already made.
+            <button
+              type="button"
+              className="browse-locate"
+              onClick={locate}
+              disabled={locating}
+              aria-label="Use my location"
+            >
+              {locating ? <span className="browse-locating" /> : <LocateIcon />}
+            </button>
           )}
         </div>
+
+        {/* A progress bar under the bar rather than inside it: the bar's three slots are fixed,
+            and a row that grows a fourth thing every time a download starts moves the buttons
+            out from under the rider's thumb. */}
+        {job && job.state !== 'failed' && (
+          <div
+            className="picker-bar browse-bar-progress"
+            role="progressbar"
+            aria-valuenow={jobPercent(job)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Downloading ${job.name}`}
+          >
+            <span style={{ width: `${jobPercent(job)}%` }} />
+          </div>
+        )}
+
+        {/*
+          The same drawer the ride screen uses, for the same reason: swipe to dismiss done
+          properly is velocity tracking, rubber-banding, scroll disambiguation and focus
+          trapping, and vaul already does all of it. It portals to `<body>`, so it is not
+          subject to this screen's layout at all — which is what lets the map keep the full
+          height underneath it.
+        */}
+        <Drawer.Root open={listOpen} onOpenChange={setListOpen}>
+          <Drawer.Portal>
+            <Drawer.Overlay className="drawer-overlay" />
+            <Drawer.Content className="drawer" aria-describedby={undefined}>
+              <Drawer.Handle className="drawer-handle" />
+              <div className="drawer-body">
+                <div className="drawer-head">
+                  <Drawer.Title className="drawer-title">Regions</Drawer.Title>
+                  <button type="button" onClick={locate} disabled={locating}>
+                    {locating ? 'Locating…' : 'Use my location'}
+                  </button>
+                </div>
+
+                {notice && <p className="picker-detail">{notice}</p>}
+
+                <ul className="picker-list">
+                  {ordered.map((summary) => {
+                    const rowJob = jobFor(summary.id)
+                    return (
+                      <li key={summary.id}>
+                        <button
+                          type="button"
+                          data-selected={summary.id === selectedId ? 'yes' : 'no'}
+                          onClick={() => chooseFromList(summary)}
+                        >
+                          <span className="picker-name">
+                            <span
+                              className="swatch"
+                              style={{
+                                background: regionSwatch(painted[summary.id] ?? 'not-installed'),
+                              }}
+                            />
+                            {summary.name}
+                            {here.includes(summary.id) && (
+                              <span className="maps-chip">Where you are</span>
+                            )}
+                          </span>
+                          <span className="picker-size">
+                            {rowJob
+                              ? jobLine(rowJob)
+                              : summary.bytes > 0
+                                ? summary.size
+                                : summary.state === 'not-installed'
+                                  ? 'Nothing to fetch'
+                                  : 'Already here'}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            </Drawer.Content>
+          </Drawer.Portal>
+        </Drawer.Root>
       </div>
     )
   }
@@ -346,7 +482,7 @@ export default function MapsScreen({
         </p>
       )}
 
-      <button type="button" className="maps-add" onClick={() => setMode('browse')}>
+      <button type="button" className="maps-add" onClick={openBrowse}>
         <span className="maps-add-plus" aria-hidden="true">
           +
         </span>
@@ -482,6 +618,34 @@ export default function MapsScreen({
 
       <ManualImport basemap={basemap} regionIds={installed.map((record) => record.id)} />
     </section>
+  )
+}
+
+/**
+ * What the bar over the browse map covers, in CSS pixels, so `fitBounds` frames the part of the
+ * map a rider can actually see.
+ *
+ * Measured against the bar rather than guessed at: three rows of controls at `min-height: 3rem`
+ * plus its margins and the home indicator. It is generous at the top for the attribution
+ * control, which is a licence requirement and must not sit over the Highlands.
+ */
+const BROWSE_PADDING = { top: 64, bottom: 128 }
+
+function ChevronLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 5l-7 7 7 7" />
+    </svg>
+  )
+}
+
+/** A crosshair, which is what every map on this phone already uses for "where am I". */
+function LocateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="5.5" />
+      <path d="M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22" />
+    </svg>
   )
 }
 
