@@ -593,12 +593,18 @@
 /* ── Waypoint pins ──────────────────────────────────────────────────────────────────── */
 
 /* A round pin with a light ring, centred on the point. The obvious teardrop needs a 45deg
-   rotation, which rotates the letter inside it too — and the letter is the readable part. */
+   rotation, which rotates the letter inside it too — and the letter is the readable part.
+
+   `min-height: 0` is load-bearing: the element rule in `App.css` gives every `button` a
+   2.75rem minimum so a control is a thumb-sized target, and a bare `height: 30px` loses to
+   it — 30px wide by 44px tall, a round pin drawn as an egg. A pin is map content, not a
+   control, and its target size comes from the marker's own hit area. */
 .pin {
   display: grid;
   place-items: center;
   width: 30px;
   height: 30px;
+  min-height: 0;
   padding: 0;
   border: 3px solid var(--slate-100);
   border-radius: 50%;
