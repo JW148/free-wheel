@@ -1463,14 +1463,39 @@
   }
 }
 
-/* Under the bar, not in it. The bar's three slots are fixed; a fourth thing appearing inside it
-   every time a download starts would move the buttons out from under the rider's thumb. */
-.browse-bar-progress {
+/*
+ * A download is drawn *as* the row that names it, filling left to right.
+ *
+ * It used to be a `.picker-bar` under the bar, which is the one thing the bar cannot afford: a
+ * fourth element appearing the moment a download starts grew the chrome and moved the Stop
+ * button out from under the rider's thumb, and its safe-area margins put it over the home
+ * indicator. Nothing here changes size — the region's row is already the thing the progress is
+ * about, so it carries it.
+ */
+.browse-bar .sheet-toggle {
   position: relative;
-  z-index: 1;
-  width: auto;
-  margin: -0.2rem max(env(safe-area-inset-right), 0.7rem)
-    max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-left), 0.7rem);
+  overflow: hidden;
+}
+
+.browse-bar .sheet-toggle[data-filling='yes'] {
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+/* Behind the words, not over them: a wash light enough to read as a filled track against the
+   row's own surface, and far short of `.picker-bar`'s near-white, which would leave the name
+   sitting on top of the fill at almost no contrast. */
+.browse-bar .sheet-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--slate-100) 15%, transparent);
+  transition: width 0.25s ease-out;
+}
+
+/* The fill is a sibling of the two lines, so they need lifting out of its way. */
+.browse-bar .sheet-profile,
+.browse-bar .sheet-count {
+  position: relative;
 }
 
 /*

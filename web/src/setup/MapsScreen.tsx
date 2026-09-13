@@ -334,7 +334,25 @@ export default function MapsScreen({
             <ChevronLeftIcon />
           </button>
 
-          <button type="button" className="sheet-toggle" onClick={() => setListOpen(true)}>
+          {/* A download fills the row that names it, left to right, rather than pushing a bar
+              out underneath the chrome. The bar's three slots are fixed and its height has to be
+              a constant — a fourth thing appearing every time a download starts moved the
+              buttons out from under the rider's thumb, which is what this replaced. The fill is
+              decorative: the line under the name already says how far along it is in words, and
+              that is what a screen reader reads. */}
+          <button
+            type="button"
+            className="sheet-toggle"
+            data-filling={job && job.state !== 'failed' ? 'yes' : 'no'}
+            onClick={() => setListOpen(true)}
+          >
+            {job && job.state !== 'failed' && (
+              <span
+                className="sheet-fill"
+                style={{ width: `${jobPercent(job)}%` }}
+                aria-hidden="true"
+              />
+            )}
             <span className="sheet-profile">
               {selected ? (
                 <>
@@ -390,22 +408,6 @@ export default function MapsScreen({
             </button>
           )}
         </div>
-
-        {/* A progress bar under the bar rather than inside it: the bar's three slots are fixed,
-            and a row that grows a fourth thing every time a download starts moves the buttons
-            out from under the rider's thumb. */}
-        {job && job.state !== 'failed' && (
-          <div
-            className="picker-bar browse-bar-progress"
-            role="progressbar"
-            aria-valuenow={jobPercent(job)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`Downloading ${job.name}`}
-          >
-            <span style={{ width: `${jobPercent(job)}%` }} />
-          </div>
-        )}
 
         {/*
           The same drawer the ride screen uses, for the same reason: swipe to dismiss done

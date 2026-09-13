@@ -105,7 +105,7 @@ export function jobPercent(job: DownloadJob): number {
 }
 
 /**
- * The line under a row's progress bar.
+ * The words under a row's name.
  *
  * Kept short — this appears on up to fourteen rows at once, where the picker's full sentence
  * would be a wall. The detail a rider actually needs mid-download is which half is being
