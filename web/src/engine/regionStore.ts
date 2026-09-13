@@ -323,10 +323,15 @@ export async function runRegionDownload(
   totalBytes: number,
   deps: DownloadLoopDeps,
   onProgress?: (progress: RegionProgress) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   let doneBytes = 0
 
   for (const item of items) {
+    // Between items as well as inside `downloadInto`. A region is a basemap plus several
+    // segments, and a cancel that arrives in the gap between two of them would otherwise start
+    // the next 137 MB transfer before anything noticed.
+    signal?.throwIfAborted()
     const path = pathForItem(regionId, item)
     // What to report if this item fails: 0 for one never attempted, the partial or complete
     // byte count otherwise — never a hardcoded 0 for an item that may have fetched most of
@@ -376,6 +381,7 @@ export async function runRegionDownload(
           {
             from: decision.action === 'resume' ? decision.at : 0,
             fetchImpl: deps.fetchImpl,
+            signal,
             onProgress: (received) => {
               lastReceived = received
               onProgress?.({

@@ -44,6 +44,16 @@ export interface DownloadOptions {
   from?: number
   fetchImpl?: typeof fetch
   onProgress?: (received: number, total: number) => void
+  /**
+   * Stops the transfer partway, for a rider who changed their mind about a 137 MB download.
+   *
+   * Passed to `fetch` *and* checked between chunks, because the two catch different moments:
+   * aborting the fetch ends a transfer that is streaming, and the explicit check ends one that
+   * is between a completed read and the next request. What is already written stays written —
+   * the partial marker on disk describes it, so a later resume picks it up exactly as it would
+   * after a dropped connection. Cancelling is not discarding.
+   */
+  signal?: AbortSignal
 }
 
 /** Progress for one item of a region download, and the region's running total alongside it. */
@@ -124,7 +134,10 @@ export async function downloadInto(
   const from = options.from ?? 0
 
   const request = async (at: number): Promise<Response & { body: ReadableStream<Uint8Array> }> => {
-    const result = await doFetch(url, at > 0 ? { headers: { Range: `bytes=${at}-` } } : {})
+    const result = await doFetch(url, {
+      ...(at > 0 ? { headers: { Range: `bytes=${at}-` } } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    })
     if (!result.ok) {
       throw new Error(`${url}: server returned ${result.status}`)
     }
@@ -186,6 +199,11 @@ export async function downloadInto(
   const reader = response.body.getReader()
   try {
     for (;;) {
+      // Before the read rather than after it: a cancel that arrives while a chunk is in
+      // flight is caught by the fetch's own abort, and this is what catches one that arrives
+      // in the gap between chunks. Throwing leaves the flush in the `finally` below to commit
+      // what did arrive.
+      options.signal?.throwIfAborted()
       const { done, value } = await reader.read()
       if (done) break
       target.write(value, offset)

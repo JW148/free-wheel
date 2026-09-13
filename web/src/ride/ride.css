@@ -593,12 +593,18 @@
 /* ── Waypoint pins ──────────────────────────────────────────────────────────────────── */
 
 /* A round pin with a light ring, centred on the point. The obvious teardrop needs a 45deg
-   rotation, which rotates the letter inside it too — and the letter is the readable part. */
+   rotation, which rotates the letter inside it too — and the letter is the readable part.
+
+   `min-height: 0` is load-bearing: the element rule in `App.css` gives every `button` a
+   2.75rem minimum so a control is a thumb-sized target, and a bare `height: 30px` loses to
+   it — 30px wide by 44px tall, a round pin drawn as an egg. A pin is map content, not a
+   control, and its target size comes from the marker's own hit area. */
 .pin {
   display: grid;
   place-items: center;
   width: 30px;
   height: 30px;
+  min-height: 0;
   padding: 0;
   border: 3px solid var(--slate-100);
   border-radius: 50%;
@@ -1303,107 +1309,205 @@
   color: var(--text);
 }
 
-/* ── Region picker ──────────────────────────────────────────────────────────────────── */
+/* ── Choosing a region ──────────────────────────────────────────────────────────────── */
 
 /*
- * The screen a new rider lands on: a streamed map of Britain with the regions drawn on it,
- * a title over the top of it and a sheet over the bottom.
+ * The browse screen is a map with one bar on it.
  *
  * Sized by `--app-height`, never `inset: 0`. In a browser tab `inset: 0` runs underneath
- * Safari's collapsible bottom toolbar, which is exactly where the one button on this screen
- * lives. The `(display-mode: standalone)` rule at the top of this file — the one that makes
- * the *document* screen-high — is what makes the bottom of the sheet paint at all in a
- * home-screen app; nothing here may stop it applying.
+ * Safari's collapsible bottom toolbar, which is exactly where this screen's buttons live. The
+ * `(display-mode: standalone)` rule at the top of this file — the one that makes the *document*
+ * screen-high — is what makes the bottom of the bar paint at all in a home-screen app; nothing
+ * here may stop it applying.
  *
- * `pointer-events: none` on the layer with each surface opting back in, the same arrangement
- * the ride chrome uses and for a stronger reason: the map between the two panels is the
- * content here, and a rider has to pan and pinch it to find where they ride.
- *
- * The z-index sits *below* `.setup`. When there is no list of regions to show, manual import
- * is the only way forward this screen has, and Setup opening behind the screen that sent you
- * there would make the whole failure state useless.
+ * `justify-content: flex-end` and nothing else: the map layer is absolutely positioned and out
+ * of flow, so the bar is the only child in flow and belongs at the bottom. There used to be a
+ * second bar at the top holding the back button, which is why this was `space-between`.
  */
-.picker {
+.browse {
   position: fixed;
-  z-index: 5;
+  z-index: 11;
   inset: 0 0 auto;
   height: var(--app-height);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 0.7rem;
-  pointer-events: none;
+  justify-content: flex-end;
   color: var(--text);
-  padding: max(env(safe-area-inset-top), 0.7rem) max(env(safe-area-inset-right), 0.7rem)
-    max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-left), 0.7rem);
+  background: var(--bg);
 }
 
-/*
- * The sheet's ceiling — and, below, the attribution's floor. One value used twice rather than
- * two that can drift apart: the OSM attribution is a licence requirement, and the sheet is
- * tall enough to bury it where the ride screen parks it.
- *
- * A length rather than a percentage because the app is locked to portrait, so the shortest
- * screen it can meet is a 667px phone — which this still leaves a usable band of map on.
- */
-:root {
-  --picker-sheet-max: 21rem;
+.browse-map {
+  position: absolute;
+  inset: 0;
 }
 
-/*
- * The ride screen's controls mean nothing before anything is downloaded — and leaving them
- * live under a `pointer-events: none` layer is worse than useless: a tap on the map between
- * the picker's two panels would pass straight through to the control rail or the action bar.
- * Hiding the chrome is what makes that pass-through safe. `.ride-map` is a sibling of
- * `.ride-chrome`, so the map and the attribution inside it are untouched.
- */
-body:has(.picker) .ride-chrome {
-  display: none;
+.browse-map-canvas {
+  width: 100%;
+  height: 100%;
 }
 
-.picker-head,
-.picker-sheet {
-  pointer-events: auto;
-  border-radius: var(--radius);
-  background: var(--panel-strong);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-}
-
-.picker-head {
-  padding: 0.9rem 1rem;
-}
-
-.picker-head h1 {
-  margin: 0 0 0.4rem;
-  font-size: 1.35rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
-}
-
-.picker-head p {
-  max-width: 40ch;
-  margin: 0 0 0.35rem;
-  color: var(--muted);
-  font-size: 0.86rem;
-  line-height: 1.5;
-}
-
-.picker-sheet {
-  display: grid;
-  gap: 0.7rem;
-  justify-items: start;
-  max-height: var(--picker-sheet-max);
-  overflow-y: auto;
-  padding: 1rem;
-}
-
-.picker-sheet h2 {
+.browse-map-error {
+  position: absolute;
+  top: max(env(safe-area-inset-top), 0.7rem);
+  left: 0.7rem;
+  right: 0.7rem;
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+}
+
+/*
+ * Three slots and no more: out, what is chosen, what to do about it.
+ *
+ * Built from the ride screen's `.sheet-bar` vocabulary — the middle *is* `.sheet-toggle`, the
+ * action *is* `.primary` — because it is the same idea: a permanent strip that names the
+ * current decision and opens a drawer for the rest. The only difference is a screen with no
+ * chrome above it, so this one floats and is blurred rather than sitting on a solid panel.
+ */
+.browse-bar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin: 0 max(env(safe-area-inset-right), 0.7rem)
+    max(env(safe-area-inset-bottom), 0.7rem) max(env(safe-area-inset-left), 0.7rem);
+  padding: 0.5rem;
+  border-radius: var(--radius);
+  /* Firmer than `--panel-strong`. This sits over a whole country at z5, which is the busiest
+     thing it will ever cover — the ride screen's chrome only ever has to hold its own against
+     a street map at z14. */
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+/* One line each, whatever the region is called. "Southern Scotland and the Borders" over a
+   price that wrapped to three lines grew the bar and moved the button out from under the
+   rider's thumb — the bar's height has to be a constant. */
+.browse-bar .sheet-profile,
+.browse-bar .sheet-count {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrower than the ride screen's, where the bar holds two controls rather than three. The
+   region's price has to fit beside it without being ellipsised mid-word. */
+.browse-bar .primary {
+  min-width: 6rem;
+  padding: 0 0.8rem;
+}
+
+/* The swatch is a flex child of a block now, so it needs putting back on the line. */
+.browse-bar .sheet-profile .swatch {
+  display: inline-block;
+  vertical-align: 0.02em;
+  margin-right: 0.42rem;
+}
+
+/* Square, because it holds a chevron rather than a word. The label moved into `aria-label`
+   when the bar it used to own was deleted; a back arrow beside the name of where you are is
+   not ambiguous, and the 44px target is what actually matters. */
+.browse-back,
+.browse-locate {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 3rem;
+  min-height: 3rem;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.browse-back svg,
+.browse-locate svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.browse-locate:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* A ring rather than a word, so the button does not change width while it waits. */
+.browse-locating {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--slate-500);
+  border-top-color: var(--slate-100);
+  border-radius: 50%;
+  animation: browse-spin 0.8s linear infinite;
+}
+
+@keyframes browse-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browse-locating {
+    animation-duration: 2.4s;
+  }
+}
+
+/*
+ * A download is drawn *as* the row that names it, filling left to right.
+ *
+ * It used to be a `.picker-bar` under the bar, which is the one thing the bar cannot afford: a
+ * fourth element appearing the moment a download starts grew the chrome and moved the Stop
+ * button out from under the rider's thumb, and its safe-area margins put it over the home
+ * indicator. Nothing here changes size — the region's row is already the thing the progress is
+ * about, so it carries it.
+ */
+.browse-bar .sheet-toggle {
+  position: relative;
+  overflow: hidden;
+}
+
+.browse-bar .sheet-toggle[data-filling='yes'] {
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+/* Behind the words, not over them: a wash light enough to read as a filled track against the
+   row's own surface, and far short of `.picker-bar`'s near-white, which would leave the name
+   sitting on top of the fill at almost no contrast. */
+.browse-bar .sheet-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--slate-100) 15%, transparent);
+  transition: width 0.25s ease-out;
+}
+
+/* The fill is a sibling of the two lines, so they need lifting out of its way. */
+.browse-bar .sheet-profile,
+.browse-bar .sheet-count {
+  position: relative;
+}
+
+/*
+ * The dot beside a region's name takes its colour from `regionSwatch`, inline, exactly as a
+ * route row takes its profile's. Writing the three hexes out here as well would be a second
+ * copy of `REGION_COLOURS`, and only one copy ever gets updated.
+ */
+
+/* The chosen row, so the drawer and the map agree about what is selected. */
+.picker-list button[data-selected='yes'] {
+  background: var(--panel-strong);
+  box-shadow: inset 0 0 0 1px var(--slate-500);
 }
 
 .picker-note {
@@ -1431,12 +1535,8 @@ body:has(.picker) .ride-chrome {
   overflow-wrap: anywhere;
 }
 
-.picker-sheet .primary {
-  width: 100%;
-}
-
-/* A button that reads as a link: the secondary route out, which must be reachable but must
-   not compete with the download. Still a full 44px tap target. */
+/* A button that reads as a link: a secondary route, which must be reachable but must not
+   compete with the download. Still a full 44px tap target. */
 .picker-plain {
   min-height: 2.75rem;
   margin: 0 0 -0.2rem -0.75rem;
@@ -1444,9 +1544,14 @@ body:has(.picker) .ride-chrome {
   border: none;
   border-radius: 10px;
   background: transparent;
+  /* Explicit, because `App.css` gives every `button` a hairline ring and a class that only
+     clears `border` and `background` leaves that ring behind — which is how the quiet text
+     buttons in Setup ended up outlined and hanging off the left margin. */
+  box-shadow: none;
   color: var(--muted);
   font: inherit;
   font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -1468,7 +1573,7 @@ body:has(.picker) .ride-chrome {
   gap: 0.8rem;
   width: 100%;
   min-height: 3rem;
-  padding: 0 0.9rem;
+  padding: 0.5rem 0.9rem;
   border: none;
   border-radius: 10px;
   background: var(--panel-row);
@@ -1480,14 +1585,26 @@ body:has(.picker) .ride-chrome {
 }
 
 .picker-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-weight: 600;
   font-size: 0.95rem;
 }
 
+/* The size never wraps. "296 MB" split across two lines next to a region name that is also
+   wrapping turns a row into four lines of text with no shape to it. */
 .picker-list .picker-size {
+  flex: 0 0 auto;
   color: var(--muted);
   font-weight: 500;
   font-size: 0.85rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.picker-list .picker-name {
+  min-width: 0;
 }
 
 .picker-bar {
@@ -1507,27 +1624,6 @@ body:has(.picker) .ride-chrome {
   transition: width 0.25s ease-out;
 }
 
-.picker-problem {
-  display: grid;
-  gap: 0.35rem;
-  width: 100%;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bad) 12%, transparent);
-}
-
-.picker-problem p {
-  margin: 0;
-  font-size: 0.88rem;
-  line-height: 1.5;
-}
-
-.picker-problem > p:first-child {
-  color: var(--bad);
-  font-weight: 600;
-}
-
 /* ── Setup ──────────────────────────────────────────────────────────────────────────── */
 
 /* Setup sits above the ride screen rather than replacing it, so the map keeps its state —
@@ -1544,19 +1640,28 @@ body:has(.picker) .ride-chrome {
     env(safe-area-inset-left);
 }
 
+/*
+ * Nearly opaque, not merely translucent.
+ *
+ * At 92% the rows scrolling under it were still legible through the bar — a checkbox label and
+ * a radio note reading straight through the word "Setup". Everywhere else in the app a
+ * translucent surface sits over a *map*, which the blur turns to mush; here it sits over
+ * high-contrast text at the same size as its own, which blur alone does not defeat. The blur
+ * stays for the edge it gives, but the alpha carries the legibility.
+ */
 .setup-header {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.8rem 1rem;
-  background: rgb(6 20 27 / 92%);
+  padding: 0.75rem 1rem;
+  background: rgb(6 20 27 / 97%);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .setup-header h1 {
@@ -1565,13 +1670,15 @@ body:has(.picker) .ride-chrome {
 }
 
 .setup-close {
-  min-height: 2.6rem;
-  padding: 0 1.1rem;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
+  min-height: 2.4rem;
+  padding: 0 1rem;
+  border: none;
+  border-radius: 999px;
   background: var(--slate-700);
+  box-shadow: inset 0 0 0 1px var(--hairline);
   color: var(--text);
   font: inherit;
+  font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1639,12 +1746,12 @@ body:has(.picker) .ride-chrome {
   bottom: calc(env(safe-area-inset-bottom) + 4.5rem);
 }
 
-/* The picker's sheet is far taller than the ride screen's action bar, and the attribution is
-   a licence requirement rather than decoration, so it is lifted clear of the sheet's ceiling
-   for as long as the picker is up. `body:has()` because the picker and the map are siblings:
-   nothing inside the map's own subtree knows the picker exists. */
-body:has(.picker) .maplibregl-ctrl-bottom-left {
-  bottom: calc(env(safe-area-inset-bottom) + var(--picker-sheet-max) + 1.4rem);
+/* The top-right corner, which on this screen nothing else claims. Attribution is a licence
+   requirement rather than decoration, and the bar owns the bottom — so it goes as far from the
+   bar as the screen allows. */
+.browse .maplibregl-ctrl-top-right {
+  top: max(env(safe-area-inset-top), 0.7rem);
+  right: max(env(safe-area-inset-right), 0.7rem);
 }
 
 .maplibregl-ctrl-attrib,

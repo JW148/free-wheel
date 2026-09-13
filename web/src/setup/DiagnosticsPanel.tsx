@@ -46,7 +46,7 @@ export default function DiagnosticsPanel({ basemap }: { basemap: ReturnType<type
             <dd>{__BUILD_ID__}</dd>
           </div>
         </dl>
-        <p className="meta">
+        <p className="setup-footer">
           Check the build stamp before trusting any result on a device — the service worker has
           served a stale bundle often enough to have cost three debugging sessions.
         </p>
@@ -62,8 +62,17 @@ export default function DiagnosticsPanel({ basemap }: { basemap: ReturnType<type
             </dd>
           </div>
           <div>
-            <dt>archive</dt>
-            <dd>{basemap.active ? `${basemap.active.name} (${formatBytes(basemap.active.bytes)})` : 'none mounted'}</dd>
+            <dt>archives drawn</dt>
+            <dd>
+              {basemap.mounted.length === 0
+                ? 'none mounted'
+                : basemap.mounted
+                    .map((name) => {
+                      const archive = basemap.archives.find((a) => a.name === name)
+                      return archive ? `${name} (${formatBytes(archive.bytes)})` : name
+                    })
+                    .join(', ')}
+            </dd>
           </div>
           <div>
             <dt>OPFS range reads</dt>
@@ -78,7 +87,7 @@ export default function DiagnosticsPanel({ basemap }: { basemap: ReturnType<type
             </div>
           )}
         </dl>
-        <p className="meta">
+        <p className="setup-footer">
           Reads climbing while the map stays blank means the archive is decoding but covers
           nowhere near you. Reads stuck at a handful means the worker never started.
         </p>

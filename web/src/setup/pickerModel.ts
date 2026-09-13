@@ -1,11 +1,12 @@
 /**
- * What the region picker decides, with the pixels left out.
+ * What the region browser decides, with the pixels left out.
  *
  * Everything here is pure so it can be tested without a browser: the states the outline layer
  * paints from, the sizes a rider reads, the line under the progress bar, and the words a
  * failure is turned into. The screen itself needs a map, a Worker and OPFS, none of which
  * exist under vitest — so anything that can be decided without them is decided here rather
- * than inside JSX, where nothing can reach it.
+ * than inside JSX, where nothing can reach it. Its companion is `libraryModel.ts`, which
+ * answers the questions you only have once something is downloaded.
  *
  * ## The vocabulary is the point of the screen
  *
@@ -21,7 +22,6 @@
 import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
 import { downloadPlan, regionState, type RegionState } from '../data/regions'
 import type { RegionProgress } from '../engine/downloads'
-import type { Handback } from '../map/archiveChoice'
 
 /**
  * A size as a rider reads it: whole megabytes, decimal not binary.
@@ -48,16 +48,16 @@ export function itemWords(kind: RegionProgress['kind']): string {
 }
 
 /**
- * Whether this phone has enough to ride on, and so whether the picker should stand down.
+ * Whether this phone has enough to ride on, and so whether the first-run screen should stand
+ * down.
  *
  * A region record is the modern answer. The second half is the phone that was set up before
  * regions existed and imported its two files by hand: it has no record, but it has everything
- * it needs, and sending it to the picker would be telling a rider who is already riding that
- * they have not started.
+ * it needs, and sending it to the first-run screen would be telling a rider who is already
+ * riding that they have not started.
  *
- * It is also the way *out* of the picker's dead end. A rider who reaches the "no list of
- * regions" state and takes the manual route needs this asked again when Setup closes —
- * otherwise they import both files, press Done, and land back on a screen that still says
+ * It is also the way *out* of the "no list of regions" dead end: a rider who hits that state
+ * and imports their files by hand must not press Done and land back on a screen still saying
  * there is nothing to choose from. A home-screen app has no address bar to reload from, so
  * "force-quit the app" was the only exit that screen had.
  */
@@ -69,7 +69,7 @@ export function readyToRide(counts: {
   return counts.regions > 0 || (counts.basemaps > 0 && counts.roadData > 0)
 }
 
-/** Why the picker has nothing to offer. */
+/** Why the region browser has nothing to offer. */
 export interface CatalogueFailure {
   cause: 'storage' | 'list'
   reason: string
@@ -119,50 +119,6 @@ export function failureCopy(cause: CatalogueFailure['cause']): {
   }
 }
 
-/**
- * Whether the picker may stand down on a given handback.
- *
- * The picker borrows the one MapLibre instance the whole app shares, and every exit has to
- * give it back before the ride screen's effects wake up. Three of the four outcomes of that
- * handback are fine to leave on, and the rule is *not* "did it restore a map":
- *
- * - `restored` — obviously.
- * - `nothing-installed` — an empty phone that chose to carry on without a region. The map is
- *   torn down and the ride screen has copy for exactly this. Blocking here would rebuild the
- *   dead end the picker exists to remove.
- * - `unavailable` — the handback could not be completed. The borrowed map is down, so nothing
- *   is masquerading as the rider's own, but nobody has been told why and the one thing that
- *   might fix it (closing a second copy of the app) is not something the ride screen can ask
- *   for. The picker holds, says so, and offers a retry.
- */
-export function mayStandDown(outcome: Handback): boolean {
-  return outcome !== 'unavailable'
-}
-
-/**
- * The words for a handback that could not be completed.
- *
- * Its own copy rather than {@link failureCopy}'s, because it is its own fault: the list
- * arrived, the phone may well have a perfectly good map on it, and what failed was reading
- * the record of what is there. The remedy is the one this repo has already written down —
- * only one copy of the app can hold a storage handle, and a second tab is how that collides —
- * so the explanation says that rather than sending anyone to look at their wifi.
- */
-export function handbackCopy(): {
-  heading: string
-  explanation: string
-  retry: string
-  carryOn: string
-} {
-  return {
-    heading: 'free-wheel could not open your map',
-    explanation:
-      'It could not read what is saved on this phone, so there is nothing to put on screen. If free-wheel is open in another tab, close that tab — only one copy can use this phone’s storage at a time — and try again.',
-    retry: 'Try again',
-    carryOn: 'Carry on anyway',
-  }
-}
-
 /** One region, priced and described, ready to put on screen. */
 export interface RegionSummary {
   id: string
@@ -172,10 +128,8 @@ export interface RegionSummary {
   bytes: number
   /** {@link bytes} as a rider reads it. */
   size: string
-  /** What is already here, or `null` when nothing is. */
-  status: string | null
-  /** The sentence that sits in front of the button. */
-  price: string
+  /** The one line under the name: what it costs, or what is already here. */
+  line: string
   /** What the button says. */
   action: string
   /** Kept so the caller can hand it straight back to the engine and to the outline layer. */
@@ -213,8 +167,7 @@ export function summarise(
       state,
       bytes,
       size: formatMegabytes(bytes),
-      status: statusLine(state),
-      price: priceLine(state, bytes, formatMegabytes(bytes)),
+      line: regionLine(state, bytes, formatMegabytes(bytes)),
       action: actionLabel(state, bytes),
       region,
     })
@@ -228,30 +181,40 @@ export function statesOf(summaries: RegionSummary[]): Record<string, RegionState
 }
 
 /**
- * What is already on the phone for this region, in a sentence, or `null` for a region with
- * nothing here yet — where a status line would only be noise.
+ * The one line under a region's name in the bar: what it costs, or what is already here.
  *
- * `unknown` says so out loud. An offline phone cannot tell whether its copy is current, and
- * the cost of guessing "current" is a rider following road data that no longer matches the
- * roads.
+ * One line, and short, because there is one place left in this screen that says any of this —
+ * the middle slot of the bar over the map, which is 176 px wide between a back button and a
+ * Download. It replaced three sentences written for a sheet that is gone: at that width "137 MB
+ * — the map and the road data for this area." wrapped to three lines, which grew the bar, which
+ * moved the Download button out from under the rider's thumb. Shortened once more after the
+ * first attempt was ellipsised mid-word.
+ *
+ * The number goes in front of the tap rather than after it. Safari implements no
+ * `NetworkInformation`, so there is no honest way to know whether a rider is on wifi or on a
+ * metered plan with a fortnight left — hedging with "this may use a lot of data" would be
+ * inventing a warning we cannot substantiate. The number is the whole of what we know.
+ *
+ * `unknown` says so out loud. An offline phone cannot tell whether its copy is current, and the
+ * cost of guessing "current" is a rider following road data that no longer matches the roads.
+ *
+ * An update never claims to be fetching both halves: a region whose map is current and whose
+ * road data is not costs only the road data.
  */
-export function statusLine(state: RegionState): string | null {
-  switch (state) {
-    case 'not-installed':
-      return null
-    case 'current':
-      return 'Already on this phone, and up to date.'
-    case 'road-data-outdated':
-      return 'The road data here has changed since you downloaded it.'
-    case 'map-outdated':
-      return 'The map here has changed since you downloaded it.'
-    case 'unknown':
-      return 'Already on this phone. Without a connection there is no way to check whether it is still up to date.'
+export function regionLine(state: RegionState, bytes: number, size: string): string {
+  // Keyed on the price before the state, because the price is what the tap costs. A region can
+  // be `road-data-outdated` and still have nothing to fetch — a neighbour already downloaded
+  // the road data it shares — and quoting 0 MB to update reads as broken.
+  if (bytes === 0) {
+    return state === 'unknown' ? 'On this phone · not checked' : 'Already on this phone'
   }
+  if (state === 'not-installed') return `${size} · map and road data`
+  if (state === 'unknown') return `${size} · from a saved list`
+  return `${size} · update available`
 }
 
 /**
- * The label on the one button in the sheet.
+ * The label on the bar's one button.
  *
  * Keyed on the price rather than only on the state, because the price is what the tap costs.
  * A region can be `road-data-outdated` and still have nothing to fetch — another region
@@ -260,39 +223,6 @@ export function statusLine(state: RegionState): string | null {
 export function actionLabel(state: RegionState, bytes: number): string {
   if (bytes === 0) return 'Use this region'
   return state === 'not-installed' ? 'Download' : 'Update'
-}
-
-/**
- * The size, in the sentence that goes in front of the button.
- *
- * In front, and not behind: Safari implements no `NetworkInformation`, so there is no honest
- * way to tell whether a rider is on wifi or on a metered plan with a fortnight left in the
- * month. Hedging — "this may use a lot of data" — would be inventing a warning we cannot
- * substantiate. The number is the whole of what we know, so the number is what we say, before
- * the tap rather than after it.
- *
- * An update does not claim to be fetching both halves. A region whose map is current and whose
- * road data is not costs only the road data, and saying otherwise would overstate the price of
- * the one tap on the screen.
- */
-export function priceLine(state: RegionState, bytes: number, size: string): string {
-  if (bytes === 0) return 'Everything this region needs is already on the phone.'
-  if (state === 'not-installed') return `${size} — the map and the road data for this area.`
-  return `${size} to bring this region up to date.`
-}
-
-/**
- * The price line above the button, or nothing.
- *
- * Nothing after a failure, and that is the whole of this function. `price` is the cost of the
- * *whole* region, worked out when the screen loaded; a download that died at 130 of 137 MB
- * will resume, so repeating the full figure one line above advice that says the retry picks up
- * where it stopped puts two contradictory sentences next to each other. The honest remaining
- * number is known only to the engine, which recomputes it from what is on disk at the start of
- * the next attempt — so the advice carries it and the stale price gets out of the way.
- */
-export function sheetPrice(price: string, failed: boolean): string | null {
-  return failed ? null : price
 }
 
 export interface DownloadStatus {

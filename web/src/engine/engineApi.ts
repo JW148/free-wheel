@@ -9,6 +9,7 @@ import {
   readRangeFromOpfs,
 } from './opfsVfs'
 import {
+  deleteBasemapFile,
   importBasemapFile,
   importTileFile,
   installedBasemaps,
@@ -110,6 +111,23 @@ export interface RouteOutcome {
   gpxCrc32?: number
 }
 
+/**
+ * In-flight (and queued) region downloads, so one can be called off from the main thread.
+ *
+ * Module-level rather than threaded through `downloadRegion`, because the cancel arrives as a
+ * *separate* Comlink call: the two have nothing in common except the region id.
+ */
+const downloadAborts = new Map<string, AbortController>()
+
+/**
+ * The rejection a cancelled download ends with.
+ *
+ * `AbortError` by name, because that is what the rest of the platform uses and what the
+ * download store checks for — the difference between "you stopped this" and "this broke" is
+ * the whole of what the screen says next.
+ */
+const cancelled = () => new DOMException('download cancelled', 'AbortError')
+
 const engineApi = {
   /**
    * Loads the Wasm module, copies the bundled profiles into OPFS, and installs the VFS.
@@ -191,6 +209,23 @@ const engineApi = {
   },
 
   /**
+   * Deletes one hand-imported map archive.
+   *
+   * Serialized like every other deletion, and reading `regions.json` inside the queue so the
+   * "does a region own this?" check cannot be answered from a snapshot a download is in the
+   * middle of replacing.
+   */
+  async deleteBasemap(name: string) {
+    return serializeRegionOp(async () => {
+      const records = await readRecords()
+      await deleteBasemapFile(
+        name,
+        records.map((record) => record.id),
+      )
+    })
+  },
+
+  /**
    * Deletes one segment.
    *
    * Serialized against `downloadRegion` and `removeRegion`, because it retracts the segment's
@@ -228,20 +263,57 @@ const engineApi = {
     manifest: DataManifest,
     onProgress?: (progress: RegionProgress) => void,
   ): Promise<InstalledRegion[]> {
-    return serializeRegionOp(async () => {
-      const records = await readRecords()
-      const plan = downloadPlan(region, manifest, records)
+    // Registered *before* entering the queue, not inside it. A rider who taps three regions
+    // and then changes their mind about the third is cancelling something that has not started
+    // — it is sitting behind two others in `serializeRegionOp` — and a controller created
+    // inside the queued body would not exist yet to be aborted.
+    const controller = new AbortController()
+    downloadAborts.get(region.id)?.abort(cancelled())
+    downloadAborts.set(region.id, controller)
+    try {
+      return await serializeRegionOp(async () => {
+        controller.signal.throwIfAborted()
+        const records = await readRecords()
+        const plan = downloadPlan(region, manifest, records)
 
-      await runRegionDownload(region.id, plan.items, plan.bytes, opfsDownloadDeps, onProgress)
+        await runRegionDownload(
+          region.id,
+          plan.items,
+          plan.bytes,
+          opfsDownloadDeps,
+          onProgress,
+          controller.signal,
+        )
 
-      // Records the region, and only then forgets its download markers — see
-      // `completeRegionDownload`, and `runRegionDownload`'s doc comment for why not sooner.
-      const updated = await completeRegionDownload(region, manifest, plan.items, Date.now())
+        // Records the region, and only then forgets its download markers — see
+        // `completeRegionDownload`, and `runRegionDownload`'s doc comment for why not sooner.
+        const updated = await completeRegionDownload(region, manifest, plan.items, Date.now())
 
-      // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
-      await installedTiles()
-      return updated
-    })
+        // Opens the new .rd5 handles and registers /segments4. Do not remove — see the note above.
+        await installedTiles()
+        return updated
+      })
+    } finally {
+      // Only if it is still ours: a second `downloadRegion` for the same id has already
+      // replaced the entry, and deleting it here would leave that one uncancellable.
+      if (downloadAborts.get(region.id) === controller) downloadAborts.delete(region.id)
+    }
+  },
+
+  /**
+   * Stops a download, whether it is running or still queued behind another.
+   *
+   * Deliverable in a way `RoutingEngine.terminate()` is not, and for a reason worth writing
+   * down: a download spends its time awaiting network and OPFS, so the Worker's event loop is
+   * free and a Comlink message actually arrives. A route spends its time blocked inside Wasm,
+   * where nothing is delivered until it returns — which is why the cancel note at the top of
+   * this file says the only way to stop *that* is to terminate the Worker.
+   *
+   * Bytes already written are kept. The partial marker on disk describes them, so the next
+   * attempt resumes from where this one stopped rather than starting again.
+   */
+  async cancelRegionDownload(id: string) {
+    downloadAborts.get(id)?.abort(cancelled())
   },
 
   async installedRegions(): Promise<InstalledRegion[]> {

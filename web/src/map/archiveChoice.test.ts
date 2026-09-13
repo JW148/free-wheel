@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { archiveToOpen, handbackPlan } from './archiveChoice'
+import { archiveToOpen, mountPlan } from './archiveChoice'
 
 const installed = [{ name: 'wessex.pmtiles' }, { name: 'central-scotland.pmtiles' }]
 
@@ -13,18 +13,17 @@ describe('archiveToOpen', () => {
   })
 
   /*
-   * The archive the picker displaced may have been deleted while it was up — Setup is
-   * reachable from the picker, and deleting is one of the things it does.
+   * The remembered archive may have been deleted since — removing a region is one of the
+   * things the Maps screen does.
    */
   it('skips a preference that is no longer installed rather than giving up', () => {
     expect(archiveToOpen(installed, ['deleted.pmtiles'])).toBe('wessex.pmtiles')
   })
 
   /*
-   * The combination `endRemote` actually produces on a deleted displaced archive: the first
-   * preference is gone and the second is installed but is *not* `installed[0]`. Test 3 above
-   * cannot tell "carried on down the list" from "gave up and took the first", because there
-   * the two answers coincide. Here they differ, so only one of them passes.
+   * The first preference is gone and the second is installed but is *not* `installed[0]`. The
+   * test above cannot tell "carried on down the list" from "gave up and took the first",
+   * because there the two answers coincide. Here they differ, so only one of them passes.
    */
   it('carries on down the list rather than giving up at the first miss', () => {
     expect(archiveToOpen(installed, ['deleted.pmtiles', 'central-scotland.pmtiles'])).toBe(
@@ -37,54 +36,54 @@ describe('archiveToOpen', () => {
   })
 
   /*
-   * The "carry on without a region" exit on an empty phone. `null` rather than `undefined`
-   * so the caller has to say what it does about it — the alternative left a streamed archive
-   * on screen that looked like a working map and was not.
+   * The empty phone. `null` rather than `undefined` so the caller has to say what it does
+   * about it — the alternative flowed an `undefined` on into a mount that quietly did nothing.
    */
   it('answers null when nothing is installed, which is a real answer', () => {
     expect(archiveToOpen([], ['wessex.pmtiles'])).toBeNull()
   })
 })
 
-describe('handbackPlan', () => {
-  /*
-   * The case this function exists for, and the one three rounds of fixes kept walking past.
-   * `refresh()` answers `null` when the engine could not be asked at all — two Safari tabs
-   * colliding over the same storage handles is the documented way in — and a handback that
-   * returns early there leaves the loan open and a streamed backdrop on screen while telling
-   * its caller it finished. There is nothing to restore *to*, so the only honest move is to
-   * take the borrowed map down and say why.
-   */
-  it('takes the map down when storage could not be read at all', () => {
-    expect(handbackPlan(null, ['wessex.pmtiles'])).toEqual({
-      action: 'discard',
-      outcome: 'unavailable',
-    })
-  })
-
-  /*
-   * Deliberately a different outcome from the one above, because they are different sentences
-   * on screen: "you have no map yet" sends a rider to download one, "free-wheel cannot read
-   * this phone" does not.
-   */
-  it('takes the map down when nothing is installed, which is a choice rather than a fault', () => {
-    expect(handbackPlan([], ['wessex.pmtiles'])).toEqual({
+describe('mountPlan', () => {
+  it('takes the map down when nothing is installed', () => {
+    expect(mountPlan([], [], ['wessex.pmtiles'])).toEqual({
       action: 'discard',
       outcome: 'nothing-installed',
     })
   })
 
-  it('mounts the first preference that is installed', () => {
-    expect(handbackPlan(installed, ['central-scotland.pmtiles'])).toEqual({
+  it('mounts every installed archive, not just the preferred one', () => {
+    // The whole point of the change this replaced a handback for: a rider with two neighbouring
+    // regions sees both, and the map does not go blank at the border between them.
+    expect(mountPlan(installed, [], ['central-scotland.pmtiles'])).toEqual({
       action: 'mount',
-      name: 'central-scotland.pmtiles',
+      mount: ['wessex.pmtiles', 'central-scotland.pmtiles'],
+      add: ['wessex.pmtiles', 'central-scotland.pmtiles'],
+      remove: [],
+      focus: 'central-scotland.pmtiles',
     })
   })
 
-  it('mounts whatever is there when no preference survives', () => {
-    expect(handbackPlan(installed, ['deleted.pmtiles', null])).toEqual({
-      action: 'mount',
-      name: 'wessex.pmtiles',
+  it('adds only what is new, so a finished download does not remount the rest', () => {
+    const plan = mountPlan(installed, ['wessex.pmtiles'], [])
+    expect(plan).toMatchObject({ add: ['central-scotland.pmtiles'], remove: [] })
+  })
+
+  it('removes an archive that is drawn but no longer installed', () => {
+    // A deleted region leaves a source MapLibre goes on requesting tiles from, and a missing
+    // tile is reported as nothing at all — so it would look like a failed download for ever.
+    const plan = mountPlan([{ name: 'wessex.pmtiles' }], ['wessex.pmtiles', 'gone.pmtiles'], [])
+    expect(plan).toMatchObject({ add: [], remove: ['gone.pmtiles'] })
+  })
+
+  it('asks for no work at all when nothing has changed', () => {
+    const names = installed.map((a) => a.name)
+    expect(mountPlan(installed, names, [])).toMatchObject({ add: [], remove: [] })
+  })
+
+  it('focuses whatever is there when no preference survives', () => {
+    expect(mountPlan(installed, [], ['deleted.pmtiles', null])).toMatchObject({
+      focus: 'wessex.pmtiles',
     })
   })
 })

@@ -1,320 +1,870 @@
-main {
-  max-width: 58rem;
+/*
+ * Setup: the one screen in this app that is a document rather than a map.
+ *
+ * ## It borrows the ride screen's vocabulary rather than inventing one
+ *
+ * Everything here is built from the tokens in `index.css` and `ride.css` — the single hueless
+ * slate ramp, `--panel-row`, `--hairline`, tabular numerals, and the row proportions the
+ * drawer already uses. Setup had drifted into browser defaults instead: 17px prose, `<dl>`
+ * with a 9rem label column, bare `<button>`s at a radius nothing else in the app uses, and a
+ * `.step-note` class that **no stylesheet defined**, so the three explanatory paragraphs in
+ * the rider settings rendered at full body size and outweighed every heading on the screen.
+ * Two design systems in one app is what "it doesn't feel like the rest of it" was.
+ *
+ * ## Inset grouped rows, because that is what the drawer already is
+ *
+ * A setting is a row: label on the left, value on the right, note underneath when it needs
+ * one. Related rows sit in one `.setup-group` with hairline dividers between them, inset from
+ * the left so the group reads as a single object with internal structure rather than a stack
+ * of separate cards. Explanation goes *under* the group as a footnote, in the muted size —
+ * which is what stops prose from being the loudest thing on a settings screen.
+ *
+ * There are no shadows. Separation is an inset hairline ring, exactly as it is over the map.
+ *
+ * ## Where the emphasis is spent
+ *
+ * One place: the power preview under the rider settings. Three large tabular figures that move
+ * as the settings above them change are the only thing on this screen asking to be looked at,
+ * and they are the only thing that earns it — they are how a rider tells whether the numbers
+ * they just entered are right. Everything else is deliberately quiet.
+ */
+
+/* ── The screen ─────────────────────────────────────────────────────────────────────── */
+
+.setup {
+  font-variant-numeric: tabular-nums;
+}
+
+.setup main {
+  max-width: 34rem;
   margin: 0 auto;
-  padding: 1.5rem 1rem 4rem;
+  padding: 1.1rem 1rem 5rem;
 }
 
-header {
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 1rem;
-  margin-bottom: 1.5rem;
+.setup main > section + section,
+.setup main > * + section {
+  margin-top: 2.25rem;
 }
 
-h1 {
-  font-size: 1.4rem;
-  line-height: 1.25;
-  margin: 0 0 0.5rem;
-}
-
-h2 {
+/*
+ * A type scale, set once. Prose in Setup is secondary to the controls it explains, so it sits
+ * a step below the row labels rather than at document body size.
+ */
+.setup h1 {
+  margin: 0;
   font-size: 1.05rem;
-  margin: 0 0 0.25rem;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
-section {
-  margin-bottom: 2.25rem;
+.setup h2 {
+  margin: 0 0 0.55rem;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
 }
 
-.sub {
+.setup h2:not(:first-child) {
+  margin-top: 2rem;
+}
+
+/*
+ * A group's header. Sentence case and quiet, matching `.section-label` in the drawer — the
+ * tracked-out capitals this used to be belonged to a different app.
+ */
+.setup h3,
+.subhead {
+  display: block;
+  margin: 1.6rem 0 0.45rem;
+  padding: 0;
   color: var(--muted);
-  margin: 0 0 1rem;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.setup h3:first-child,
+.subhead:first-child {
+  margin-top: 0;
+}
+
+/* Explanatory prose: under whatever it explains, never above it, and never at body size. */
+.sub,
+.step-note,
+.setup-note {
+  max-width: 46ch;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 .meta,
 .pending {
-  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
   color: var(--muted);
-  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.note {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
 
 .error {
+  margin: 0.75rem 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 35%, transparent);
   color: var(--bad);
-  background: color-mix(in srgb, var(--bad) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.badge {
-  font-size: 0.7rem;
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+/* The default blue-and-visited-purple was the only colour on this screen nobody chose, and it
+   sat in a palette whose whole point is that the route line is the one thing with a hue. */
+.setup a {
+  color: var(--text);
+  text-decoration-color: var(--slate-500);
+  text-underline-offset: 0.18em;
+}
+
+.setup a:visited {
+  color: var(--text);
+}
+
+/* ── Tabs, as one control ───────────────────────────────────────────────────────────────
+   Three separate outlined buttons read as three things to decide between. A single track with
+   a sliding indicator reads as one control with a current position, which is what it is. */
+
+.setup-tabs {
+  position: sticky;
+  top: 3.55rem;
+  z-index: 2;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  margin: 0.7rem 1rem 0;
+  padding: 0.22rem;
+  border-radius: 12px;
+  /* The track is recessed and the indicator is raised, matching the drawer where a selected
+     row is *lighter* than the rest. The reverse — a dark indicator in a light track — reads as
+     the selected tab being the one switched off. */
+  background: color-mix(in srgb, var(--slate-800) 70%, var(--bg));
+  box-shadow:
+    inset 0 0 0 1px var(--hairline),
+    0 0 0 0.7rem var(--bg);
+}
+
+/* The indicator, positioned from `--tab` (the selected index) set on the element by React.
+   One moving element rather than three changing backgrounds: the movement is the thing that
+   says the tabs are a single axis. */
+.setup-tabs::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 0.22rem;
+  bottom: 0.22rem;
+  left: 0.22rem;
+  width: calc((100% - 0.44rem) / var(--tab-count, 3));
+  border-radius: 10px;
+  background: var(--slate-700);
+  transform: translateX(calc(var(--tab, 0) * 100%));
+  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.setup-tabs button {
+  position: relative;
+  z-index: 1;
+  min-height: 2.4rem;
+  padding: 0 0.5rem;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+
+.setup-tabs button[data-selected='yes'] {
+  color: var(--text);
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-tabs::before,
+  .setup-tabs button {
+    transition: none;
+  }
+}
+
+/* ── Grouped rows ───────────────────────────────────────────────────────────────────── */
+
+.setup-group {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  /* So a divider and a pressed row both stop at the rounded corner. */
+  overflow: hidden;
+  list-style: none;
+}
+
+/* Inset from the left, which is what makes a group read as one object rather than a stack:
+   a full-bleed rule slices it into separate cards. Drawn as a pseudo-element rather than a
+   full-width line masked at one end — the mask left a bright notch wherever the two disagreed
+   by a fraction of a pixel, and it breaks the moment a row has a background of its own. */
+.setup-group > * + *::before,
+.env > div + div::before,
+.maps-row + .maps-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0.85rem;
+  right: 0;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.setup-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 0.9rem;
+  min-height: 2.9rem;
+  padding: 0.6rem 0.85rem;
+  text-align: left;
+}
+
+/* A row that is also a button — the whole width is the target, so it keeps the row's shape
+   rather than looking like a control someone dropped into a list. */
+button.setup-row,
+label.setup-row {
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.setup-row:active {
+  background: var(--panel-row);
+}
+
+.setup-row-text {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.setup-row-label {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.setup-row-note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+/* The right-hand column: a value, read not operated. Tabular so a column of them lines up. */
+.setup-value {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.setup-value strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.setup-value.bad,
+dd.bad {
+  color: var(--bad);
+}
+
+/* A value the rider types. Borderless inside its row — the row is already the field. */
+.setup-row input[type='number'],
+.setup-row input[type='text'] {
+  width: 5.5rem;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 9px;
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.setup-row input:focus-visible {
+  outline: 2px solid var(--slate-300);
+  outline-offset: 1px;
+}
+
+/* The unit, so the field holds a bare number and the row still says what it means. */
+.setup-unit {
+  margin-left: 0.45rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.setup-footer {
+  display: block;
+  max-width: 46ch;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────────────────────
+   One family, proportioned like the ride screen's: 2.75rem of height, an 11px radius, and a
+   recessed fill with a hairline rather than a border. `.primary` (light fill, dark label) is
+   defined in `ride.css` and used here unchanged, so the two screens agree about what the
+   committing action looks like. */
+
+button {
+  min-height: 2.75rem;
+  padding: 0 1.05rem;
+  border: none;
+  border-radius: 11px;
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  color: var(--slate-500);
+  cursor: default;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--slate-300);
+  outline-offset: 2px;
+}
+
+.actions,
+.setup-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.danger {
+  color: var(--bad);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 40%, transparent);
+}
+
+select {
+  min-height: 2.75rem;
+  min-width: 12rem;
+  padding: 0 0.7rem;
+  border: none;
+  border-radius: 11px;
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+textarea {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  border: none;
+  border-radius: 11px;
+  background: var(--panel-row);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+}
+
+.badge {
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
 }
 
 .badge.good {
+  background: color-mix(in srgb, var(--good) 18%, transparent);
   color: var(--good);
-  background: color-mix(in srgb, var(--good) 15%, transparent);
 }
 
 .badge.bad {
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
   color: var(--bad);
-  background: color-mix(in srgb, var(--bad) 15%, transparent);
 }
 
-/* Environment block */
-.env {
-  margin: 0;
-  display: grid;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-}
+/* ── Tables, for the things that really are tabular ─────────────────────────────────── */
 
-.env > div {
-  display: grid;
-  grid-template-columns: minmax(9rem, auto) 1fr;
-  gap: 0.75rem;
-}
-
-.env dt {
-  color: var(--muted);
-}
-
-.env dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-/* Result tables */
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
-  margin-bottom: 1rem;
+  margin: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  overflow: hidden;
+  font-size: 0.78rem;
 }
 
 th {
-  text-align: left;
-  font-weight: 600;
+  padding: 0.5rem 0.85rem 0.35rem;
+  border-bottom: 1px solid var(--hairline);
   color: var(--muted);
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0 0.5rem 0.4rem 0;
-  border-bottom: 1px solid var(--rule);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-align: left;
 }
 
 td {
-  padding: 0.5rem 0.5rem 0.5rem 0;
-  border-bottom: 1px solid var(--rule);
-  vertical-align: top;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
   overflow-wrap: anywhere;
+}
+
+tr:last-child td {
+  border-bottom: none;
 }
 
 tr.fail td {
   background: color-mix(in srgb, var(--bad) 8%, transparent);
 }
 
-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.95em;
+td button {
+  min-height: 2.2rem;
+  padding: 0 0.75rem;
+  font-size: 0.78rem;
 }
 
-.note {
-  display: block;
-  color: var(--muted);
-  font-size: 0.72rem;
-  margin-top: 0.15rem;
-  line-height: 1.35;
-}
-
-button {
-  font: inherit;
-  font-size: 0.875rem;
-  padding: 0.55rem 1.1rem;
-  border-radius: 8px;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-  color: inherit;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.actions {
-  display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-textarea {
-  width: 100%;
-  margin-top: 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-  background: var(--surface);
-  color: inherit;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 0.6rem;
-}
-
-select,
-input[type='text'],
-input[type='number'],
-input:not([type]) {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: 8px;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-  color: inherit;
-  min-width: 12rem;
-}
-
-.subhead {
-  font-size: 0.85rem;
-  margin: 1.25rem 0 0.4rem;
-  color: var(--muted);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-/* A file input styled as a button; the native control is unusable on iOS. */
-/* `.filebutton` lives in ride.css, which is the only definition. There used to be a second
-   one here using the light-theme `--surface`, and because App.css is imported last it won —
-   rendering a white button with white text on the dark first-run screen. */
-
-/* ── Setup tabs ─────────────────────────────────────────────────────────────────────── */
-
-.setup-tabs {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem 0;
-}
-
-.setup-tabs button {
-  flex: 1;
-  min-height: 2.75rem;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-.setup-tabs button[data-selected='yes'] {
-  border-color: var(--slate-300);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.setup main {
-  max-width: 58rem;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 4rem;
-}
-
-.setup h3 {
-  font-size: 0.95rem;
-  margin: 1.25rem 0 0.25rem;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-dd.bad {
-  color: var(--bad);
-}
-
-/* ── Rider settings ─────────────────────────────────────────────────────────────────────
-   Lives in the Setup overlay, which is a plain document rather than the ride screen's
-   floating chrome — so it borrows the drawer's row styling (`.profile-row`, `.profiles`)
-   for the two pickers and adds only what those do not cover. */
+/* ── Rider settings ─────────────────────────────────────────────────────────────────── */
 
 .panel-block {
   margin-bottom: 2.25rem;
 }
 
-.panel-block h2 {
-  margin-top: 1.75rem;
-}
-
-.panel-block h2:first-child {
-  margin-top: 0;
-}
-
-/* Two number fields side by side: they are one question — how much is going up the hill —
-   asked in two parts, and separating them onto two rows makes them look unrelated. */
-.rider-masses {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
-}
-
-.rider-masses label {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.rider-masses input {
-  min-width: 0;
-  width: 100%;
-}
-
+/* The radio groups keep the drawer's own row treatment (`.profiles` / `.profile-row`), so a
+   choice made here looks like a choice made there. They only need their box removed. */
 .panel-block .profiles {
   display: grid;
   gap: 0.35rem;
-  margin: 0 0 1.25rem;
+  margin: 0;
   padding: 0;
   border: none;
 }
 
-.panel-block .detail-stats {
-  margin-bottom: 0.75rem;
+/*
+ * The one loud thing on the screen, and the reason the rest is quiet.
+ *
+ * These three figures are how a rider checks the settings above them: "215 W at 10 km/h up 8%"
+ * is falsifiable against experience in a way that "CdA 0.40" is not. So they are given the size
+ * that claim deserves, and the sentence explaining their limits sits underneath in the footnote
+ * size rather than competing.
+ */
+.rider-preview {
+  display: flex;
+  gap: 1.4rem;
+  margin: 0.6rem 0 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.rider-preview div {
+  display: flex;
+  flex-direction: column-reverse; /* value above label, without reordering the markup */
+  min-width: 0;
+}
+
+.rider-preview dd {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.rider-preview dt {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.3;
 }
 
 .switch-row {
   display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: start;
-  gap: 0.7rem;
-  padding: 0.7rem 0.8rem;
-  border-radius: 11px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  margin-bottom: 1.25rem;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 0.9rem;
 }
 
 .switch-row input {
   accent-color: var(--slate-100);
-  width: 1.15rem;
-  height: 1.15rem;
-  margin: 0.15rem 0 0;
+  width: 1.2rem;
+  height: 1.2rem;
+  margin: 0;
+}
+
+/* ── Maps library ─────────────────────────────────────────────────────────────────────
+   The list of regions on this phone. It shares the grouped-row shape above; what it adds is
+   the download state a plain setting never has — a progress bar, a price, a way to stop. */
+
+.maps {
+  margin-bottom: 2.25rem;
+}
+
+.setup-intro {
+  max-width: 46ch;
+  margin: 0 0 1.1rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+/* A queue that outlives this screen has to be visible from every tab of it. Sticky rather
+   than fixed: it belongs to the document, and a rider scrolling the rider settings should
+   still see 400 MB arriving. */
+.setup-queue {
+  position: sticky;
+  top: 3.9rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  background: color-mix(in srgb, var(--good) 16%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.maps-stale {
+  margin: 0 0 1rem;
+}
+
+/* The primary action, and a whole row rather than a button in a toolbar: adding a region is
+   the reason almost anyone opens this screen, and it must not be the thing they look for. */
+.maps-add {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  min-height: 0;
+  padding: 0.8rem 0.85rem;
+  margin: 0 0 0.5rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  text-align: left;
+  font-weight: 400;
+}
+
+.maps-add > span:last-child {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.maps-add strong {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.maps-add .note {
+  margin: 0;
+}
+
+.maps-add-plus {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 999px;
+  background: var(--slate-700);
+  font-size: 1.15rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.setup-empty {
+  display: block;
+  margin: 0;
+  padding: 0.85rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.maps-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  overflow: hidden;
+  list-style: none;
+}
+
+.maps-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  padding: 0.7rem 0.85rem;
+}
+
+.maps-row > .maps-row-actions,
+.maps-row > button {
+  grid-column: 2;
+  justify-self: end;
+}
+
+/* The header of a library row is the whole width — it is the thing you tap to open the row,
+   so a narrow target beside an empty column would be a worse one. */
+.maps-row > .maps-row-button,
+.maps-row > .maps-row-bar,
+.maps-row > .maps-row-advice,
+.maps-row > .maps-row-detail {
+  grid-column: 1 / -1;
+}
+
+.maps-row-main {
+  display: grid;
+  gap: 0.12rem;
+  justify-items: start;
+  text-align: left;
   min-width: 0;
 }
 
-.switch-row > span {
+.maps-row-button {
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-weight: 400;
+}
+
+/* The chevron that says a row opens. Drawn rather than an icon: one glyph, rotating. */
+.maps-row-button::after {
+  content: '';
+  position: absolute;
+  top: 1.25rem;
+  right: 0.9rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid var(--slate-500);
+  border-bottom: 1.5px solid var(--slate-500);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+}
+
+.maps-row-button[aria-expanded='true']::after {
+  transform: rotate(-135deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maps-row-button::after {
+    transition: none;
+  }
+}
+
+.maps-row-note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.maps-row-bar {
+  /* `.picker-bar` is sized for the browse sheet, where it is the only thing moving. In a list
+     of rows a thinner bar reads as progress rather than as a control. */
+  height: 0.3rem;
+}
+
+.maps-row-advice {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.maps-row-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.maps-row-actions button,
+.maps-row > button {
+  min-height: 2.3rem;
+  padding: 0 0.8rem;
+  font-size: 0.8rem;
+}
+
+/* Revealed by the row rather than by a swipe: iOS swipe-to-delete is unreliable inside a
+   scrolling web view, and a destructive action you can reach by accident on a bumpy road is
+   worse than one that takes a deliberate second tap. */
+.maps-row-detail {
   display: grid;
-  gap: 0.2rem;
-  font-size: 0.9rem;
+  gap: 0.55rem;
+  justify-items: start;
+  padding-top: 0.6rem;
+  margin-top: 0.1rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.maps-row-detail .primary {
+  width: 100%;
+  min-height: 2.6rem;
+}
+
+.maps-remove {
+  color: var(--bad);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 40%, transparent);
+}
+
+/* "Where you are", against a region name. Neutral, deliberately: the region colours are a
+   full set already and a seventh hue would have nothing left to separate from. */
+.maps-chip {
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  background: var(--slate-700);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.maps-update-all {
+  width: 100%;
+  margin-top: 0.6rem;
+}
+
+.maps-storage {
+  max-width: 46ch;
+}
+
+.maps-retry {
+  margin-top: 1rem;
+}
+
+.maps-manual-toggle {
+  margin: 0.6rem 0 0 -0.75rem;
+}
+
+.maps-manual {
+  margin-top: 1.75rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--hairline);
+}
+
+/* ── Diagnostics ────────────────────────────────────────────────────────────────────────
+   Key/value rows in a group, like every other list here. The values are machine strings — a
+   build stamp, a worker URL, a byte count — so they get a monospace face and a wrap that
+   breaks anywhere, which is the one place in the app where that is the right treatment. */
+
+.env {
+  display: grid;
+  margin: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  overflow: hidden;
+}
+
+.env > div {
+  position: relative;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0.85rem;
+}
+
+.env dt {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.env dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* A download is the one thing in Setup that is happening rather than sitting there, so it gets
+   the app's only idle animation — one dot, two seconds, and gone the moment the queue empties.
+   Motion here is the signal; a static strip reads as a notice that could be stale. */
+.setup-queue-dot {
+  flex: 0 0 auto;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--good);
+  animation: setup-queue-pulse 2s ease-in-out infinite;
+}
+
+@keyframes setup-queue-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-queue-dot {
+    animation: none;
+  }
 }

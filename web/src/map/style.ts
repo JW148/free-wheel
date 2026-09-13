@@ -2,6 +2,7 @@ import type {
   ExpressionSpecification,
   FillLayerSpecification,
   FilterSpecification,
+  LayerSpecification,
   StyleSpecification,
 } from 'maplibre-gl'
 import { LAND_TIERS, LANDCOVER_KINDS, type LandClass, type LandTier, kindsFor } from './landcover'
@@ -381,335 +382,451 @@ function landLayers(colours: Palette): FillLayerSpecification[] {
   ]
 }
 
-export function basemapStyle(
+/**
+ * Separates a layer's **role** from the archive it draws.
+ *
+ * A phone holds one archive per downloaded region and every one of them is on screen at once,
+ * so `roads` is not a layer — it is a *role* that exists once per archive. The id carries both
+ * (`roads|yorkshire.pmtiles`) because MapLibre ids are flat strings and everything that acts on
+ * a layer generically — the path-mode filter, the incremental insert in `composite.ts` — needs
+ * to recover the role from the id alone.
+ *
+ * `|` rather than `:` because an archive may be a URL. Roles never contain it.
+ */
+export const ARCHIVE_SEPARATOR = '|'
+
+/** The vector source drawing one archive. One per archive, never shared. */
+export function sourceIdFor(archive: string): string {
+  return `basemap${ARCHIVE_SEPARATOR}${archive}`
+}
+
+export function layerIdFor(role: string, archive: string): string {
+  return `${role}${ARCHIVE_SEPARATOR}${archive}`
+}
+
+/** The role half of a layer id. `background` and anything foreign answer as themselves. */
+export function layerRole(id: string): string {
+  const at = id.indexOf(ARCHIVE_SEPARATOR)
+  return at === -1 ? id : id.slice(0, at)
+}
+
+/** The archive half of a layer id, or `null` for a layer that belongs to no archive. */
+export function layerArchive(id: string): string | null {
+  const at = id.indexOf(ARCHIVE_SEPARATOR)
+  return at === -1 ? null : id.slice(at + 1)
+}
+
+/**
+ * Every basemap layer for one archive, in draw order, with plain role ids.
+ *
+ * Split out of {@link basemapStyle} so that one archive's layers can be generated on their own
+ * and spliced into a live map when a download finishes — see `composite.ts`. `background` is
+ * deliberately not here: it is one layer for the whole map, not one per archive.
+ */
+function roleLayers(COLOURS: Palette, paths: PathMode): LayerSpecification[] {
+  return [
+    {
+      id: 'earth',
+      type: 'fill',
+      source: 'basemap',
+      'source-layer': 'earth',
+      filter: POLYGONS_ONLY,
+      paint: { 'fill-color': COLOURS.earth },
+    },
+
+    // ── Land cover ──────────────────────────────────────────────────────────────────────
+    // The whole point of this revision. Ten layers rather than two, because overlapping
+    // landuse polygons carry no draw order of their own.
+    ...landLayers(COLOURS),
+
+    {
+      id: 'water',
+      type: 'fill',
+      source: 'basemap',
+      'source-layer': 'water',
+      filter: POLYGONS_ONLY,
+      paint: { 'fill-color': COLOURS.water },
+    },
+    // Linear water, drawn properly. Filtering the fill layer above would otherwise discard
+    // every canal, stream and narrow river outright — and a canal towpath is one of the
+    // better things to be riding on, so losing them would be a real loss rather than a
+    // cosmetic one.
+    //
+    // These reuse the water *fill* colour rather than a darker stroke of their own. A
+    // dedicated colour was tried and abandoned: at any chroma that made a canal read
+    // clearly it landed ΔE 9.4 from the `fastbike` route line, which is the exact failure
+    // the stroke ceiling exists to prevent. The fill colour still gives a canal ΔE 17.2
+    // against earth — nearly double the 9.4 the shipped style managed.
+    {
+      id: 'water-lines',
+      type: 'line',
+      source: 'basemap',
+      'source-layer': 'water',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: {
+        'line-color': COLOURS.water,
+        // A stream is not a canal is not a river; width by kind keeps a burn from reading
+        // as something you cannot cross.
+        'line-width': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          10,
+          ['match', ['get', 'kind'], 'river', 1.6, 'canal', 1.2, 0.6],
+          16,
+          ['match', ['get', 'kind'], 'river', 7, 'canal', 5, 2.5],
+        ],
+      },
+    },
+    {
+      id: 'buildings',
+      type: 'fill',
+      source: 'basemap',
+      'source-layer': 'buildings',
+      filter: POLYGONS_ONLY,
+      minzoom: 13,
+      paint: { 'fill-color': COLOURS.building },
+    },
+    // Casing under the fill, so roads read as lines rather than a flat wash.
+    {
+      id: 'roads-casing',
+      type: 'line',
+      source: 'basemap',
+      'source-layer': 'roads',
+      filter: NOT_PATHS_OR_RAIL,
+      paint: {
+        'line-color': COLOURS.line.roadCasing,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.2, 16, 8],
+      },
+    },
+    {
+      id: 'roads',
+      type: 'line',
+      source: 'basemap',
+      'source-layer': 'roads',
+      filter: NOT_PATHS_OR_RAIL,
+      paint: {
+        'line-color': [
+          'match',
+          ['get', 'kind'],
+          'highway',
+          COLOURS.line.major,
+          'major_road',
+          COLOURS.line.major,
+          COLOURS.line.road,
+        ],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.6, 16, 6],
+      },
+    },
+    // Railways, which used to be drawn as roads — so a main line looked like a street you
+    // could ride down. Thin and dashed: a railway is a landmark and a barrier, never a way
+    // through.
+    {
+      id: 'rail',
+      type: 'line',
+      source: 'basemap',
+      'source-layer': 'roads',
+      filter: ['==', ['get', 'kind'], 'rail'],
+      minzoom: 11,
+      paint: {
+        'line-color': COLOURS.line.rail,
+        'line-dasharray': [3, 2],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 1.6],
+      },
+    },
+    // Above the roads, so a cycleway running beside a street is not buried under it, and
+    // below the labels, which still have to win.
+    //
+    // One layer rather than one per dash pattern: `line-dasharray` is
+    // `cross-faded-data-driven` in MapLibre 6, so it takes a `match` on the feature. It is
+    // *not* interpolatable, so `step`/`match` only — an `interpolate` here fails validation.
+    //
+    // Dash units are multiples of the line width, not pixels, so these patterns are tuned
+    // for the ~2px widths below and would look quite different at the old 6px.
+    {
+      id: 'paths',
+      type: 'line',
+      source: 'basemap',
+      'source-layer': 'roads',
+      filter: pathFilter(paths),
+      // Below z12 a path is a smear rather than information, and the network is dense
+      // enough that drawing it there costs legibility for nothing. In practice Protomaps
+      // stamps `min_zoom: 14` on cycleways anyway, so almost nothing exists before z14.
+      minzoom: 12,
+      layout: { 'line-cap': 'round' },
+      paint: {
+        'line-color': [
+          'match',
+          ['get', 'kind_detail'],
+          'cycleway',
+          COLOURS.line.pathCycle,
+          ['track', 'path', 'bridleway'],
+          COLOURS.line.pathTrack,
+          COLOURS.line.pathFoot,
+        ],
+        // Roughly a third of the old width. A path is context for the route line, not a
+        // competitor to it.
+        'line-width': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          12,
+          ['match', ['get', 'kind_detail'], 'cycleway', 0.8, 'track', 0.7, 0.6],
+          16,
+          ['match', ['get', 'kind_detail'], 'cycleway', 2.4, ['track', 'path', 'bridleway'], 2, 1.4],
+        ],
+        // `[1, 0]` is solid: `LineAtlas.addRegularDash` splices zero-length ranges out and
+        // then wraps the single remaining range, so the cycleway gets an unbroken line
+        // without needing a layer of its own.
+        'line-dasharray': [
+          'match',
+          ['get', 'kind_detail'],
+          'cycleway',
+          ['literal', [1, 0]],
+          'track',
+          ['literal', [3, 1.5]],
+          'bridleway',
+          ['literal', [2, 2.5]],
+          'steps',
+          ['literal', [0.4, 0.4]],
+          ['footway', 'pedestrian'],
+          ['literal', [0.5, 1.5]],
+          ['literal', [2, 1.5]],
+        ],
+      },
+    },
+    {
+      id: 'boundaries',
+      type: 'line',
+      source: 'basemap',
+      'source-layer': 'boundaries',
+      paint: {
+        'line-color': COLOURS.line.boundary,
+        'line-dasharray': [2, 2],
+        'line-width': 1,
+      },
+    },
+
+    // ── Labels and icons ────────────────────────────────────────────────────────────────
+    // Everything below needs glyphs; the POI layer also needs the sprite. Both are kept in
+    // the style so that a missing asset shows up immediately rather than the first time
+    // someone zooms in far enough to care.
+
+    {
+      id: 'water-labels',
+      type: 'symbol',
+      source: 'basemap',
+      'source-layer': 'water',
+      minzoom: 11,
+      filter: ['has', 'name'],
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-font': REGULAR,
+        'text-size': 11,
+        'text-max-width': 6,
+        'symbol-placement': 'line',
+      },
+      paint: {
+        'text-color': COLOURS.text.labelWater,
+        'text-halo-color': COLOURS.text.halo,
+        'text-halo-width': 1.2,
+      },
+    },
+    {
+      id: 'road-labels',
+      type: 'symbol',
+      source: 'basemap',
+      'source-layer': 'roads',
+      minzoom: 14,
+      filter: ['has', 'name'],
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-font': REGULAR,
+        'text-size': 11,
+        // Along the line, not above it: a street name only reads as a street name when it
+        // follows the street.
+        'symbol-placement': 'line',
+        'text-rotation-alignment': 'map',
+        'symbol-spacing': 300,
+      },
+      paint: {
+        'text-color': COLOURS.text.labelMuted,
+        'text-halo-color': COLOURS.text.halo,
+        'text-halo-width': 1.5,
+      },
+    },
+    {
+      id: 'poi-icons',
+      type: 'symbol',
+      source: 'basemap',
+      'source-layer': 'pois',
+      minzoom: 15,
+      // The sprite sheet does not have an icon for every `kind` in the schema, and MapLibre
+      // warns once per missing image. Restricting to what a cyclist stops for keeps the
+      // console clean and the map uncluttered — and every name here exists in
+      // `public/sprites/light.json`.
+      filter: [
+        'in',
+        ['get', 'kind'],
+        ['literal', [
+          'drinking_water',
+          'cafe',
+          'fast_food',
+          'restaurant',
+          'bench',
+          'toilets',
+          'train_station',
+          'bus_stop',
+          'ferry_terminal',
+          'supermarket',
+          'park',
+          'peak',
+        ]],
+      ],
+      layout: {
+        'icon-image': ['get', 'kind'],
+        'icon-size': 0.8,
+        'text-field': ['get', 'name'],
+        'text-font': REGULAR,
+        'text-size': 10,
+        'text-anchor': 'top',
+        'text-offset': [0, 0.9],
+        'text-optional': true,
+      },
+      paint: {
+        'text-color': COLOURS.text.labelMuted,
+        'text-halo-color': COLOURS.text.halo,
+        'text-halo-width': 1.2,
+      },
+    },
+    {
+      id: 'place-labels',
+      type: 'symbol',
+      source: 'basemap',
+      'source-layer': 'places',
+      // The schema carries the zoom at which each place is *meant* to appear. Honouring it
+      // is what stops every hamlet in the county appearing at z8.
+      filter: ['all', ['has', 'name'], ['>=', ['zoom'], ['get', 'min_zoom']]],
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-font': MEDIUM,
+        // Scaled by settlement kind as well as zoom, so a city does not read as equal in
+        // weight to the neighbourhood next to it.
+        //
+        // `zoom` has to be the input to the *top-level* interpolate — nesting it inside the
+        // `match` is a style validation error, and MapLibre reports it as an `error` event
+        // on the map rather than a thrown exception, so the map simply fails to load.
+        'text-size': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          8,
+          ['match', ['get', 'kind'], 'country', 14, 'region', 12, 'locality', 12, 10],
+          14,
+          ['match', ['get', 'kind'], 'country', 16, 'region', 14, 'locality', 16, 11],
+        ],
+        'text-max-width': 8,
+      },
+      paint: {
+        'text-color': COLOURS.text.label,
+        'text-halo-color': COLOURS.text.halo,
+        'text-halo-width': 1.5,
+      },
+    },
+  ]
+}
+
+/**
+ * The roles, in draw order, as plain strings. `background` first, then everything an archive
+ * contributes.
+ *
+ * This is what `composite.ts` ranks against when it splices a newly downloaded archive into a
+ * map that is already up, and it is derived from {@link roleLayers} rather than written out
+ * again — a hand-maintained second list would be a way for the two orders to disagree, which
+ * is precisely the failure a spliced layer would show as (a region's parks painted over its
+ * neighbour's roads).
+ *
+ * The palette and path mode do not affect which layers exist or their order, so any arguments
+ * will do.
+ */
+export function basemapRoles(): string[] {
+  return ['background', ...roleLayers(PALETTES.dark, 'rideable').map((layer) => layer.id)]
+}
+
+/**
+ * One archive's layers, with their ids and source rewritten to name it.
+ *
+ * Exported for the incremental path in `composite.ts`; {@link basemapStyle} uses it too, so a
+ * layer spliced into a live map and the same layer built at style construction are the same
+ * object by construction rather than by two pieces of code agreeing.
+ */
+export function archiveLayers(
   archive: string,
+  theme: MapTheme = 'dark',
+  paths: PathMode = 'rideable',
+): LayerSpecification[] {
+  const source = sourceIdFor(archive)
+  return roleLayers(PALETTES[theme], paths).map((layer) => ({
+    ...layer,
+    id: layerIdFor(layer.id, archive),
+    // `background` is the one layer type with no source, and it is not in this list.
+    source,
+  })) as LayerSpecification[]
+}
+
+export function archiveSource(archive: string): StyleSpecification['sources'][string] {
+  return {
+    type: 'vector',
+    url: `pmtiles://${archive}`,
+    attribution:
+      '<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap</a>',
+  }
+}
+
+/**
+ * The whole basemap, over however many archives the phone holds.
+ *
+ * ## Why the layers interleave
+ *
+ * The obvious construction — one archive's full stack, then the next archive's — is wrong, and
+ * wrong in a way that looks like a rendering bug rather than an ordering one. The published
+ * regions overlap (Yorkshire reaches north to 54.6, North East England south to 54.0), so in
+ * the shared band two archives both have data. Stacked by archive, North East's *land fills*
+ * would paint over Yorkshire's *roads*, and a rider would see a band across the map where the
+ * streets simply stop.
+ *
+ * So the ordering is by role across all archives: every `earth`, then every land tier, then
+ * every `water`, and so on. Two archives drawing the same road draw it identically, and two
+ * archives labelling the same town collide in MapLibre's symbol placement and only one
+ * survives — which is why the overlap costs nothing once the order is right.
+ *
+ * An empty list is a legitimate argument, and answers a style with nothing but the background.
+ * A phone with no regions yet has to put *something* on screen, and an empty style is more
+ * honest than the last archive that happened to be mounted.
+ */
+export function basemapStyle(
+  archives: string | string[],
   theme: MapTheme = 'dark',
   paths: PathMode = 'rideable',
 ): StyleSpecification {
   const ASSETS = assetsBase()
   const COLOURS = PALETTES[theme]
+  const list = typeof archives === 'string' ? [archives] : archives
+  const perArchive = list.map((archive) => archiveLayers(archive, theme, paths))
+  const roleCount = roleLayers(COLOURS, paths).length
+
+  const layers: LayerSpecification[] = [
+    { id: 'background', type: 'background', paint: { 'background-color': COLOURS.earth } },
+  ]
+  for (let role = 0; role < roleCount; role += 1) {
+    for (const archive of perArchive) layers.push(archive[role])
+  }
+
   return {
     version: 8,
     glyphs: `${ASSETS}fonts/{fontstack}/{range}.pbf`,
     sprite: `${ASSETS}sprites/light`,
-    sources: {
-      basemap: {
-        type: 'vector',
-        url: `pmtiles://${archive}`,
-        attribution:
-          '<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap</a>',
-      },
-    },
-    layers: [
-      { id: 'background', type: 'background', paint: { 'background-color': COLOURS.earth } },
-      {
-        id: 'earth',
-        type: 'fill',
-        source: 'basemap',
-        'source-layer': 'earth',
-        filter: POLYGONS_ONLY,
-        paint: { 'fill-color': COLOURS.earth },
-      },
-
-      // ── Land cover ──────────────────────────────────────────────────────────────────────
-      // The whole point of this revision. Ten layers rather than two, because overlapping
-      // landuse polygons carry no draw order of their own.
-      ...landLayers(COLOURS),
-
-      {
-        id: 'water',
-        type: 'fill',
-        source: 'basemap',
-        'source-layer': 'water',
-        filter: POLYGONS_ONLY,
-        paint: { 'fill-color': COLOURS.water },
-      },
-      // Linear water, drawn properly. Filtering the fill layer above would otherwise discard
-      // every canal, stream and narrow river outright — and a canal towpath is one of the
-      // better things to be riding on, so losing them would be a real loss rather than a
-      // cosmetic one.
-      //
-      // These reuse the water *fill* colour rather than a darker stroke of their own. A
-      // dedicated colour was tried and abandoned: at any chroma that made a canal read
-      // clearly it landed ΔE 9.4 from the `fastbike` route line, which is the exact failure
-      // the stroke ceiling exists to prevent. The fill colour still gives a canal ΔE 17.2
-      // against earth — nearly double the 9.4 the shipped style managed.
-      {
-        id: 'water-lines',
-        type: 'line',
-        source: 'basemap',
-        'source-layer': 'water',
-        filter: ['==', ['geometry-type'], 'LineString'],
-        paint: {
-          'line-color': COLOURS.water,
-          // A stream is not a canal is not a river; width by kind keeps a burn from reading
-          // as something you cannot cross.
-          'line-width': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            10,
-            ['match', ['get', 'kind'], 'river', 1.6, 'canal', 1.2, 0.6],
-            16,
-            ['match', ['get', 'kind'], 'river', 7, 'canal', 5, 2.5],
-          ],
-        },
-      },
-      {
-        id: 'buildings',
-        type: 'fill',
-        source: 'basemap',
-        'source-layer': 'buildings',
-        filter: POLYGONS_ONLY,
-        minzoom: 13,
-        paint: { 'fill-color': COLOURS.building },
-      },
-      // Casing under the fill, so roads read as lines rather than a flat wash.
-      {
-        id: 'roads-casing',
-        type: 'line',
-        source: 'basemap',
-        'source-layer': 'roads',
-        filter: NOT_PATHS_OR_RAIL,
-        paint: {
-          'line-color': COLOURS.line.roadCasing,
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.2, 16, 8],
-        },
-      },
-      {
-        id: 'roads',
-        type: 'line',
-        source: 'basemap',
-        'source-layer': 'roads',
-        filter: NOT_PATHS_OR_RAIL,
-        paint: {
-          'line-color': [
-            'match',
-            ['get', 'kind'],
-            'highway',
-            COLOURS.line.major,
-            'major_road',
-            COLOURS.line.major,
-            COLOURS.line.road,
-          ],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.6, 16, 6],
-        },
-      },
-      // Railways, which used to be drawn as roads — so a main line looked like a street you
-      // could ride down. Thin and dashed: a railway is a landmark and a barrier, never a way
-      // through.
-      {
-        id: 'rail',
-        type: 'line',
-        source: 'basemap',
-        'source-layer': 'roads',
-        filter: ['==', ['get', 'kind'], 'rail'],
-        minzoom: 11,
-        paint: {
-          'line-color': COLOURS.line.rail,
-          'line-dasharray': [3, 2],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 1.6],
-        },
-      },
-      // Above the roads, so a cycleway running beside a street is not buried under it, and
-      // below the labels, which still have to win.
-      //
-      // One layer rather than one per dash pattern: `line-dasharray` is
-      // `cross-faded-data-driven` in MapLibre 6, so it takes a `match` on the feature. It is
-      // *not* interpolatable, so `step`/`match` only — an `interpolate` here fails validation.
-      //
-      // Dash units are multiples of the line width, not pixels, so these patterns are tuned
-      // for the ~2px widths below and would look quite different at the old 6px.
-      {
-        id: 'paths',
-        type: 'line',
-        source: 'basemap',
-        'source-layer': 'roads',
-        filter: pathFilter(paths),
-        // Below z12 a path is a smear rather than information, and the network is dense
-        // enough that drawing it there costs legibility for nothing. In practice Protomaps
-        // stamps `min_zoom: 14` on cycleways anyway, so almost nothing exists before z14.
-        minzoom: 12,
-        layout: { 'line-cap': 'round' },
-        paint: {
-          'line-color': [
-            'match',
-            ['get', 'kind_detail'],
-            'cycleway',
-            COLOURS.line.pathCycle,
-            ['track', 'path', 'bridleway'],
-            COLOURS.line.pathTrack,
-            COLOURS.line.pathFoot,
-          ],
-          // Roughly a third of the old width. A path is context for the route line, not a
-          // competitor to it.
-          'line-width': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            12,
-            ['match', ['get', 'kind_detail'], 'cycleway', 0.8, 'track', 0.7, 0.6],
-            16,
-            ['match', ['get', 'kind_detail'], 'cycleway', 2.4, ['track', 'path', 'bridleway'], 2, 1.4],
-          ],
-          // `[1, 0]` is solid: `LineAtlas.addRegularDash` splices zero-length ranges out and
-          // then wraps the single remaining range, so the cycleway gets an unbroken line
-          // without needing a layer of its own.
-          'line-dasharray': [
-            'match',
-            ['get', 'kind_detail'],
-            'cycleway',
-            ['literal', [1, 0]],
-            'track',
-            ['literal', [3, 1.5]],
-            'bridleway',
-            ['literal', [2, 2.5]],
-            'steps',
-            ['literal', [0.4, 0.4]],
-            ['footway', 'pedestrian'],
-            ['literal', [0.5, 1.5]],
-            ['literal', [2, 1.5]],
-          ],
-        },
-      },
-      {
-        id: 'boundaries',
-        type: 'line',
-        source: 'basemap',
-        'source-layer': 'boundaries',
-        paint: {
-          'line-color': COLOURS.line.boundary,
-          'line-dasharray': [2, 2],
-          'line-width': 1,
-        },
-      },
-
-      // ── Labels and icons ────────────────────────────────────────────────────────────────
-      // Everything below needs glyphs; the POI layer also needs the sprite. Both are kept in
-      // the style so that a missing asset shows up immediately rather than the first time
-      // someone zooms in far enough to care.
-
-      {
-        id: 'water-labels',
-        type: 'symbol',
-        source: 'basemap',
-        'source-layer': 'water',
-        minzoom: 11,
-        filter: ['has', 'name'],
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': REGULAR,
-          'text-size': 11,
-          'text-max-width': 6,
-          'symbol-placement': 'line',
-        },
-        paint: {
-          'text-color': COLOURS.text.labelWater,
-          'text-halo-color': COLOURS.text.halo,
-          'text-halo-width': 1.2,
-        },
-      },
-      {
-        id: 'road-labels',
-        type: 'symbol',
-        source: 'basemap',
-        'source-layer': 'roads',
-        minzoom: 14,
-        filter: ['has', 'name'],
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': REGULAR,
-          'text-size': 11,
-          // Along the line, not above it: a street name only reads as a street name when it
-          // follows the street.
-          'symbol-placement': 'line',
-          'text-rotation-alignment': 'map',
-          'symbol-spacing': 300,
-        },
-        paint: {
-          'text-color': COLOURS.text.labelMuted,
-          'text-halo-color': COLOURS.text.halo,
-          'text-halo-width': 1.5,
-        },
-      },
-      {
-        id: 'poi-icons',
-        type: 'symbol',
-        source: 'basemap',
-        'source-layer': 'pois',
-        minzoom: 15,
-        // The sprite sheet does not have an icon for every `kind` in the schema, and MapLibre
-        // warns once per missing image. Restricting to what a cyclist stops for keeps the
-        // console clean and the map uncluttered — and every name here exists in
-        // `public/sprites/light.json`.
-        filter: [
-          'in',
-          ['get', 'kind'],
-          ['literal', [
-            'drinking_water',
-            'cafe',
-            'fast_food',
-            'restaurant',
-            'bench',
-            'toilets',
-            'train_station',
-            'bus_stop',
-            'ferry_terminal',
-            'supermarket',
-            'park',
-            'peak',
-          ]],
-        ],
-        layout: {
-          'icon-image': ['get', 'kind'],
-          'icon-size': 0.8,
-          'text-field': ['get', 'name'],
-          'text-font': REGULAR,
-          'text-size': 10,
-          'text-anchor': 'top',
-          'text-offset': [0, 0.9],
-          'text-optional': true,
-        },
-        paint: {
-          'text-color': COLOURS.text.labelMuted,
-          'text-halo-color': COLOURS.text.halo,
-          'text-halo-width': 1.2,
-        },
-      },
-      {
-        id: 'place-labels',
-        type: 'symbol',
-        source: 'basemap',
-        'source-layer': 'places',
-        // The schema carries the zoom at which each place is *meant* to appear. Honouring it
-        // is what stops every hamlet in the county appearing at z8.
-        filter: ['all', ['has', 'name'], ['>=', ['zoom'], ['get', 'min_zoom']]],
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': MEDIUM,
-          // Scaled by settlement kind as well as zoom, so a city does not read as equal in
-          // weight to the neighbourhood next to it.
-          //
-          // `zoom` has to be the input to the *top-level* interpolate — nesting it inside the
-          // `match` is a style validation error, and MapLibre reports it as an `error` event
-          // on the map rather than a thrown exception, so the map simply fails to load.
-          'text-size': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            8,
-            ['match', ['get', 'kind'], 'country', 14, 'region', 12, 'locality', 12, 10],
-            14,
-            ['match', ['get', 'kind'], 'country', 16, 'region', 14, 'locality', 16, 11],
-          ],
-          'text-max-width': 8,
-        },
-        paint: {
-          'text-color': COLOURS.text.label,
-          'text-halo-color': COLOURS.text.halo,
-          'text-halo-width': 1.5,
-        },
-      },
-    ],
+    sources: Object.fromEntries(list.map((archive) => [sourceIdFor(archive), archiveSource(archive)])),
+    layers,
   }
 }
