@@ -1,4 +1,6 @@
 /*
+ * The document itself. Colours live in `tokens.css`, which this pulls in first.
+ *
  * `border-box` everywhere, and it is load-bearing.
  *
  * Vite's template ships no reset, so the default `content-box` was in force. That meant
@@ -8,6 +10,9 @@
  * safe area by adjusting padding made it steadily worse, because padding was the thing
  * overflowing.
  */
+
+@import './tokens.css';
+
 *,
 *::before,
 *::after {
@@ -15,40 +20,18 @@
 }
 
 :root {
-  /* A single neutral slate ramp, darkest to lightest. Everything in the UI is drawn from
-     these six; nothing else is a surface or a text colour. Keeping the chrome free of hue is
-     what lets the route line — the only thing that needs to shout — actually shout. */
-  --slate-900: #06141b;
-  --slate-800: #11212d;
-  --slate-700: #253745;
-  --slate-500: #4a5c6a;
-  --slate-300: #9ba8ab;
-  --slate-100: #ccd0cf;
-
-  --bg: var(--slate-900);
-  --surface: var(--slate-800);
-  --raised: var(--slate-700);
-  --text: var(--slate-100);
-  --muted: var(--slate-300);
-  --rule: var(--slate-700);
-  --good: #5a9e63;
-  --bad: #c4707a;
-
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 17px;
   line-height: 1.5;
-  /* `dark` only: the UI does not follow the system, so telling the browser otherwise would
-     make it style form controls and scrollbars for the wrong background. */
-  color-scheme: dark;
-  color: var(--text);
-  background: var(--bg);
+  color: var(--ink);
+  background: var(--page);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--page);
   /* Stops a downward swipe on the map turning into a pull-to-refresh, which in Safari
      would reload the app mid-ride. Safe-area insets are applied by the ride screen and the
      setup overlay themselves, since both are position:fixed. */

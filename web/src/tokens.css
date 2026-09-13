@@ -1,0 +1,187 @@
+/*
+ * Every colour, shadow and radius in the app's chrome, in both themes.
+ *
+ * ## Why one file, and why both themes in it
+ *
+ * The dark theme is not a separate design. It is the same token names carrying different
+ * values, which is the only arrangement in which the two cannot drift: a rule that reads
+ * `background: var(--card)` is correct in both by construction, and a new surface added to one
+ * is impossible to forget in the other. Two files is how a dark theme ends up a season behind
+ * the light one.
+ *
+ * ## Light is the default, and that is a reversal
+ *
+ * The app was dark because it is used outdoors and the map is the thing you look at. The
+ * redesign makes the chrome light — white cards on `#f6f5f1`, ink at `#12212b` — because the
+ * chrome is now *doing* more: route cards you compare, a walkthrough you read, settings with
+ * prose in them. Those are documents, and a document on slate at 17px in sunlight is worse
+ * than a panel on white.
+ *
+ * The dark variant is the mitigation, not an afterthought: riding after sunset with a white
+ * panel over a dark map is a torch pointed at your own face. It is driven by the same control
+ * that repaints the basemap, so the map and the chrome are never one theme apart.
+ *
+ * ## Where these live
+ *
+ * On `:root`, and that is load-bearing rather than a default. vaul portals the route drawer to
+ * `<body>`, so anything scoped to `.ride` — as the translucency tokens once were — is invisible
+ * to the one surface that most needs it.
+ *
+ * The theme is selected by `data-chrome` on `<html>`, set from the same state that picks the
+ * basemap palette. An attribute on the root rather than a class on a wrapper, so a portalled
+ * element is still inside it.
+ */
+
+:root {
+  /*
+   * The slate ramp, kept by name.
+   *
+   * These are the six the app was built on and they remain the dark theme's raw material.
+   * Nothing outside this file should reference them: use the role tokens below, which is what
+   * lets a rule work in both themes.
+   */
+  --slate-900: #06141b;
+  --slate-800: #11212d;
+  --slate-700: #253745;
+  --slate-500: #4a5c6a;
+  --slate-300: #9ba8ab;
+  --slate-100: #ccd0cf;
+
+  /* ── Light: the default ──────────────────────────────────────────────────────────── */
+
+  /** The page behind everything. Warm off-white, not `#fff` — a white page makes a white card invisible. */
+  --page: #f6f5f1;
+  /** A raised surface on the page: a card, a sheet, a list row. */
+  --card: #ffffff;
+  /** A recessed surface *inside* a card: a stat tile, a grouped row's fill. */
+  --inset: #f6f5f1;
+  /** A quiet button's fill on a card. Half a step darker than `--inset`, so the two read apart. */
+  --fill: #f1f0eb;
+  /** A progress track, or a segmented control's trough. */
+  --track: #e7e5de;
+
+  --ink: #12212b;
+  --muted: #5c6b74;
+  --faint: #8a969d;
+  /** Text and icons *on* an ink-filled surface. */
+  --on-ink: #ffffff;
+
+  /** A separator inside a card. Barely there by design: the gap does most of the work. */
+  --hairline: rgb(18 33 43 / 8%);
+  /** A visible edge: an outline button, an unselected chip. */
+  --edge: rgb(18 33 43 / 12%);
+  /** A chip's edge, which needs a little more to survive on white at 1.5px. */
+  --edge-strong: rgb(18 33 43 / 15%);
+
+  --good: #2d7a3a;
+  --good-bg: #e9f0e9;
+  /** The "on" green of a switch, which is a fill rather than text and can afford to be brighter. */
+  --good-fill: #389f48;
+  --bad: #b23a2b;
+  --bad-bg: #fbe9e6;
+
+  /*
+   * Anything drawn over the map.
+   *
+   * Three weights, by content density. `--panel` carries a couple of figures or one line;
+   * `--panel-strong` backs the bar and the drawer, which carry paragraphs, a chart and a list.
+   * `--panel-row` is a surface *inside* a panel, where the panel's own alpha already applies —
+   * so it is flat, not translucent, or the map shows through twice.
+   */
+  --panel: rgb(255 255 255 / 92%);
+  --panel-strong: rgb(255 255 255 / 94%);
+  --panel-row: #f6f5f1;
+  /** The map, dimmed behind an expanded sheet. */
+  --scrim: rgb(18 33 43 / 25%);
+
+  /*
+   * Four shadows, and no fifth.
+   *
+   * The dark app had none — a slate panel separates from a slate map by being lighter. On
+   * white, nothing separates a card from the page except a shadow, so they arrive here as
+   * structure rather than decoration, and a fixed set of four is what stops that becoming a
+   * gradient of arbitrary blurs.
+   */
+  --lift-button: 0 6px 24px rgb(18 33 43 / 12%);
+  --lift-panel: 0 10px 32px rgb(18 33 43 / 16%);
+  --lift-sheet: 0 -10px 32px rgb(18 33 43 / 14%);
+  --lift-row: 0 1px 3px rgb(18 33 43 / 6%);
+
+  /* ── Geometry, which is theme-independent ────────────────────────────────────────── */
+
+  --r-pill: 999px;
+  --r-small: 12px;
+  /** Map buttons, list cards, inset tiles. The app's most common radius. */
+  --radius: 14px;
+  /** Primary buttons and grouped cards. */
+  --r-large: 16px;
+  /** Panels and sheets. */
+  --r-panel: 24px;
+
+  /** The safe bottom: the home indicator, plus the 12px the design keeps above it. */
+  --safe-bottom: calc(max(env(safe-area-inset-bottom), 0px) + 12px);
+
+  /*
+   * The sheet curve.
+   *
+   * iOS's own spring, near enough: fast out of the gate, long settle. Used for the card-to-sheet
+   * expansion and nothing that happens more than once a minute.
+   */
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-sheet: 500ms;
+
+  color-scheme: light;
+}
+
+/* ── Dark ────────────────────────────────────────────────────────────────────────────── */
+
+[data-chrome='dark'] {
+  --page: var(--slate-900);
+  --card: var(--slate-800);
+  --inset: var(--slate-700);
+  --fill: rgb(37 55 69 / 55%);
+  --track: var(--slate-700);
+
+  --ink: var(--slate-100);
+  --muted: var(--slate-300);
+  --faint: var(--slate-500);
+  --on-ink: #0f1e29;
+
+  --hairline: rgb(204 208 207 / 12%);
+  --edge: rgb(204 208 207 / 18%);
+  --edge-strong: rgb(204 208 207 / 25%);
+
+  --good: #5a9e63;
+  --good-bg: rgb(90 158 99 / 18%);
+  --good-fill: #5a9e63;
+  --bad: #c4707a;
+  --bad-bg: rgb(196 112 122 / 18%);
+
+  --panel: rgb(17 33 45 / 72%);
+  --panel-strong: rgb(17 33 45 / 82%);
+  --panel-row: rgb(37 55 69 / 55%);
+  --scrim: rgb(6 20 27 / 45%);
+
+  /* Tuned for white, invisible on slate. These are near-black at higher alpha instead. */
+  --lift-button: 0 6px 24px rgb(6 20 27 / 45%);
+  --lift-panel: 0 10px 32px rgb(6 20 27 / 50%);
+  --lift-sheet: 0 -10px 32px rgb(6 20 27 / 50%);
+  --lift-row: 0 1px 3px rgb(6 20 27 / 35%);
+
+  color-scheme: dark;
+}
+
+/*
+ * The names the app was written against.
+ *
+ * Kept as aliases rather than renamed everywhere at once: a rule that has not been revisited
+ * still lands on the right colour in both themes, so the redesign can move screen by screen
+ * without a window in which half the app is unreadable. New rules use the role tokens above.
+ */
+:root {
+  --bg: var(--page);
+  --surface: var(--card);
+  --raised: var(--inset);
+  --text: var(--ink);
+  --rule: var(--hairline);
+}
