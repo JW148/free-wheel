@@ -43,7 +43,12 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
   src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
                  The navigation kernel — progress, climbs, power, ascent, recording, library,
                  hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
-  src/setup/     Overlay, and the first-run screen: the maps library, the region browser,
+  src/onboarding/ The six-card first run. Pixel glyphs on the icon's own 20x14 grid, written
+                 as character maps rather than images — no licensing, no bytes, nothing to 404
+                 on a cold cache. Its bike question writes to the rider, not to the plan.
+  src/library/   The Saved screen. An overlay over the map like Setup, never a replacement.
+  src/setup/     Overlay, and the settings list that pushes to Maps and Rider: the maps
+                 library, the region browser,
                  the download queue, rider settings and the diagnostics/parity harness.
                  `regionShapes.ts` turns the published bboxes into areas painted onto the map.
   src/engine/    Worker, Comlink client, OPFS VFS and tile store.
@@ -142,7 +147,7 @@ GPX parity true by construction rather than by coincidence.
 
 | Layer | Choice |
 |---|---|
-| UI | React + TypeScript, Vite, `vite-plugin-pwa` |
+| UI | React + TypeScript, Vite, `vite-plugin-pwa`. Light chrome; tokens in `src/tokens.css` |
 | Map | MapLibre GL JS, via [mapcn](https://www.mapcn.dev/) copy-paste components |
 | Basemap data | PMTiles archives in OPFS, read via our own `pmtiles` `Source` (see below) |
 | Routing engine | BRouter Java → TeaVM → WasmGC, with the TeaVM **JS backend as a feature-detected fallback** |
@@ -156,6 +161,80 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 
 ## Conventions and gotchas
 
+- **Every colour, shadow and radius is a role token in `src/tokens.css`, with a value per
+  theme.** `<html data-chrome>` selects between them, from the same state that picks the basemap
+  palette — so the map and the chrome are never one theme apart. The dark theme is not a second
+  design; it is the same names re-mapped onto the slate ramp, which is the only arrangement in
+  which the two cannot drift. Never name a colour directly in a rule. The old names (`--bg`,
+  `--surface`, `--raised`, `--text`, `--rule`) survive as aliases and should not be used in new
+  code. `ride.css` used to redefine four of these in a `:root` block of its own and won a
+  cascade nobody knew was happening; do not reintroduce that.
+- **`chrome.test.ts` is the light theme's net, and it is not `style.test.ts`.** They answer
+  different questions: ΔE-against-the-basemap is "can this be mistaken for a road", contrast
+  ratio is "can this be read". A route line is deliberately far more saturated than anything
+  WCAG has an opinion about, and chrome colours are never added to the ΔE floor. Going light
+  made four slate-era colours fail outright — figures in `docs/phase-11-progress.md`.
+- **A gradient band has to clear 3:1 on white *and* on `#11212d`**, which confines every one to
+  a relative luminance between about 0.14 and 0.30. That window is roughly 2:1, so a band cannot
+  be darkened freely: scaling two of them to the same contrast target lands them on the same
+  luminance and destroys the severity ramp. The scale is read by **hue** at roughly held
+  lightness — the standard cycling convention — so `flat` sitting between `rising` and `steep`
+  by luminance is correct, and a monotonic lightness ramp across all six is an invention neither
+  the design nor the original ever made.
+- **Two taps produce three routes, and `plan.chosen` is still `null` until one is tapped.**
+  Placing the second waypoint routes automatically; there is no Compare button and no tick-list.
+  `profiles.ts` carries both a `label` (the engine's name) and a `plain` name (the rider's), and
+  `DEFAULT_PROFILES` is the three that are offered. The engine name appears only in the detail
+  view's pill, which is the one place it is the useful fact rather than noise.
+- **`COMPARE_CEILING_M` is not `AIR_DISTANCE_CEILING_M`.** 50 km against 150 km, measuring
+  different things: the larger is where *one* route gets uncomfortable, the smaller is where
+  *three* do. Past the smaller, only the rider's own style runs and the other cards offer to
+  compute themselves on a tap. `profilesToRun` is pure and tested at either side of it —
+  including that a **lone profile is never deferred**, which would otherwise leave a rider past
+  the ceiling with no route at all and no obvious way to ask for one.
+- **A run commits each result as it lands, not all of them at the end.** The first card fills in
+  while the second is still computing. Collecting them into one `setRoutes` at the end turns a
+  list assembling itself into a spinner.
+- **The rider's preferred style lives on `RiderSetup`, not on the plan.** A plan is a route and
+  changes every tap; what you ride changes about once a year. It decides which card is suggested
+  first and which single profile the distance guard runs.
+- **A tap on the map always places a waypoint while planning.** The pin toggle is gone: the plan
+  card names every point and gives each an explicit ×, so a stray tap is one tap to undo and
+  visible the moment it happens — where the toggle was a mode you could be in without knowing,
+  which is how a rider ends up tapping a map that has stopped responding. Riding still refuses
+  taps entirely, and *that* guarantee is the one worth keeping.
+- **The map carries two buttons: Layers and Locate.** Anything you set once and never touch again
+  belongs in the Layers sheet, not on the map. The collapse chevron went with the other five
+  buttons — it was a control for a control.
+- **Onboarding has its own storage key, and it is not the maps gate.** `free-wheel.onboarded.v1`
+  answers "has this rider met the app"; the gate answers "does this phone have anything to ride
+  on". A rider who deletes every region to free space must get the second and never the first.
+  Skipping counts as having seen it.
+- **The onboarding glyphs are character maps, not images.** Twenty cells across is the whole
+  budget: a glyph is a silhouette with one accent, and anything more detailed dissolves. Two
+  whole bikes side by side read as a pair of spectacles, which is why that card is two wheels.
+- **Saved and the Setup screens are overlays over the ride screen, never replacements** — the
+  rule Setup has always had, for the reason it has always had it: unmounting the map drops its
+  OPFS handles and its whole tile cache, and loading a route from Saved puts one straight back
+  onto that map.
+- **Ending a ride is a hold, not a tap.** Same argument as the missing text field: the riding
+  screen is used on rough ground in gloves, and a tap is a gesture a pothole can make on the
+  rider's behalf. `HoldButton` must handle `pointercancel` as well as `pointerup`, or a scroll
+  or a system edge gesture leaves the hold running with nothing pressing it.
+- **The finish sheet must never grow a text field**, whatever a design shows. iOS shake-to-undo
+  cannot be refused. The ride saves itself under a generated name; renaming is in Saved.
+- **There is no geocoder and there is not going to be one.** Reverse geocoding is a network
+  service and the whole app is built on not needing one. Where a design shows a place name, the
+  app shows coordinates to four decimal places — about 11 m, enough to tell two taps apart.
+- **`column-reverse` over `<dd>` then `<dt>` puts the *label* on top, not the value.** That is
+  the opposite of what the comment beside it claimed, and it was wrong from phase 4 until phase
+  11. Every figure block is now `<dt>` then `<dd>`: the correct order for a description list,
+  and the one that renders the value above its label under `column-reverse`.
+- **`web/tools/drive.mjs` drives the built app in headless Chrome at a true 390 px.** Not a test
+  — a way to *look* at the thing, in both themes, with a seeded plan and a faked fix. It found
+  both of the two bugs above that no unit test could. It works around the four traps recorded
+  elsewhere in this file: the stale service worker, the missing `requestAnimationFrame`, one app
+  tab at a time, and `--disable-gpu` killing WebGL2.
 - **Bit-identical parity is the regression net.** The Wasm build must produce byte-identical GPX
   to the JVM build for a fixed route corpus. Prefer adding to that corpus over writing new
   bespoke assertions.
@@ -401,13 +480,14 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **Every route is drawn in its profile's colour, including a lone one.** The near-white
   single-route colour was invisible on the daylight map, and keeping the rule uniform means the
   map does not repaint when a second profile is ticked.
-- **Setup is built from the ride screen's tokens, and a setting is a row.** It is the app's one
-  *document* surface, so it is the easy place to drift into browser defaults — which is exactly
+- **Setup is built from the ride screen's tokens, and a setting is a row.** It is one of the
+  app's *document* surfaces — Saved is the other, and both are full screens rather than drawer
+  views — so it is the easy place to drift into browser defaults — which is exactly
   what happened: 17px prose, a `<dl>` with a 9rem label column, bare `<button>`s at a radius
   nothing else uses. The vocabulary is in `App.css`: `.setup-group` holds `.setup-row`s (label
   left, value right, note under), explanation goes *below* a group as `.setup-footer` in the
   muted size, group headers are sentence case, and separation is an inset hairline ring — there
-  are no shadows anywhere in this app.
+  are only the four shadows in `tokens.css`, and there is no fifth.
 - **A class that clears `border` and `background` does not clear `box-shadow`.** `App.css` gives
   every `button` a hairline ring, so `.picker-plain` — which only reset the first two — left
   every quiet text button in Setup outlined and hanging off the left margin. If you add a

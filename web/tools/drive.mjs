@@ -72,7 +72,8 @@ ws.addEventListener('message', (event) => {
   const waiter = pending.get(msg.id)
   if (!waiter) return
   pending.delete(msg.id)
-  msg.error ? waiter.reject(new Error(JSON.stringify(msg.error))) : waiter.resolve(msg.result)
+  if (msg.error) waiter.reject(new Error(JSON.stringify(msg.error)))
+  else waiter.resolve(msg.result)
 })
 
 const send = (method, params = {}) =>
@@ -214,6 +215,37 @@ if (process.env.FW_SEED) {
   await evaluate(`document.querySelector('.drawer-body').scrollTop = 500`)
   await sleep(300)
   await shot('17-route-detail-scrolled')
+
+  /*
+   * Riding.
+   *
+   * Needs a fix, so the permission is granted through CDP and the position overridden — the
+   * route's own first coordinate, so the rider is on the line rather than 400 km off it and
+   * staring at an "off route" banner.
+   */
+  await send('Browser.grantPermissions', { permissions: ['geolocation'] })
+  await send('Emulation.setGeolocationOverride', {
+    latitude: 51.5052,
+    longitude: -0.0864,
+    accuracy: 8,
+  })
+  await click('.drawer-footer .primary')
+  await sleep(3000)
+  await shot('18-riding')
+  await click('.hud-collapse')
+  await sleep(700)
+  await shot('19-riding-folded')
+
+  console.log('dark chrome')
+  await evaluate(`localStorage.setItem('free-wheel.theme.v1', 'dark')`)
+  await send('Page.navigate', { url: BASE })
+  await sleep(2500)
+  await click('.setup-close')
+  await sleep(700)
+  await shot('20-dark-plan')
+  await click('.card-handle')
+  await sleep(800)
+  await shot('21-dark-cards')
   await sleep(1500)
   await shot('16b-detail-settled')
   // Is the smear above the sheet real, or SwiftShader mis-sampling a backdrop filter?
