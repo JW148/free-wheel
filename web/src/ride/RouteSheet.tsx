@@ -62,7 +62,13 @@ export default function RouteSheet({
 
   return (
     <>
-      <div className="sheet-bar panel">
+      {/*
+        The card steps aside while the sheet is up.
+        They are the two states of one surface, so both at once is a contradiction — and the
+        sheet is only 94% opaque, so the card behind it bleeds through as a ghost of itself
+        under the sheet's own buttons.
+      */}
+      <div className="sheet-bar panel" data-hidden={sheet.open ? 'yes' : 'no'}>
         <button
           type="button"
           className="card-handle"
@@ -485,16 +491,16 @@ function RouteDetail({
 
       <dl className="detail-stats">
         <div>
-          <dd>{formatDistance(chosen.distanceM)}</dd>
           <dt>distance</dt>
+          <dd>{formatDistance(chosen.distanceM)}</dd>
         </div>
         <div>
-          <dd>{formatDuration(chosen.timeS)}</dd>
           <dt>moving</dt>
+          <dd>{formatDuration(chosen.timeS)}</dd>
         </div>
         <div>
-          <dd>{Math.round(chosen.ascendM)} m</dd>
           <dt>climbing</dt>
+          <dd>{Math.round(chosen.ascendM)} m</dd>
         </div>
       </dl>
 

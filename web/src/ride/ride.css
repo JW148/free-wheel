@@ -150,41 +150,15 @@
   max-width: 100%;
 }
 
-.stats {
-  display: flex;
-  gap: 1.1rem;
-  margin: 0;
-  padding: 0.5rem 0.9rem;
-}
-
-.stats div {
-  display: flex;
-  flex-direction: column-reverse; /* value above label, without reordering the markup */
-}
-
-.stats dd {
-  margin: 0;
-  font-size: 1.45rem;
-  font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-}
-
-.stats dt {
-  font-size: 0.68rem;
-  color: var(--muted);
-}
-
 /*
- * The one sentence telling the rider what the next tap does.
+ * The three route figures are not up here any more.
  *
- * A pill centred under the status bar rather than a line in a panel at the top left. It is the
- * only text on the map, it changes as the plan changes, and it is the thing a first-time rider
- * reads — so it sits where the eye already is and takes the shape of something transient.
- *
- * `max-width` and the wrap are not decoration: a routing failure is reported through this same
- * element and its sentences are long.
+ * `.stats` was a panel in the top-left carrying distance, moving time and climbing for whatever
+ * route was chosen. They belong on the route cards — that is where the choice between three
+ * routes is made, and a rail repeating them over the map was the same three numbers twice, one
+ * copy of which sat on top of the road the rider was reading.
  */
+
 .rail-hint {
   margin: 0 auto;
   padding: 0.65rem 1.05rem;
@@ -752,6 +726,20 @@
   flex-direction: column;
   padding: 0.5rem 1rem 1rem;
   background: var(--panel-strong);
+  transition: opacity 200ms ease;
+}
+
+/* `visibility` as well as `opacity`, so the hidden card is out of the tab order rather than an
+   invisible copy of itself under the sheet. */
+.sheet-bar[data-hidden='yes'] {
+  opacity: 0;
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-bar {
+    transition: none;
+  }
 }
 
 /* The grab handle. Also the affordance for the expansion — it and the Details row are the two
@@ -760,6 +748,10 @@
   flex: none;
   width: 36px;
   height: 5px;
+  /* The element rule in `App.css` gives every button 2.75rem of height so a control is a
+     thumb-sized target. A grab handle is not a control with a label — its target is the whole
+     card above it — and without this reset it renders as a 44px grey slab. */
+  min-height: 0;
   margin: 0 auto 0.85rem;
   border-radius: 3px;
   border: none;
@@ -1079,11 +1071,13 @@
   letter-spacing: -0.01em;
 }
 
+/* `--fill` rather than `--inset`, which is the same colour as the page: on a screen rather
+   than in the drawer, an `--inset` block is invisible and the sentence reads as loose prose. */
 .warn {
   margin: 0;
   padding: 0.65rem 0.8rem;
   border-radius: var(--r-small);
-  background: var(--inset);
+  background: var(--fill);
   color: var(--muted);
   font-size: 0.83rem;
   line-height: 1.5;
@@ -1381,6 +1375,7 @@
     .route-card-details,
     .route-more,
     .drawer-back,
+    .setup-row,
     .legend-item,
     .segment,
     .plan-point-remove
@@ -1594,6 +1589,8 @@
  * An engaged chip inverts, exactly like `.icon-button[data-active]` — with no accent hue
  * anywhere in this app, contrast is the only honest way to say "this one".
  */
+/* Three equal thirds, not three widths set by their labels: the control is read as one object
+   with a position in it, and "Planned" being wider than "All" makes the position meaningless. */
 .segmented {
   display: flex;
   gap: 2px;
@@ -1607,6 +1604,7 @@
    0-1-1 loses to it however late it appears in the file, and the chips came out as three
    ordinary drawer buttons in a rounded box. */
 .segment {
+  flex: 1;
   min-height: 2.3rem;
   padding: 0 0.7rem;
   border: none;

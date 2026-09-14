@@ -60,12 +60,22 @@ export const POSITIONS = [
  * The range here is nearly four to one, and unlike drag it applies at every speed — which is
  * why a knobbly tyre feels slow even freewheeling. Figures are for a typical tyre of each kind
  * on tarmac at sensible pressure; off tarmac they all get worse and none of this is precise.
+ *
+ * `chip` is the same thing said short enough to sit on a pill. `label · note` runs to 24
+ * characters, which wraps every chip onto a row of its own and turns a row of four into a
+ * column of four — a list, which is the shape this was chosen *not* to be.
  */
 export const TYRES = [
-  { id: 'road', label: 'Road', note: 'Slick, 25–32 mm', crr: 0.005 },
-  { id: 'allroad', label: 'All-road', note: 'Light tread, 32–40 mm', crr: 0.0075 },
-  { id: 'gravel', label: 'Gravel', note: 'Knobbly, 40 mm and up', crr: 0.011 },
-  { id: 'mtb', label: 'Mountain bike', note: 'Big and soft', crr: 0.016 },
+  { id: 'road', label: 'Road', note: 'Slick, 25–32 mm', chip: 'Road · 25–32 mm', crr: 0.005 },
+  {
+    id: 'allroad',
+    label: 'All-road',
+    note: 'Light tread, 32–40 mm',
+    chip: 'All-road · 32–40',
+    crr: 0.0075,
+  },
+  { id: 'gravel', label: 'Gravel', note: 'Knobbly, 40 mm and up', chip: 'Gravel · 40+', crr: 0.011 },
+  { id: 'mtb', label: 'Mountain bike', note: 'Big and soft', chip: 'Mountain bike', crr: 0.016 },
 ] as const
 
 export type PositionId = (typeof POSITIONS)[number]['id']

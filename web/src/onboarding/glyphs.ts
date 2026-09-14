@@ -118,21 +118,29 @@ export const GLYPH_SOURCE = {
     '.a##a...............',
     '..aa................',
   ],
-  /** Two bikes side by side — what are you riding. */
+  /**
+   * Two wheels, one slick and one knobbly — what are you riding.
+   *
+   * This was two whole bikes side by side and it read as a pair of spectacles: at twenty cells
+   * across, two frames is about six pixels of bike each and the wheels merge into lenses. Two
+   * wheels is the same question asked with the detail that survives the grid, and the amber is
+   * spent on the one thing that distinguishes them — the tread, which is also the setting this
+   * card actually changes.
+   */
   bikes: [
     '',
-    '....##.......##.....',
-    '....#.........#.....',
-    '...oooo.....oooo....',
-    '..o....o###o....o...',
-    '..o....o#.#o....o...',
-    '..o....#o..o....o...',
-    '..o...o.o..o....o...',
-    '...oooo..oooo.......',
     '',
-    '.....a...........a..',
-    '....aaa.........aaa.',
-    '.....a...........a..',
+    '',
+    '.............a.a....',
+    '...###.......###....',
+    '..#...#.....#...#...',
+    '.#.....#..a#.....#a.',
+    '.#.....#...#.....#..',
+    '.#.....#..a#.....#a.',
+    '..#...#.....#...#...',
+    '...###.......###....',
+    '.............a.a....',
+    '',
     '',
   ],
   /** A hill with a marker at the top — follow it on the road. */

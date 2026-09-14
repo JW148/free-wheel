@@ -21,7 +21,6 @@ import {
   setRoutes,
   setTravelled,
 } from './routeLayers'
-import { formatDistance, formatDuration } from './gpx'
 import { formatAway } from './format'
 import RouteSheet from './RouteSheet'
 import LayersSheet from './LayersSheet'
@@ -689,7 +688,6 @@ export default function RideView({
   ]
 
   const problem = plan.error ?? mapError ?? fixError ?? workerProblem
-  const route = plan.route
   /** How many routes are on the map. More than one, with none chosen, is the decision state. */
   const routeCount = Object.keys(plan.routes).length
 
@@ -774,23 +772,16 @@ export default function RideView({
       <div ref={container} className="ride-map" />
 
       <div className="ride-chrome">
+        {/*
+          One sentence, and only when there is something to say.
+
+          The three route figures used to live up here as a permanent rail. They are on the
+          route cards now, where they are what the choice is actually made on — and a rail
+          repeating them over the map was the same numbers twice, one copy of which was covering
+          the road the rider was looking at.
+        */}
         <div className="rail">
-          {route ? (
-            <dl className="stats panel">
-              <div>
-                <dd>{formatDistance(route.distanceM)}</dd>
-                <dt>distance</dt>
-              </div>
-              <div>
-                <dd>{formatDuration(route.timeS)}</dd>
-                <dt>moving</dt>
-              </div>
-              <div>
-                <dd>{Math.round(route.ascendM)} m</dd>
-                <dt>climbing</dt>
-              </div>
-            </dl>
-          ) : mapStatus === 'no-basemap' ? (
+          {mapStatus === 'no-basemap' ? (
             /* The one state where the routing hints below are nonsense: there is no map to
                tap. It is reachable by choice — "carry on without a region" — so it has to
                explain itself rather than looking like a failed load. */

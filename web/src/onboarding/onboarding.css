@@ -175,14 +175,20 @@
   color: var(--on-ink);
 }
 
+/* The dot marks the *first* line, not the middle of the paragraph: centred, it floats beside
+   nothing on a two-line sentence and reads as a stray bullet. */
 .onboarding-reassure {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 0.6rem;
+  margin: 0;
   font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .onboarding-dot {
+  align-self: center;
   flex: none;
   width: 8px;
   height: 8px;

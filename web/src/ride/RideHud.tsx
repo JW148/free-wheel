@@ -258,7 +258,6 @@ function Figure({
 }) {
   return (
     <div>
-      <dd>{value}</dd>
       <dt>
         {unit}
         {/* A tilde, not the word "estimated": the label has room for four characters and the
@@ -266,6 +265,7 @@ function Figure({
             explanation is in the rider settings, where there is room for it. */}
         {estimate && <span className="hud-estimate" aria-label="estimated"> ~</span>}
       </dt>
+      <dd>{value}</dd>
     </div>
   )
 }

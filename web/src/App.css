@@ -149,76 +149,75 @@ code {
   color: var(--text);
 }
 
-/* ── Tabs, as one control ───────────────────────────────────────────────────────────────
-   Three separate outlined buttons read as three things to decide between. A single track with
-   a sliding indicator reads as one control with a current position, which is what it is. */
+/* ── Choosing one of four ─────────────────────────────────────────────────────────────
+   Two shapes, because they are not the same kind of choice. A riding position needs its note
+   to be chooseable at all — nobody knows what "on the hoods" costs in watts — so it is a card
+   with two lines. A tyre is named by the thing itself, so it is a chip. */
 
-.setup-tabs {
-  position: sticky;
-  top: 3.55rem;
-  z-index: 2;
+.option-grid {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  margin: 0.7rem 1rem 0;
-  padding: 0.22rem;
-  border-radius: 12px;
-  /* The track is recessed and the indicator is raised, matching the drawer where a selected
-     row is *lighter* than the rest. The reverse — a dark indicator in a light track — reads as
-     the selected tab being the one switched off. */
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.option-card {
+  display: grid;
+  gap: 0.15rem;
+  min-height: 0;
+  padding: 0.75rem 0.85rem;
+  border: 2px solid var(--hairline);
+  border-radius: var(--radius);
   background: var(--card);
-  box-shadow:
-    inset 0 0 0 1px var(--hairline),
-    0 0 0 0.7rem var(--bg);
+  color: var(--ink);
+  text-align: left;
 }
 
-/* The indicator, positioned from `--tab` (the selected index) set on the element by React.
-   One moving element rather than three changing backgrounds: the movement is the thing that
-   says the tabs are a single axis. */
-.setup-tabs::before {
-  content: '';
-  position: absolute;
-  z-index: 0;
-  top: 0.22rem;
-  bottom: 0.22rem;
-  left: 0.22rem;
-  width: calc((100% - 0.44rem) / var(--tab-count, 3));
-  border-radius: 10px;
-  background: var(--inset);
-  transform: translateX(calc(var(--tab, 0) * 100%));
-  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+.option-card[data-selected='yes'] {
+  border-color: var(--ink);
 }
 
-.setup-tabs button {
-  position: relative;
-  z-index: 1;
-  min-height: 2.4rem;
-  padding: 0 0.5rem;
-  border: none;
-  border-radius: 10px;
-  background: none;
-  box-shadow: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.88rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color 0.18s ease;
-}
-
-.setup-tabs button[data-selected='yes'] {
-  color: var(--text);
+.option-label {
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .setup-tabs::before,
-  .setup-tabs button {
-    transition: none;
-  }
+.option-note {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--muted);
 }
 
-/* ── Grouped rows ───────────────────────────────────────────────────────────────────── */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* A quiet line of text with a button in it, for the one door that should be hard to find.
+   `.linklike` resets the element rule's fill *and* its ring — a class that clears `background`
+   and `border` does not clear `box-shadow`, which is how every quiet button in Setup once ended
+   up outlined and hanging off the left margin. */
+.setup-quiet {
+  margin: 1.5rem 0 0;
+  color: var(--faint);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.linklike {
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ── Grouped rows ──/* ── Grouped rows ───────────────────────────────────────────────────────────────────── */
 
 .setup-group {
   display: grid;
@@ -501,15 +500,25 @@ td button {
  * that claim deserves, and the sentence explaining their limits sits underneath in the footnote
  * size rather than competing.
  */
+/*
+ * What the settings add up to, as the design's ink card.
+ *
+ * The only inverted surface on any document screen, and that is the point: these three figures
+ * are the one thing here worth *looking at* rather than reading, because they are how a rider
+ * tells whether the four settings above them are right. Somebody who knows they hold about
+ * 200 W on a climb can check the model against their own legs in a glance.
+ */
 .rider-preview {
-  display: flex;
-  gap: 1.4rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
   margin: 0.6rem 0 0;
-  padding: 0.85rem 0.95rem;
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  padding: 1rem;
+  border-radius: var(--r-large);
+  background: var(--ink);
+  color: var(--on-ink);
 }
+
 
 .rider-preview div {
   display: flex;
@@ -519,14 +528,16 @@ td button {
 
 .rider-preview dd {
   margin: 0;
-  font-size: 1.45rem;
-  font-weight: 600;
+  font-size: 1.4rem;
+  font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.025em;
 }
 
+/* Muted *against the ink card*, not against the page: `--muted` is tuned for the light
+   surface and lands at about 2:1 on this one. */
 .rider-preview dt {
-  color: var(--muted);
+  color: color-mix(in srgb, var(--on-ink) 65%, transparent);
   font-size: 0.7rem;
   line-height: 1.3;
 }

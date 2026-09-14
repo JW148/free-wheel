@@ -263,16 +263,16 @@ function EntryDetail({
       ) : (
         <dl className="detail-stats">
           <div>
-            <dd>{formatDistance(entry.distanceM)}</dd>
             <dt>distance</dt>
+            <dd>{formatDistance(entry.distanceM)}</dd>
           </div>
           <div>
-            <dd>{entry.timeS !== null ? formatDuration(entry.timeS) : '—'}</dd>
             <dt>moving</dt>
+            <dd>{entry.timeS !== null ? formatDuration(entry.timeS) : '—'}</dd>
           </div>
           <div>
-            <dd>{Math.round(entry.ascentM)} m</dd>
             <dt>climbing</dt>
+            <dd>{Math.round(entry.ascentM)} m</dd>
           </div>
         </dl>
       )}
