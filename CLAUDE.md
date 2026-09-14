@@ -466,6 +466,26 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   `routeAt` is skipped entirely — a bump in the road must not throw the drawer over the map.
 - **The `--panel*` translucency tokens live on `:root`, not `.ride`.** vaul portals the drawer
   to `<body>`, so anything scoped to the ride screen is invisible to it.
+- **A pinned drawer footer is a sibling of the scroller, never `position: sticky` inside it.**
+  Sticky cannot be pushed outside its containing block, and that block ends at the scroller's
+  bottom padding — the home indicator's clearance. `Start ride` pinned itself `--safe-bottom`
+  above the true bottom and the climb list scrolled through the strip beneath it; the negative
+  bottom margin written to bleed past that edge was ignored by the clamp. It hides at a desk,
+  where `env(safe-area-inset-bottom)` is 0 and the leak is 12 px rather than 46. `.drawer` is a
+  flex column, so the footer just goes after `.drawer-body` — and then it needs no background,
+  because nothing scrolls behind it.
+- **Nothing may be positioned above the bottom bar by a constant, because there is no
+  constant.** The plan card is an invitation, two coordinates or a routed summary, and the
+  riding bar is one line or two. The OSM attribution — a licence requirement, so it has to be
+  visible — sat across the route's own name for exactly this reason: `5.7rem` reserved against
+  a card that measures 164 px. Whichever bar is up carries `data-bottom-bar`,
+  `useBottomBarHeight` measures it and publishes `--bar-height`. Same argument as the HUD's
+  measured height.
+- **Setup must be reachable with a plan on the map.** Its only door used to be the plan card's
+  shortcuts, which are the card's *empty* state — so placing one waypoint shut the rider out of
+  the regions, the rider settings and diagnostics until they cleared the plan. It is a row at
+  the foot of the Layers sheet as well now. That sheet is the ride screen's surface for things
+  you set rather than things you do, and it is behind a button that never leaves the map.
 - **Route colours are chosen on chroma, not hue.** Every *stroke* in both basemap palettes is
   C ≤ 15.4, so a route line at C ≥ 45 cannot read as map furniture whatever its hue — that one
   constraint is what separates a line from the map. The old muted palette failed it: `shortest`

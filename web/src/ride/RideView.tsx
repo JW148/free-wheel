@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Marker, type MapMouseEvent } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
@@ -675,7 +675,9 @@ export default function RideView({
     {
       key: 'layers',
       icon: <LayersIcon />,
-      label: 'Map layers and daylight',
+      // Names the sheet, not just its first group: Setup is behind this button too, and it is
+      // the only way in once a plan is on the map.
+      label: 'Map layers, daylight and setup',
       active: layersOpen,
       onClick: ifLive(() => setLayersOpen(true)),
     },
@@ -691,6 +693,8 @@ export default function RideView({
   /** How many routes are on the map. More than one, with none chosen, is the decision state. */
   const routeCount = Object.keys(plan.routes).length
 
+  const bar = useBottomBarHeight(riding)
+
   const summary = telemetry.finished && telemetry.finishedRecord && (
     <RideSummarySheet
       summary={telemetry.finished}
@@ -701,9 +705,9 @@ export default function RideView({
 
   if (riding) {
     return (
-      <div className="ride" data-riding="yes">
+      <div className="ride" data-riding="yes" style={bar.style}>
         <div ref={container} className="ride-map" />
-        <div className="ride-chrome">
+        <div ref={bar.chrome} className="ride-chrome">
           <RideHud
             telemetry={telemetry}
             expanded={hudExpanded}
@@ -768,10 +772,10 @@ export default function RideView({
   }
 
   return (
-    <div className="ride">
+    <div className="ride" style={bar.style}>
       <div ref={container} className="ride-map" />
 
-      <div className="ride-chrome">
+      <div ref={bar.chrome} className="ride-chrome">
         {/*
           One sentence, and only when there is something to say.
 
@@ -848,6 +852,7 @@ export default function RideView({
       <LayersSheet
         open={layersOpen}
         onOpenChange={setLayersOpen}
+        onOpenSetup={onOpenSetup}
         theme={theme}
         onTheme={(next) => {
           if (!suspended) setTheme(next)
@@ -882,6 +887,43 @@ export default function RideView({
       {summary}
     </div>
   )
+}
+
+/**
+ * How tall the bar along the foot of the screen is, published to CSS as `--bar-height`.
+ *
+ * It exists for one thing: the OSM attribution. That is a licence requirement rather than
+ * decoration, so it has to be visible — and the only corner nothing else claims is the bottom
+ * left, where the bar now reaches. A constant offset cannot work, because there is no constant
+ * to pick: the plan card is an invitation, a pair of coordinates or a route with a Start
+ * button, the riding bar is one line or two, and each is a different height. So it is measured,
+ * for the same reason the HUD's is.
+ *
+ * Whichever bar is on screen carries `data-bottom-bar`; the query re-runs when the screen
+ * changes, and a `ResizeObserver` covers the card changing its mind in place.
+ */
+function useBottomBarHeight(riding: boolean) {
+  const chrome = useRef<HTMLDivElement | null>(null)
+  const [height, setHeight] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    const element = chrome.current?.querySelector('[data-bottom-bar]')
+    if (!element) return
+    const measure = () => setHeight(element.getBoundingClientRect().height)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [riding])
+
+  // Left unset until it is known, so the stylesheet's own fallback is what applies rather than
+  // a zero that would drop the credit under the bar for a frame.
+  const style = (height === null ? undefined : { '--bar-height': `${height}px` }) as
+    | React.CSSProperties
+    | undefined
+
+  return { chrome, style }
 }
 
 /**

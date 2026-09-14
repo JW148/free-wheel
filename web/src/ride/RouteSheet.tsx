@@ -59,6 +59,7 @@ export default function RouteSheet({
   const routeIds = Object.keys(plan.routes)
   const routed = routeIds.length > 0
   const chosen = plan.route
+  const detail = sheet.view === 'detail' && chosen !== null && plan.chosen !== null
 
   return (
     <>
@@ -68,7 +69,9 @@ export default function RouteSheet({
         sheet is only 94% opaque, so the card behind it bleeds through as a ghost of itself
         under the sheet's own buttons.
       */}
-      <div className="sheet-bar panel" data-hidden={sheet.open ? 'yes' : 'no'}>
+      {/* `data-bottom-bar` is measured by the ride screen, so the map credit sits clear of
+          whichever bar is on screen — this card's height changes with what it has to say. */}
+      <div className="sheet-bar panel" data-hidden={sheet.open ? 'yes' : 'no'} data-bottom-bar="">
         <button
           type="button"
           className="card-handle"
@@ -91,12 +94,29 @@ export default function RouteSheet({
           <Drawer.Content className="drawer" aria-describedby={undefined}>
             <Drawer.Handle className="drawer-handle" />
             <div className="drawer-body">
-              {sheet.view === 'detail' && chosen && plan.chosen ? (
-                <RouteDetail plan={plan} sheet={sheet} onStart={onStart} onSaved={onSaved} />
+              {detail ? (
+                <RouteDetail plan={plan} sheet={sheet} onSaved={onSaved} />
               ) : (
                 <RouteChoice plan={plan} sheet={sheet} onStart={onStart} />
               )}
             </div>
+            {/*
+              Start ride is a sibling of the scroller, not the last thing inside it.
+
+              It was a `position: sticky` child, and sticky cannot be pushed outside its
+              containing block — which ends at the scroller's own bottom padding, the home
+              indicator's clearance. So the button pinned itself `--safe-bottom` short of the
+              bottom and the climb list scrolled through the strip underneath it, in full view.
+              Out here it is laid out by the drawer's flex column instead: it cannot be
+              overlapped because nothing scrolls behind it.
+            */}
+            {detail && (
+              <div className="drawer-footer">
+                <button type="button" className="primary" onClick={onStart}>
+                  Start ride
+                </button>
+              </div>
+            )}
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
@@ -426,12 +446,10 @@ function RouteCard({
 function RouteDetail({
   plan,
   sheet,
-  onStart,
   onSaved,
 }: {
   plan: Plan
   sheet: RouteSheetState
-  onStart: () => void
   onSaved: () => void
 }) {
   const chosen = plan.route!
@@ -547,12 +565,6 @@ function RouteDetail({
       )}
 
       <Waypoints plan={plan} />
-
-      <div className="drawer-footer">
-        <button type="button" className="primary" onClick={onStart}>
-          Start ride
-        </button>
-      </div>
     </>
   )
 }

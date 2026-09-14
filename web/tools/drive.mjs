@@ -173,7 +173,7 @@ await click('.screen-back')
 await sleep(500)
 
 console.log('Layers')
-await click('[aria-label="Map layers and daylight"]')
+await click('[aria-label="Map layers, daylight and setup"]')
 await sleep(700)
 await shot('12-layers')
 await evaluate(`document.querySelector('.drawer-overlay')?.click()`)

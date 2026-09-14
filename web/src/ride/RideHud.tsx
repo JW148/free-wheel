@@ -188,7 +188,7 @@ export default function RideHud({
         running them together meant "±5 m" sat in the middle of a distance and a climb. Ending
         is a hold — see `HoldButton` — because a tap is a gesture a pothole can make.
       */}
-      <div className="ride-status panel">
+      <div className="ride-status panel" data-bottom-bar="">
         <span className="ride-status-text">
           {record ? (
             <>

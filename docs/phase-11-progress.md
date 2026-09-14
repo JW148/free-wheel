@@ -119,6 +119,55 @@ the service worker serving the previous build, a headless tab never firing `requ
 (which MapLibre's style loader awaits, so the map silently never loads), one app tab at a time
 because OPFS allows one sync handle per file, and `--disable-gpu` killing WebGL2 outright.
 
+## What the phone found that the browser could not
+
+Three things, from the first run on a real iPhone in standalone. All three are fixed; each is
+here because the desk could not have shown it.
+
+### The pinned Start ride was not pinned
+
+`.drawer-footer` was a `position: sticky` child of the scrolling drawer body. Sticky cannot be
+pushed outside its **containing block**, and the containing block ends at the scroller's own
+bottom padding — `--safe-bottom`, the home indicator's clearance. So the button stuck itself
+that far above the true bottom, and the climb list scrolled through the strip underneath it in
+plain view. A `margin-bottom: calc(var(--safe-bottom) * -1)` had been written to bleed past that
+edge; the clamp ignores margins and it never did anything.
+
+It is invisible at a desk because `env(safe-area-inset-bottom)` is 0 in a browser, which makes
+`--safe-bottom` 12 px and the leak a hairline. On the phone the inset is 34 px, so the strip is
+46 px and a whole row of buttons scrolls through it.
+
+The footer is now a **sibling of the scroller**, laid out by the drawer's own flex column.
+Nothing scrolls behind it, so it needs no background to hide what does — and the body drops its
+bottom padding when a footer follows it, via `.drawer:has(.drawer-footer)`.
+
+### The map credit sat on the plan card
+
+The OSM attribution is a licence requirement, and it was positioned bottom-left at a constant
+`5.7rem` above the safe inset, with a second constant for riding. Both were guesses and both
+were wrong: the plan card measures **164 px** once a route is chosen, so the credit landed
+across the route's own name.
+
+No constant could have been right. The card is an invitation, a pair of coordinates or a routed
+summary with a Start button, and the riding bar is one line or two — four heights, and the card
+changes between them under the rider's thumb. So `useBottomBarHeight` measures whichever bar is
+on screen (they carry `data-bottom-bar`) and publishes `--bar-height`; the stylesheet's constant
+survives only as the value before the first measurement. Same argument as the HUD's measured
+height, and the second time this app has reached for it.
+
+### There was no way to Setup with a plan on the map
+
+Setup was reachable from the plan card's shortcuts and from nowhere else, and those shortcuts
+are the card's *empty* state. Place one waypoint and the only door to the regions, the rider and
+the diagnostics closes — for as long as there is a plan. The rider who most needs to download a
+region is the one part-way through planning a route into a region they do not have.
+
+It is a row at the foot of the Layers sheet now, below the note that closes the map group, with
+the chevron Setup's own menu rows use. That sheet is behind one of the two buttons that never
+leave the map and is already the surface for things you set rather than things you do; the
+button's label widened to match. The plan card keeps its shortcut — it is still the fastest way
+in from a cold start.
+
 ## The contrast measurements
 
 `src/chrome.test.ts` is new. The dark app never needed it — a light-grey label on near-black

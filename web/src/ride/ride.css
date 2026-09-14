@@ -1046,10 +1046,17 @@
 .drawer-body {
   display: grid;
   gap: 1.1rem;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0.6rem 1rem var(--safe-bottom);
   -webkit-overflow-scrolling: touch;
+}
+
+/* The footer below carries the home indicator's clearance instead, and the body's own copy of
+   it would only open a gap above the hairline. */
+.drawer:has(.drawer-footer) .drawer-body {
+  padding-bottom: 0.4rem;
 }
 
 .drawer-head {
@@ -1477,17 +1484,21 @@
 /*
  * Start ride, pinned.
  *
- * It sits in the same place on the expanded sheet as it does on the card, so the thumb does
- * not have to move when the sheet grows. Sticky rather than fixed: the drawer body is what
- * scrolls, and a fixed footer inside a portalled, dragged element fights the drag.
+ * It sits in the same place on the expanded sheet as it does on the card, so the thumb does not
+ * have to move when the sheet grows.
+ *
+ * A sibling of the scroller rather than a `position: sticky` child of it. Sticky cannot be
+ * pushed outside its containing block, and the containing block ended at the scroller's own
+ * bottom padding — the home indicator's clearance — so the button pinned itself `--safe-bottom`
+ * above the true bottom and the list scrolled visibly through the strip beneath it. The
+ * negative bottom margin was an attempt to bleed past that edge and the clamp simply ignored
+ * it. Out here the drawer's flex column places it, nothing scrolls behind it, and it needs no
+ * background of its own to hide what does.
  */
 .drawer-footer {
-  position: sticky;
-  bottom: 0;
-  margin: 0.4rem -1rem calc(var(--safe-bottom) * -1);
+  flex: none;
   padding: 0.7rem 1rem var(--safe-bottom);
   border-top: 1px solid var(--hairline);
-  background: var(--panel-strong);
 }
 
 .drawer-footer .primary {
@@ -2275,15 +2286,17 @@
  * bottom-right corner, where the control column and the action bar both live. Moving it up to
  * clear the bar only landed it on the follow button instead. It is added to the bottom-*left*
  * in `useMapLibre` and repainted here; that side is empty by design.
+ *
+ * It clears the bar by measurement rather than by a guess. The two constants that used to be
+ * here were guesses, and both were wrong: the plan card is 164px tall once a route is chosen,
+ * against the 91px this reserved, so the credit sat across the route's own name. There is no
+ * constant that could have been right — the card is an invitation, two coordinates or a routed
+ * summary, and each is a different height. `useBottomBarHeight` in `RideView` measures whatever
+ * bar is up and publishes it here. The fallback only applies before the first measurement.
  */
 .maplibregl-ctrl-bottom-left {
-  bottom: calc(env(safe-area-inset-bottom) + 5.7rem);
+  bottom: calc(var(--safe-bottom) + var(--bar-height, 5.7rem) + 0.5rem);
   left: max(env(safe-area-inset-left), 0.7rem);
-}
-
-.ride[data-riding='yes'] .maplibregl-ctrl-bottom-left {
-  /* Nothing but the status strip down there while riding, which is shorter. */
-  bottom: calc(env(safe-area-inset-bottom) + 4.5rem);
 }
 
 /* The top-right corner, which on this screen nothing else claims. Attribution is a licence
