@@ -32,11 +32,31 @@ export interface GradeBand {
   colour: string
 }
 
+/*
+ * Darkened where the light chrome needed it, and no further.
+ *
+ * These six were chosen against a slate panel, where the only constraint was "do not disappear
+ * into the dark". The panel is white on the light theme, so the constraint now runs both ways
+ * at once and the window is narrow: a bar has to clear 3:1 against `#ffffff` *and* against
+ * `#11212d`, which confines every band to a relative luminance between about 0.14 and 0.30.
+ *
+ * Four of the six were already inside it. `rising` and `steep` were not — 2.27:1 and 2.84:1 on
+ * white, a pale amber bar on a white card glanced at for under a second at 25 km/h in daylight
+ * — and `downhill` had no headroom. Those three were pulled down to a target luminance with
+ * their hue and saturation untouched; the other three are exactly as they were.
+ *
+ * The scale is read by **hue**, not by lightness, which is why flattening the arc costs
+ * nothing: `flat` now sits between `rising` and `steep` in luminance and the three are still
+ * obvious at a glance because one is grey, one is yellow and one is orange. What does have to
+ * survive is the *severity* ramp — rising, steep, very steep, brutal darken in order — and the
+ * separation of every adjacent pair. `chrome.test.ts` holds all three rules, so the next edit
+ * cannot quietly trade one for another.
+ */
 export const GRADE_BANDS: GradeBand[] = [
-  { from: -Infinity, label: 'downhill', colour: '#4a9ec4' },
+  { from: -Infinity, label: 'downhill', colour: '#4899be' },
   { from: -0.01, label: 'flat', colour: '#7c8f96' },
-  { from: 0.03, label: 'rising', colour: '#c8a94b' },
-  { from: 0.06, label: 'steep', colour: '#dd8340' },
+  { from: 0.03, label: 'rising', colour: '#aa8f3e' },
+  { from: 0.06, label: 'steep', colour: '#c47438' },
   { from: 0.09, label: 'very steep', colour: '#d2564c' },
   { from: 0.12, label: 'brutal', colour: '#b8467e' },
 ]

@@ -1470,6 +1470,43 @@
   width: 100%;
 }
 
+/* ── The finish sheet ───────────────────────────────────────────────────────────────── */
+
+.finish-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* A tick in a soft green disc. The only green surface in the app, and it appears once per
+   ride — which is what lets it mean "that is done and it is kept" without a word. */
+.finish-tick {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.finish-when {
+  margin: 0.1rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Export is real but Done is what almost everyone taps, so the primary takes the larger share
+   rather than the two splitting the width evenly. */
+.finish-actions .secondary {
+  flex: 1;
+}
+
+.finish-actions .primary {
+  flex: 1.4;
+}
+
 /* ── A switch ───────────────────────────────────────────────────────────────────────────
    Drawn rather than an `<input type=checkbox>`, because the row it sits in is the button — a
    real control inside a real button is two targets fighting over one tap, and the native one

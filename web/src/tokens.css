@@ -62,7 +62,15 @@
 
   --ink: #12212b;
   --muted: #5c6b74;
-  --faint: #8a969d;
+  /*
+   * Quieter still: a timestamp, a footnote, a chevron, a disabled label.
+   *
+   * Two steps darker than the mockups' `#8a969d`, which measured 2.78:1 on `--page` — under
+   * even the 3:1 floor for non-text. The difference is invisible beside a swatch and is the
+   * difference between readable and not on a phone in daylight, which is the only place this
+   * app is used. `chrome.test.ts` holds it.
+   */
+  --faint: #828d94;
   /** Text and icons *on* an ink-filled surface. */
   --on-ink: #ffffff;
 
@@ -144,17 +152,19 @@
 
   --ink: var(--slate-100);
   --muted: var(--slate-300);
-  --faint: var(--slate-500);
+  --faint: #576c7c;
   --on-ink: #0f1e29;
 
   --hairline: rgb(204 208 207 / 12%);
   --edge: rgb(204 208 207 / 18%);
   --edge-strong: rgb(204 208 207 / 25%);
 
-  --good: #5a9e63;
+  /* Lifted off the light theme's values: `#5a9e63` and `#c4707a` are readable on slate but
+     land at 3.9:1 and 3.7:1 on their own 18% tints, which is where they are actually used. */
+  --good: #61ab6b;
   --good-bg: rgb(90 158 99 / 18%);
   --good-fill: #5a9e63;
-  --bad: #c4707a;
+  --bad: #da7c87;
   --bad-bg: rgb(196 112 122 / 18%);
 
   --panel: rgb(17 33 45 / 72%);
