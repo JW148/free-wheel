@@ -87,7 +87,10 @@ export default function Onboarding({
               key={card.glyph}
               className="onboarding-card"
               style={{ width: `${100 / SLIDES.length}%` }}
-              aria-hidden={i === index ? undefined : true}
+              // `inert` rather than `aria-hidden` alone: every card stays mounted so the
+              // movement is a real slide, and a hidden card whose bike chips are still
+              // focusable is a tab order that walks off the side of the screen.
+              inert={i === index ? undefined : true}
             >
               <div className="onboarding-tile">
                 <PixelGlyph glyph={GLYPHS[card.glyph]} />

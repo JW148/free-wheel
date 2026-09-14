@@ -1110,18 +1110,32 @@
   border: none;
 }
 
+/* The card is a container; the tappable part is the button inside it. A chosen card grows two
+   more buttons, and one interactive element inside another is a target a screen reader cannot
+   describe and a keyboard cannot reach past. */
 .route-card {
   display: grid;
-  grid-template-columns: 12px 1fr auto;
-  align-items: center;
-  column-gap: 0.85rem;
-  width: 100%;
   padding: 0.75rem 0.85rem;
   border: 2px solid var(--hairline);
   border-radius: var(--r-large);
   background: var(--card);
   color: var(--ink);
+}
+
+.drawer-body button.route-card-main {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  column-gap: 0.85rem;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: inherit;
   font: inherit;
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
 }
@@ -1133,9 +1147,11 @@
   background: var(--inset);
 }
 
-/* Still routing, or waiting its turn behind the profile in front of it. */
-.route-card[data-pending='yes'] {
+/* Waiting its turn behind another profile: it says so, and it does not take a tap that would
+   only race the Worker. */
+.drawer-body button.route-card-main:disabled {
   cursor: default;
+  color: inherit;
 }
 
 /* The colour bar. Tall rather than a dot: it is the tie to the line on the map, and a line is
@@ -1188,8 +1204,7 @@
  * something an icon can say. A row that says Details, on the card it is the details *of*,
  * cannot be misread.
  */
-.route-card-details {
-  grid-column: 1 / -1;
+.drawer-body button.route-card-details {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1198,12 +1213,18 @@
   padding-top: 0.7rem;
   border: none;
   border-top: 1px solid var(--hairline);
+  border-radius: 0;
   background: none;
   color: var(--ink);
   font: inherit;
   font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.route-card-start {
+  width: 100%;
+  margin-top: 0.7rem;
 }
 
 .route-card-details svg {
@@ -1372,8 +1393,11 @@
     .primary,
     .secondary,
     .route-card,
+    .route-card-main,
     .route-card-details,
+    .route-card-start,
     .route-more,
+    .hold-button,
     .drawer-back,
     .setup-row,
     .legend-item,

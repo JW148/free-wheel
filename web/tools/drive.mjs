@@ -206,7 +206,7 @@ if (process.env.FW_SEED) {
   await click('.route-more')
   await sleep(400)
   // Details only exists on the chosen card — there is nothing else it could describe.
-  await click('.route-card')
+  await click('.route-card-main')
   await sleep(600)
   await shot('15b-chosen')
   await click('.route-card-details')
@@ -246,20 +246,6 @@ if (process.env.FW_SEED) {
   await click('.card-handle')
   await sleep(800)
   await shot('21-dark-cards')
-  await sleep(1500)
-  await shot('16b-detail-settled')
-  // Is the smear above the sheet real, or SwiftShader mis-sampling a backdrop filter?
-  await evaluate(`(() => {
-    const s = document.createElement('style')
-    s.textContent = '.drawer { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; background: #fff !important }'
-    document.head.appendChild(s)
-  })()`)
-  await sleep(600)
-  await shot('16c-detail-no-blur')
-  console.log(await evaluate(`JSON.stringify([[10,45],[195,45],[195,30]].map(([x,y]) => {
-    const el = document.elementFromPoint(x, y)
-    return el ? el.className + '|' + (el.textContent || '').slice(0, 30) : 'none'
-  }))`))
 }
 
 console.log(await evaluate(`document.body.innerText.slice(0, 300)`))

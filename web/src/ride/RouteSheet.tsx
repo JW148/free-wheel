@@ -357,72 +357,66 @@ function RouteCard({
   const result = plan.routes[id]
   const isChosen = plan.chosen === id
   const computing = plan.routing === id
+  const idle = plan.routing === null
   const waiting = !result && !computing
 
+  /*
+   * One tap, two meanings, and which one depends on whether there is a result yet.
+   *
+   * With a result, the card is a choice. Without one — a profile the distance guard deferred,
+   * or one just revealed by "More riding styles" — it is an offer to compute itself. From the
+   * rider's side those are the same thing: a route they can see the name of and not the figures
+   * for. Disabled while anything else is routing, because the Worker serialises anyway and a
+   * second request would only race `routing` against itself.
+   */
+  const act = () => {
+    if (result) sheet.choose(id)
+    else if (idle && plan.waypoints.length >= 2) void plan.run(id)
+  }
+
   return (
-    <div
-      className="route-card"
-      data-chosen={isChosen ? 'yes' : 'no'}
-      data-pending={waiting ? 'yes' : 'no'}
-      onClick={() => {
-        if (result) sheet.choose(id)
-        // No result and nothing running: this card is an offer to compute itself. That covers
-        // both a deferred profile and one just revealed by "More riding styles" — from the
-        // rider's side they are the same thing, a route they can see the name of and not the
-        // figures for.
-        else if (!computing && plan.waypoints.length >= 2) void plan.run(id)
-      }}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          if (result) sheet.choose(id)
-        }
-      }}
-    >
-      <span className="route-card-colour" style={{ background: option.colour }} />
-      <span className="route-card-text">
-        <span className="route-card-label">{option.plain}</span>
-        <span className="route-card-note">{option.note}</span>
-      </span>
-      <span className="route-card-figures">
-        {result ? (
-          <>
-            <strong>{result.timeS !== null ? formatDuration(result.timeS) : '—'}</strong>
-            <span>
-              {formatDistance(result.distanceM)} · {Math.round(result.ascendM)} m up
-            </span>
-          </>
-        ) : (
-          <span>{computing ? 'working…' : 'tap to work out'}</span>
-        )}
-      </span>
+    <div className="route-card" data-chosen={isChosen ? 'yes' : 'no'}>
+      {/* A real button rather than a `div` with `role="button"`: the chosen card grows two more
+          buttons inside it, and an interactive element inside an interactive element is a
+          target a screen reader cannot describe and a keyboard cannot reach past. */}
+      <button
+        type="button"
+        className="route-card-main"
+        data-pending={waiting ? 'yes' : 'no'}
+        disabled={waiting && !idle}
+        onClick={act}
+      >
+        <span className="route-card-colour" style={{ background: option.colour }} />
+        <span className="route-card-text">
+          <span className="route-card-label">{option.plain}</span>
+          <span className="route-card-note">{option.note}</span>
+        </span>
+        <span className="route-card-figures">
+          {result ? (
+            <>
+              <strong>{result.timeS !== null ? formatDuration(result.timeS) : '—'}</strong>
+              <span>
+                {formatDistance(result.distanceM)} · {Math.round(result.ascendM)} m up
+              </span>
+            </>
+          ) : (
+            <span>{computing ? 'working…' : 'tap to work out'}</span>
+          )}
+        </span>
+      </button>
 
       {/* Only on the chosen card. The way into the detail view — with the drag handle, one of
           the two — and it exists nowhere else because there is nothing else it could describe. */}
       {isChosen && (
-        <button
-          type="button"
-          className="route-card-details"
-          onClick={(e) => {
-            e.stopPropagation()
-            sheet.setView('detail')
-          }}
-        >
+        <button type="button" className="route-card-details" onClick={() => sheet.setView('detail')}>
           Details
           <ChevronRightIcon />
         </button>
       )}
       {isChosen && (
-        <div className="action-row" style={{ gridColumn: '1 / -1' }}>
-          <button type="button" className="primary" onClick={(e) => {
-            e.stopPropagation()
-            onStart()
-          }}>
-            Start ride
-          </button>
-        </div>
+        <button type="button" className="primary route-card-start" onClick={onStart}>
+          Start ride
+        </button>
       )}
     </div>
   )

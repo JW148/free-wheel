@@ -225,6 +225,10 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
             const parsed = parseBrouterGpx(outcome.gpx)
             setRoutes((current) => ({ ...current, [id]: parsed }))
             setGpx((current) => ({ ...current, [id]: outcome.gpx! }))
+            // A profile computed on demand joins the comparison. It is on the map now, so a
+            // selection that did not contain it would let "More riding styles" collapse over a
+            // line the rider can still see — and would drop it on the next reroute.
+            setSelection((current) => (current.includes(id) ? current : [...current, id]))
             computed.push(id)
           } catch (e) {
             failures.push(e instanceof Error ? e.message : String(e))
