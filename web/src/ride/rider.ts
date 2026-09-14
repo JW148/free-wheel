@@ -11,12 +11,23 @@
  * this is a property of the rider that changes about once a year.
  */
 
+import { DEFAULT_PROFILES, PROFILES, type ProfileId } from './profiles'
+
 export interface RiderSetup {
   riderKg: number
   /** Bike, and anything strapped to it. Panniers belong here, not in `riderKg`. */
   bikeKg: number
   position: PositionId
   tyres: TyreId
+  /**
+   * The riding style offered first, set by the bike answered for on the first run.
+   *
+   * A property of the rider rather than of the plan, and that is the point: a plan is a route
+   * and changes every time you tap the map, but what you ride changes about as often as your
+   * weight does. It decides which of the three cards is suggested, and — when a route is too
+   * long to compute three of — which single one gets computed.
+   */
+  style: ProfileId
   /**
    * Whether leaving the route should route again from where the rider is.
    *
@@ -49,12 +60,22 @@ export const POSITIONS = [
  * The range here is nearly four to one, and unlike drag it applies at every speed — which is
  * why a knobbly tyre feels slow even freewheeling. Figures are for a typical tyre of each kind
  * on tarmac at sensible pressure; off tarmac they all get worse and none of this is precise.
+ *
+ * `chip` is the same thing said short enough to sit on a pill. `label · note` runs to 24
+ * characters, which wraps every chip onto a row of its own and turns a row of four into a
+ * column of four — a list, which is the shape this was chosen *not* to be.
  */
 export const TYRES = [
-  { id: 'road', label: 'Road', note: 'Slick, 25–32 mm', crr: 0.005 },
-  { id: 'allroad', label: 'All-road', note: 'Light tread, 32–40 mm', crr: 0.0075 },
-  { id: 'gravel', label: 'Gravel', note: 'Knobbly, 40 mm and up', crr: 0.011 },
-  { id: 'mtb', label: 'Mountain bike', note: 'Big and soft', crr: 0.016 },
+  { id: 'road', label: 'Road', note: 'Slick, 25–32 mm', chip: 'Road · 25–32 mm', crr: 0.005 },
+  {
+    id: 'allroad',
+    label: 'All-road',
+    note: 'Light tread, 32–40 mm',
+    chip: 'All-road · 32–40',
+    crr: 0.0075,
+  },
+  { id: 'gravel', label: 'Gravel', note: 'Knobbly, 40 mm and up', chip: 'Gravel · 40+', crr: 0.011 },
+  { id: 'mtb', label: 'Mountain bike', note: 'Big and soft', chip: 'Mountain bike', crr: 0.016 },
 ] as const
 
 export type PositionId = (typeof POSITIONS)[number]['id']
@@ -72,6 +93,7 @@ export const DEFAULT_RIDER: RiderSetup = {
   bikeKg: 10,
   position: 'hoods',
   tyres: 'allroad',
+  style: DEFAULT_PROFILES[0],
   autoReroute: true,
 }
 
@@ -106,6 +128,12 @@ export function migrateRider(raw: unknown): RiderSetup {
     tyres: TYRES.some((t) => t.id === stored.tyres)
       ? (stored.tyres as TyreId)
       : DEFAULT_RIDER.tyres,
+    // A stored setup from before the redesign has no style at all, and a renamed or withdrawn
+    // profile must not survive into a routing call — `run` would ask the engine for a `.brf`
+    // that does not exist.
+    style: PROFILES.some((p) => p.id === stored.style)
+      ? (stored.style as ProfileId)
+      : DEFAULT_RIDER.style,
     autoReroute:
       typeof stored.autoReroute === 'boolean' ? stored.autoReroute : DEFAULT_RIDER.autoReroute,
   }

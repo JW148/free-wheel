@@ -6,6 +6,7 @@ import { formatGrade, gradeColour } from './gradeScale'
 import { calloutMatters, compactFigures, figuresFor, type FigureKey } from './hud'
 import type { RideTelemetry } from './useRideTelemetry'
 import RideProfile, { RouteOverview } from './RideProfile'
+import HoldButton from './HoldButton'
 
 /**
  * The riding screen's chrome: four figures, the road ahead, and one thing to do about it.
@@ -180,21 +181,29 @@ export default function RideHud({
 
       {controls}
 
-      <div className="ride-status panel">
+      {/*
+        What the ride has come to, and the one way out of it.
+
+        Two lines rather than one: the figures are the sentence and the fix is the footnote, and
+        running them together meant "±5 m" sat in the middle of a distance and a climb. Ending
+        is a hold — see `HoldButton` — because a tap is a gesture a pothole can make.
+      */}
+      <div className="ride-status panel" data-bottom-bar="">
         <span className="ride-status-text">
-          {record && (
+          {record ? (
             <>
               <strong>{formatElapsed((Date.now() - record.startedAt) / 1000)}</strong>
               {` · ${(record.distanceM / 1000).toFixed(1)} km`}
               {record.ascentM > 5 && ` · ${Math.round(record.ascentM)} m up`}
-              {' · '}
+              <span className="ride-status-fix">{fixLabel} · recording</span>
             </>
+          ) : (
+            <span className="ride-status-fix">{fixLabel}</span>
           )}
-          {fixLabel}
         </span>
-        <button type="button" className="ghost" onClick={onEnd}>
-          End ride
-        </button>
+        <HoldButton onHold={onEnd} aria-label="Hold to end the ride">
+          Hold to end
+        </HoldButton>
       </div>
     </>
   )
@@ -258,7 +267,6 @@ function Figure({
 }) {
   return (
     <div>
-      <dd>{value}</dd>
       <dt>
         {unit}
         {/* A tilde, not the word "estimated": the label has room for four characters and the
@@ -266,6 +274,7 @@ function Figure({
             explanation is in the rider settings, where there is room for it. */}
         {estimate && <span className="hud-estimate" aria-label="estimated"> ~</span>}
       </dt>
+      <dd>{value}</dd>
     </div>
   )
 }

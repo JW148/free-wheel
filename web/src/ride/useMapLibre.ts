@@ -28,11 +28,19 @@ const LAST_BASEMAP_KEY = 'free-wheel.basemap.v1'
 const THEME_KEY = 'free-wheel.theme.v1'
 const PATHS_KEY = 'free-wheel.paths.v1'
 
+/**
+ * The palette, remembered.
+ *
+ * Light is the default now, where it used to be dark. The chrome was redesigned around white
+ * cards and ink text, and a light panel over a night-time basemap is the one combination that
+ * looks like a mistake rather than a choice — so the two default together and move together.
+ * A rider who already chose dark keeps it: the stored value still wins.
+ */
 function storedTheme(): MapTheme {
   try {
-    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'
+    return localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'
   } catch {
-    return 'dark'
+    return 'light'
   }
 }
 
@@ -108,6 +116,17 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   // switch would tear the map down and remount every archive.
   const themeRef = useRef(theme)
   themeRef.current = theme
+
+  /**
+   * The chrome follows the map.
+   *
+   * Set on `<html>` rather than on a wrapper element, because vaul portals the route drawer to
+   * `<body>` — a class on the ride screen would leave the app's largest surface on the other
+   * theme. `tokens.css` keys its dark block off this attribute and nothing else needs to know.
+   */
+  useEffect(() => {
+    document.documentElement.dataset.chrome = theme
+  }, [theme])
   const [pathMode, setPathModeState] = useState<PathMode>(storedPathMode)
   const pathModeRef = useRef(pathMode)
   pathModeRef.current = pathMode

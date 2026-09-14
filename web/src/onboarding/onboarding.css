@@ -1,0 +1,256 @@
+/*
+ * The first run.
+ *
+ * Full screen and opaque, which nothing else in this app is — every other surface floats over
+ * the map because the map is the app. This one comes before there is a map worth showing, and
+ * a walkthrough drawn over an empty grey canvas would be introducing the app by showing it
+ * broken.
+ *
+ * Sized with `--app-height` and the same standalone rules the ride screen uses, so it does not
+ * rediscover the iOS safe-area trap on its own.
+ */
+
+.onboarding {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 60;
+  height: var(--app-height);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--page);
+  color: var(--ink);
+}
+
+.onboarding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: calc(max(env(safe-area-inset-top), 0.6rem) + 0.5rem) 1.25rem 0;
+}
+
+.onboarding-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.onboarding-brand img {
+  border-radius: 7px;
+}
+
+.onboarding-skip {
+  min-height: 2.75rem;
+  padding: 0 0.25rem;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/* ── The cards ──────────────────────────────────────────────────────────────────────── */
+
+.onboarding-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.onboarding-track {
+  display: flex;
+  height: 100%;
+  transition: transform 450ms var(--ease-sheet);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-track {
+    transition: none;
+  }
+}
+
+.onboarding-card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 1.3rem;
+  padding: 1.6rem 1.75rem 0;
+  overflow-y: auto;
+}
+
+/*
+ * The icon, opened up.
+ *
+ * A slate tile on the light page — the app icon sitting on the screen rather than a picture
+ * pasted into it. `aspect-ratio` rather than a fixed height so it survives a short phone; the
+ * glyph inside is centred and does not scale, because a pixel grid at a fractional size stops
+ * being a pixel grid.
+ */
+.onboarding-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 100%;
+  max-height: 300px;
+  aspect-ratio: 1 / 0.86;
+  border-radius: 44px;
+  background: #0f1e29;
+  box-shadow: 0 14px 40px rgb(15 30 41 / 28%);
+  overflow: hidden;
+}
+
+.pixel-glyph {
+  display: grid;
+  /* The one dimension worth a variable: the grid is 20 × 14 cells and everything else follows
+     from the cell size. */
+  --cell: 12px;
+}
+
+.pixel-row {
+  display: grid;
+  grid-template-columns: repeat(20, var(--cell));
+}
+
+.pixel-row span {
+  display: block;
+  width: var(--cell);
+  height: var(--cell);
+}
+
+@media (max-height: 720px) {
+  .pixel-glyph {
+    --cell: 10px;
+  }
+}
+
+.onboarding-card h1 {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: pretty;
+}
+
+.onboarding-card p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* ── The bike chips ─────────────────────────────────────────────────────────────────── */
+
+.onboarding-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/*
+ * A pill that fills when chosen. The same shape as the tyre chips in the rider settings, and
+ * deliberately so: they are the same kind of question and one of them sets the other.
+ */
+.chip {
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 1.5px solid var(--edge-strong);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chip[data-selected='yes'] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+/* The dot marks the *first* line, not the middle of the paragraph: centred, it floats beside
+   nothing on a two-line sentence and reads as a stray bullet. */
+.onboarding-reassure {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.onboarding-dot {
+  align-self: center;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good-fill);
+}
+
+/* ── The pager ──────────────────────────────────────────────────────────────────────── */
+
+.onboarding-foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 1.1rem;
+  padding: 1.1rem 1.25rem var(--safe-bottom);
+}
+
+.onboarding-dots {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+}
+
+/* Each dot is a real button, so the pager is navigable rather than an indicator you can only
+   watch. The current one widens instead of changing colour alone — a size difference survives
+   any amount of colour blindness. The 44px target is the `::after`, not the dot. */
+.onboarding-dot-button {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: var(--edge-strong);
+  cursor: pointer;
+  transition:
+    width 300ms ease,
+    background-color 300ms ease;
+}
+
+.onboarding-dot-button[data-current='yes'] {
+  width: 22px;
+  background: var(--ink);
+}
+
+.onboarding-dot-button::after {
+  content: '';
+  position: absolute;
+  inset: -18px -7px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-dot-button {
+    transition: none;
+  }
+}
+
+/* Square, because it holds only a chevron and a 56px square beside a 56px pill is the
+   proportion the rest of the app uses for a back-plus-forward pair. */
+.onboarding-back {
+  flex: none;
+  width: 56px;
+  padding: 0;
+}

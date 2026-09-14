@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { MASS_LIMITS, POSITIONS, TYRES, cdaOf, crrOf, totalMassKg } from '../ride/rider'
+import { DEFAULT_PROFILES, profileById } from '../ride/profiles'
 import { estimatePowerW } from '../ride/power'
 import { requestPersistence } from '../ride/library'
 import type { Rider } from '../ride/useRider'
@@ -47,8 +48,6 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
 
   return (
     <section className="panel-block">
-      <h2>You and the bike</h2>
-
       <h3>Weight</h3>
       <div className="setup-group">
         <Mass
@@ -65,67 +64,89 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
         />
       </div>
 
-      {/* The radio groups keep the drawer's own row treatment, so a choice made here looks like
-          a choice made there. */}
+      {/*
+        Cards rather than a radio list, and chips for the tyres.
+        Both are one-of-four choices, but they are not the same *kind* of choice: a riding
+        position needs its note to be chooseable at all — nobody knows what "on the hoods" costs
+        — while a tyre is named by the thing itself and a note under each would be four lines of
+        explanation for a question already answered by the label.
+      */}
       <h3>How you sit</h3>
-      <fieldset className="profiles">
+      <div className="option-grid" role="radiogroup" aria-label="How you sit">
         {POSITIONS.map((option) => (
-          <div
+          <button
             key={option.id}
-            className="profile-row"
+            type="button"
+            role="radio"
+            aria-checked={setup.position === option.id}
+            className="option-card"
             data-selected={setup.position === option.id ? 'yes' : 'no'}
+            onClick={() => update({ position: option.id })}
           >
-            <input
-              id={`position-${option.id}`}
-              type="radio"
-              name="position"
-              checked={setup.position === option.id}
-              onChange={() => update({ position: option.id })}
-            />
-            <label htmlFor={`position-${option.id}`} className="profile-text">
-              <span className="profile-label">{option.label}</span>
-              <span className="profile-note">{option.note}</span>
-            </label>
-          </div>
+            <span className="option-label">{option.label}</span>
+            <span className="option-note">{option.note}</span>
+          </button>
         ))}
-      </fieldset>
+      </div>
 
       <h3>What you are riding on</h3>
-      <fieldset className="profiles">
+      <div className="chip-row" role="radiogroup" aria-label="Tyres">
         {TYRES.map((option) => (
-          <div
+          <button
             key={option.id}
-            className="profile-row"
+            type="button"
+            role="radio"
+            aria-checked={setup.tyres === option.id}
+            className="chip"
             data-selected={setup.tyres === option.id ? 'yes' : 'no'}
+            onClick={() => update({ tyres: option.id })}
           >
-            <input
-              id={`tyres-${option.id}`}
-              type="radio"
-              name="tyres"
-              checked={setup.tyres === option.id}
-              onChange={() => update({ tyres: option.id })}
-            />
-            <label htmlFor={`tyres-${option.id}`} className="profile-text">
-              <span className="profile-label">{option.label}</span>
-              <span className="profile-note">{option.note}</span>
-            </label>
-          </div>
+            {option.chip}
+          </button>
         ))}
-      </fieldset>
+      </div>
+
+      {/*
+        The third thing the first run's bike question set, and the only one of the three with no
+        home until now. Without it, a rider who answered "Road" in the walkthrough and later
+        bought a gravel bike could change their tyres and their position and never find the
+        setting that decides which route is suggested first.
+      */}
+      <h3>Which route to suggest first</h3>
+      <div className="chip-row" role="radiogroup" aria-label="Riding style">
+        {DEFAULT_PROFILES.map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={setup.style === id}
+            className="chip"
+            data-selected={setup.style === id ? 'yes' : 'no'}
+            onClick={() => update({ style: id })}
+          >
+            {profileById(id).plain}
+          </button>
+        ))}
+      </div>
+      <p className="setup-footer">
+        All three are worked out whenever a route is short enough. This decides which one is
+        computed first — and which one is computed <em>alone</em> when a route is too long to do
+        three of.
+      </p>
 
       <h3>What that adds up to</h3>
       <dl className="rider-preview">
         <div>
-          <dd>{preview(25, 0)} W</dd>
           <dt>25 km/h, flat</dt>
+          <dd>{preview(25, 0)} W</dd>
         </div>
         <div>
-          <dd>{preview(10, 0.08)} W</dd>
           <dt>10 km/h, up 8%</dt>
+          <dd>{preview(10, 0.08)} W</dd>
         </div>
         <div>
-          <dd>{totalMassKg(setup)} kg</dd>
           <dt>all in</dt>
+          <dd>{totalMassKg(setup)} kg</dd>
         </div>
       </dl>
       <p className="setup-footer">

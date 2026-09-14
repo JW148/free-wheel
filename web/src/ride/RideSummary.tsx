@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Drawer } from 'vaul'
 import { defaultRouteName, deleteEntry, putEntry, rideEntry, type SavedRide } from './library'
 import { traceToGpx, worthKeeping, type RideRecord, type RideSummary } from './recording'
-import RideStats from './RideStats'
+import RideStats, { rideWhen } from './RideStats'
 import { shareGpx } from './share'
 
 /**
@@ -27,6 +27,13 @@ import { shareGpx } from './share'
  * happens in the library, where the rider has stopped and a keyboard costs nothing.
  *
  * A ride under 200 m is still not kept at all (`worthKeeping`): that is a mis-tap on Start.
+ *
+ * ## The one thing from the designs that is deliberately not here
+ *
+ * The mockup puts a **Rename** row on this sheet. It cannot go here, and the reason is written
+ * above: a text field on the riding path is what summons iOS's "Undo Typing" alert, which a
+ * page has no way to decline. The ride has already saved itself under a generated name and the
+ * library is one tap away, where the rider has stopped and a keyboard costs nothing.
  */
 export default function RideSummarySheet({
   summary,
@@ -94,13 +101,19 @@ export default function RideSummarySheet({
         <Drawer.Content className="drawer" aria-describedby={undefined}>
           <Drawer.Handle className="drawer-handle" />
           <div className="drawer-body">
-            <div className="drawer-head">
-              <Drawer.Title className="drawer-title">
-                {keepable ? 'Ride finished' : 'That was a short one'}
-              </Drawer.Title>
-              <button type="button" className="primary" onClick={onDismiss}>
-                Done
-              </button>
+            <div className="finish-head">
+              <span className="finish-tick" aria-hidden="true">
+                <TickIcon />
+              </span>
+              <div>
+                <Drawer.Title className="drawer-title">
+                  {keepable ? 'Ride finished' : 'That was a short one'}
+                </Drawer.Title>
+                <p className="finish-when">
+                  {rideWhen(summary.startedAt)}
+                  {state === 'saved' && ' · saved on this phone'}
+                </p>
+              </div>
             </div>
 
             <RideStats summary={summary} />
@@ -120,21 +133,20 @@ export default function RideSummarySheet({
                       ? 'Saving to the library…'
                       : 'It is not saved. The ride is still here — try again, or export it.'}
                 </p>
-                <div className="sheet-actions">
-                  {state === 'failed' && (
-                    <button type="button" className="primary" onClick={() => void save()}>
-                      Try again
-                    </button>
-                  )}
-                  <button type="button" onClick={exportGpx}>
-                    Export GPX
-                  </button>
-                  {state === 'saved' && (
+                {state === 'saved' && (
+                  <div className="sheet-actions">
                     <button type="button" onClick={() => void discard()}>
                       Throw it away
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
+                {state === 'failed' && (
+                  <div className="sheet-actions">
+                    <button type="button" className="primary" onClick={() => void save()}>
+                      Try again
+                    </button>
+                  </div>
+                )}
               </>
             )}
 
@@ -143,9 +155,29 @@ export default function RideSummarySheet({
                 Could not save it: {problem}
               </p>
             )}
+
+            {/* Export beside Done, in the proportion the design draws: the secondary is real but
+                the primary is what almost everyone taps. */}
+            <div className="action-row finish-actions">
+              <button type="button" className="secondary" onClick={exportGpx}>
+                Export GPX
+              </button>
+              <button type="button" className="primary" onClick={onDismiss}>
+                Done
+              </button>
+            </div>
           </div>
         </Drawer.Content>
       </Drawer.Portal>
     </Drawer.Root>
+  )
+}
+
+function TickIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" width={20} height={20} fill="none"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
   )
 }

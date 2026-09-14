@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-07-26, updated 2026-09-11. Read `CLAUDE.md` first for the rules of the repo, then
+Written 2026-07-26, updated 2026-09-14. Read `CLAUDE.md` first for the rules of the repo, then
 this for where the work actually stands.
 
 `brouter-link/` is correctly excluded from git and its own checkout is clean; verify with
@@ -21,12 +21,14 @@ this for where the work actually stands.
 | **Phase 8** — region downloads | 🟡 Built and unit-tested; **the mirror bucket now exists and is live** — CORS, public-read and a ranged `206` on `manifest.json` verified 2026-09-11. The picker has still never streamed anything in a browser, and nothing has been downloaded on a phone. Manual import survives as the escape hatch |
 | **Phase 9** — the maps library | 🟡 Many regions instead of one, all drawn at once; downloads queue and survive the screen. **Driven end to end in a browser against the live mirror** — downloaded, cancelled, resumed, installed, removed. Not yet ridden, not yet on a physical iPhone |
 | **Phase 10** — choosing a region | 🟡 The regions are **painted into the map** rather than boxed over it: fourteen overlapping bboxes become a partition clipped to the coastline by the basemap's own water, named in place. The top bar is gone and the list is the ride screen's dismissible drawer. Driven end to end in headless Chrome at 390 px, both themes, against the live mirror. Not yet ridden, not yet on a physical iPhone |
+| **Phase 11** — the redesign | 🟡 Light chrome with a dark variant from one token set; two taps → three plain-language routes; a six-card pixel first run; the rail cut from seven buttons to two; Saved and Setup promoted to screens; hold-to-end. Driven end to end in headless Chrome at 390 px in **both themes**, 615 tests green. **Not yet ridden, not yet on a physical iPhone** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
 `docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
-`docs/phase-8-progress.md`, `docs/phase-9-progress.md`, `docs/phase-10-progress.md`. Each
+`docs/phase-8-progress.md`, `docs/phase-9-progress.md`, `docs/phase-10-progress.md`,
+`docs/phase-11-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -40,6 +42,15 @@ wrong.
   viable at all.
 
 ## Where to pick up
+
+**The next action is a ride, and it is now overdue in two directions.** Phases 7 through 11 have
+all been built and none of them has been on a road. Phase 11 in particular reversed the app's
+oldest visual decision — the chrome is light now — and that is a decision only sunlight can
+settle. `docs/phase-11-progress.md` §"Not done" lists the five questions a desk cannot answer;
+the first of them is whether the light chrome was right at all, and the fallback if it was not
+is written down there.
+
+What follows is the phase 7 list, which is still unridden and still the reason the rest exists.
 
 **The next action is another ride.** Phase 6 was ridden on 2026-09-08 and it worked — the
 navigation was right and six things about *using* it were not. Phase 7 is those six things, and

@@ -25,28 +25,28 @@ export default function RideStats({ summary }: { summary: RideSummary }) {
     <>
       <dl className="detail-stats summary-stats">
         <div>
-          <dd>{formatDistance(summary.distanceM)}</dd>
           <dt>ridden</dt>
+          <dd>{formatDistance(summary.distanceM)}</dd>
         </div>
         <div>
-          <dd>{formatElapsed(summary.movingS)}</dd>
           <dt>moving</dt>
+          <dd>{formatElapsed(summary.movingS)}</dd>
         </div>
         <div>
-          <dd>{formatSpeed(summary.avgSpeedMps)}</dd>
           <dt>avg km/h</dt>
+          <dd>{formatSpeed(summary.avgSpeedMps)}</dd>
         </div>
         <div>
-          <dd>{formatSpeed(summary.maxSpeedMps)}</dd>
           <dt>max km/h</dt>
+          <dd>{formatSpeed(summary.maxSpeedMps)}</dd>
         </div>
         <div>
-          <dd>{Math.round(summary.ascentM)} m</dd>
           <dt>climbed</dt>
+          <dd>{Math.round(summary.ascentM)} m</dd>
         </div>
         <div>
-          <dd>{formatElapsed(summary.elapsedS)}</dd>
           <dt>elapsed</dt>
+          <dd>{formatElapsed(summary.elapsedS)}</dd>
         </div>
       </dl>
 

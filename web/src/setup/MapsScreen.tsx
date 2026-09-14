@@ -129,6 +129,45 @@ export default function MapsScreen({
     void load()
   }, [load])
 
+  /**
+   * Which region the rider is standing in, **without asking**.
+   *
+   * The rule this screen already states — never prompt for location because a screen was
+   * opened — is right, and this does not break it: the permission is only *read*, and a fix is
+   * only requested where it has already been granted. In practice it usually has been, because
+   * the first run's last card asks for it by name.
+   *
+   * Where it has not, the section simply is not drawn. Guessing a region from nothing would be
+   * a confident claim about where somebody lives, and the list below is already the answer.
+   */
+  useEffect(() => {
+    if (catalogue.phase !== 'ready') return
+    let cancelled = false
+    const regions = catalogue.manifest.regions
+    void (async () => {
+      try {
+        const status = await navigator.permissions?.query({
+          name: 'geolocation' as PermissionName,
+        })
+        if (status?.state !== 'granted' || cancelled) return
+        navigator.geolocation.getCurrentPosition(
+          ({ coords }) => {
+            if (!cancelled) setHere(regionsAt(regions, coords.longitude, coords.latitude))
+          },
+          () => {},
+          // A five-minute-old fix is fine for "which region is this" — it is a question about
+          // a 200 km box, and waiting for a fresh one costs battery for no extra accuracy.
+          { enableHighAccuracy: false, maximumAge: 300_000, timeout: 8000 },
+        )
+      } catch {
+        // No Permissions API for geolocation. Silently do without: the list is the fallback.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [catalogue])
+
   // A region landing changes three things at once: the records this screen reads, the archives
   // the map draws, and whether the gate above may open. Driven from the store rather than from
   // a download call, because the download that finishes very often was not started on this
@@ -253,6 +292,18 @@ export default function MapsScreen({
   const installed = catalogue.phase === 'ready' ? catalogue.installed : []
   const manifest = catalogue.phase === 'ready' ? catalogue.manifest : null
   const mine = summaries.filter((summary) => summary.state !== 'not-installed')
+  /*
+   * The regions covering the rider's fix, minus the ones there is nothing to say about.
+   * A region already downloaded and current is not news, and a job already running has its own
+   * row above with a progress bar on it.
+   */
+  const hereSummaries = summaries.filter(
+    (summary) =>
+      here.includes(summary.id) &&
+      summary.bytes > 0 &&
+      summary.state !== 'current' &&
+      !jobs.some((job) => job.id === summary.id),
+  )
   const updates = updatable(mine)
 
   // What the outlines paint from: the real region state, overridden by a live download. A
@@ -482,6 +533,43 @@ export default function MapsScreen({
           This list was saved the last time you were online, so the sizes below may have changed
           since.
         </p>
+      )}
+
+      {/*
+        The region you are standing in, offered first.
+
+        The commonest thing a rider wants from this screen is the area they are in, and hunting
+        for its name in a list of fourteen is a worse way to get it than being handed it. Drawn
+        only when a fix is already available — see the effect above — and only where it says
+        something the list does not: a region already downloaded and up to date needs no card.
+      */}
+      {hereSummaries.length > 0 && (
+        <>
+          <h3 className="subhead">Where you are</h3>
+          <ul className="maps-list">
+            {hereSummaries.map((summary) => (
+              <li key={summary.id} className="maps-row maps-row-here">
+                <div className="maps-row-main">
+                  <span className="picker-name">
+                    <span
+                      className="swatch"
+                      style={{ background: regionSwatch(painted[summary.id] ?? 'not-installed') }}
+                    />
+                    {summary.name}
+                  </span>
+                  <span className="maps-row-note">
+                    {summary.state === 'not-installed'
+                      ? `${summary.size} · map and road data`
+                      : `${summary.size} · road data has an update`}
+                  </span>
+                </div>
+                <button type="button" className="primary" onClick={() => start(summary)}>
+                  {summary.state === 'not-installed' ? 'Download' : 'Update'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       <button type="button" className="maps-add" onClick={openBrowse}>
