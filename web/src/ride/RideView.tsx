@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Marker, type MapMouseEvent } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { useMapLibre } from './useMapLibre'
-import { nextPathMode, type PathMode } from '../map/style'
 import { useRoute } from './useRoute'
 import { useGeolocation } from './useGeolocation'
 import { useWakeLock } from './useWakeLock'
@@ -25,6 +24,8 @@ import {
 import { formatDistance, formatDuration } from './gpx'
 import { formatAway } from './format'
 import RouteSheet from './RouteSheet'
+import LayersSheet from './LayersSheet'
+import SavedScreen from '../library/SavedScreen'
 import RideHud from './RideHud'
 import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
@@ -32,7 +33,6 @@ import { useRouteSheet } from './useRouteSheet'
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
 
-const CONTROLS_KEY = 'free-wheel.controls.v1'
 const HUD_KEY = 'free-wheel.hud.v1'
 const COURSE_UP_KEY = 'free-wheel.courseup.v1'
 const VOICE_KEY = 'free-wheel.voice.v1'
@@ -121,17 +121,18 @@ export default function RideView({
     pathMode,
     setPathMode,
   } = basemap
-  const plan = useRoute()
+  const plan = useRoute(rider.setup.style)
   const sheet = useRouteSheet(plan)
   const [riding, setRiding] = useState(false)
   /**
-   * Whether a tap on the map drops a waypoint.
+   * Whether the map sheet of layers is open, and whether the saved list is.
    *
-   * Switched off when a ride starts, and toggleable by hand the rest of the time: once a
-   * route is planned the map becomes something you read and pan, and a stray tap silently
-   * adding a seventh waypoint is worse than an extra button.
+   * Both are full surfaces over the map rather than rail buttons. See `LayersSheet`.
    */
-  const [placing, setPlacing] = useState(true)
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [savedOpen, setSavedOpen] = useState(false)
+  /** Bumped after a save, so the Saved list picks the new entry up when it next opens. */
+  const [librarySaves, setLibrarySaves] = useState(0)
   const [follow, setFollow] = useState(false)
   /**
    * Whether the map turns to face the way the rider is going.
@@ -146,18 +147,6 @@ export default function RideView({
       return localStorage.getItem(COURSE_UP_KEY) === 'on'
     } catch {
       return false
-    }
-  })
-  /**
-   * Whether the control rail is expanded. Remembered, like the theme and the path mode: a
-   * rider who put the buttons away wants them away next time too, and the chevron that
-   * brings them back never leaves the screen.
-   */
-  const [controlsOpen, setControlsOpen] = useState(() => {
-    try {
-      return localStorage.getItem(CONTROLS_KEY) !== 'closed'
-    } catch {
-      return true
     }
   })
   /**
@@ -191,14 +180,13 @@ export default function RideView({
   })
   useEffect(() => {
     try {
-      localStorage.setItem(CONTROLS_KEY, controlsOpen ? 'open' : 'closed')
       localStorage.setItem(COURSE_UP_KEY, courseUp ? 'on' : 'off')
       localStorage.setItem(VOICE_KEY, voice ? 'on' : 'off')
       localStorage.setItem(HUD_KEY, hudExpanded ? 'full' : 'mini')
     } catch {
       /* Private mode. The rail just opens expanded next launch. */
     }
-  }, [controlsOpen, courseUp, voice, hudExpanded])
+  }, [courseUp, voice, hudExpanded])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -261,7 +249,19 @@ export default function RideView({
   canChoose.current = !riding
   const clearable = useRef(false)
   clearable.current = plan.clearableChoice
-  const editable = placing && !riding
+  /*
+   * A tap on the map places a waypoint whenever the rider is planning.
+   *
+   * There used to be a pin button arming this, on the theory that a stray tap adding a seventh
+   * waypoint was worse than an extra button. It was not: the plan card now names every point
+   * and gives each one an explicit ×, so an accidental tap is one tap to undo and visible the
+   * moment it happens — while the toggle was a mode you could be in without knowing, which is
+   * how a rider ends up tapping a map that has stopped responding.
+   *
+   * Riding still refuses taps entirely. That guarantee is the one worth keeping: a bump in the
+   * road must not edit the route being followed.
+   */
+  const editable = !riding
   const canPlace = useRef(editable)
   canPlace.current = editable
   const closeSheet = useRef<() => void>(() => {})
@@ -296,6 +296,32 @@ export default function RideView({
       instance.off('click', onClick)
     }
   }, [map, styleReady, suspended])
+
+  /**
+   * The second tap routes, without being asked.
+   *
+   * This is the redesign's central move: two taps and three routes, rather than two taps, a
+   * profile decision and a button. The guard is a *transition* from one waypoint to two rather
+   * than a count, so a plan restored from storage — which arrives with two points already on
+   * it and possibly a route — does not re-route itself on every launch.
+   *
+   * `plan.run` decides how many profiles to actually compute; past `COMPARE_CEILING_M` it does
+   * one and offers the rest. The drawer opens onto the cards either way, because a result the
+   * rider has to go looking for is a result they will not know arrived.
+   */
+  const lastPointCount = useRef(plan.waypoints.length)
+  useEffect(() => {
+    const was = lastPointCount.current
+    lastPointCount.current = plan.waypoints.length
+    if (was !== 1 || plan.waypoints.length !== 2) return
+    if (riding || suspended || plan.routing !== null) return
+    if (Object.keys(plan.routes).length > 0) return
+    void plan.run()
+    sheet.showCompare()
+    // `plan` and `sheet` are rebuilt on every render; the transition guard above is what makes
+    // this fire once rather than continuously.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.waypoints.length])
 
   // ── Panning pauses following ──────────────────────────────────────────────────────────
   // Only a *user* drag: `originalEvent` is absent on the programmatic `easeTo` that follow
@@ -600,7 +626,6 @@ export default function RideView({
   const startRiding = useCallback(async () => {
     if (suspended) return
     setRiding(true)
-    setPlacing(false)
     setFollowPaused(false)
     lastRerouteAt.current = 0
     // Ride can be started from inside the drawer, which covers the map it is about to lock
@@ -638,48 +663,28 @@ export default function RideView({
     if (!suspended) act()
   }
 
+  /**
+   * Two buttons, and no chevron to fold them away.
+   *
+   * The rail was seven and a toggle, which is a control for a control. Placing and the saved
+   * list moved into the plan card, where they belong to what the rider is actually doing; the
+   * daylight map, the path mode and follow moved into Layers, because you set them once and
+   * then never touch them again. What is left is the two things you reach for *at a junction*,
+   * and two buttons need no machinery to put away.
+   */
   const controls: RailControl[] = [
     {
-      key: 'place',
-      icon: <PinIcon />,
-      label: placing ? 'Stop adding points on tap' : 'Add points by tapping the map',
-      active: placing,
-      pressed: placing,
-      onClick: () => setPlacing((p) => !p),
+      key: 'layers',
+      icon: <LayersIcon />,
+      label: 'Map layers and daylight',
+      active: layersOpen,
+      onClick: ifLive(() => setLayersOpen(true)),
     },
-    {
-      key: 'library',
-      icon: <BookmarkIcon />,
-      label: 'Saved routes and rides',
-      onClick: sheet.showLibrary,
-    },
-    {
-      key: 'theme',
-      icon: theme === 'dark' ? <SunIcon /> : <MoonIcon />,
-      label: theme === 'dark' ? 'Switch to the daylight map' : 'Switch to the dark map',
-      onClick: ifLive(() => setTheme(theme === 'dark' ? 'light' : 'dark')),
-    },
-    {
-      key: 'paths',
-      icon: <PathIcon />,
-      label: PATH_MODE_LABEL[pathMode],
-      active: pathMode !== 'none',
-      onClick: ifLive(() => setPathMode(nextPathMode(pathMode))),
-    },
-    { key: 'setup', icon: <SettingsIcon />, label: 'Setup', onClick: onOpenSetup },
     {
       key: 'locate',
       icon: <TargetIcon />,
       label: 'Centre on my location',
       onClick: centreOnMe,
-    },
-    {
-      key: 'follow',
-      icon: <NavigationIcon />,
-      label: follow ? 'Stop following' : 'Follow my position',
-      active: follow,
-      pressed: follow,
-      onClick: () => setFollow((f) => !f),
     },
   ]
 
@@ -803,21 +808,15 @@ export default function RideView({
               free-wheel could not open your map. If it is open in another tab, close that tab
               and reload.
             </p>
-          ) : routeCount > 1 ? (
-            <p className="rail-hint panel">
-              {routeCount} routes — tap one to choose it.
-            </p>
-          ) : (
-            <p className="rail-hint panel">
-              {plan.waypoints.length === 0
-                ? placing
-                  ? 'Tap the map to set your start.'
-                  : 'Turn on point editing to plan a route.'
-                : plan.waypoints.length === 1
-                  ? 'Now tap where you are heading.'
-                  : 'Ready when you are.'}
-            </p>
-          )}
+          ) : plan.routing !== null ? (
+            <p className="rail-hint panel">Working out your routes…</p>
+          ) : routeCount > 1 && plan.chosen === null ? (
+            <p className="rail-hint panel">Tap a line, or a card, to choose it.</p>
+          ) : plan.waypoints.length === 0 ? (
+            <p className="rail-hint panel">Tap the map to set your start</p>
+          ) : plan.waypoints.length === 1 ? (
+            <p className="rail-hint panel">Now tap where you're heading</p>
+          ) : null}
         </div>
 
         {problem && (
@@ -826,57 +825,69 @@ export default function RideView({
           </p>
         )}
 
-        {/* Bottom-anchored, so collapsing needs no layout change: the buttons slide down into
-            the chevron and the chevron never moves. Transform and opacity only — a height or
-            max-height animation on a backdrop-filtered stack judders on iOS. */}
-        <div className="map-controls" data-collapsed={controlsOpen ? 'no' : 'yes'}>
-          {/* `--i` counts from the bottom: a button's travel to the chevron is its distance
-              from it, and the stagger runs off the same number. */}
-          <div className="control-stack" style={{ '--n': controls.length } as React.CSSProperties}>
-            {controls.map((control, index) => (
-              <button
-                key={control.key}
-                type="button"
-                className="icon-button"
-                style={{ '--i': controls.length - index } as React.CSSProperties}
-                data-active={control.active ? 'yes' : 'no'}
-                aria-pressed={control.pressed}
-                aria-label={control.label}
-                onClick={control.onClick}
-              >
-                {control.icon}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="icon-button controls-toggle"
-            onClick={() => setControlsOpen((open) => !open)}
-            aria-expanded={controlsOpen}
-            aria-label={controlsOpen ? 'Hide map controls' : 'Show map controls'}
-          >
-            <ChevronIcon />
-          </button>
+        {/* Two buttons, bottom right, above the plan card. No collapse: there is nothing
+            left worth putting away, and the chevron that used to do it was the eighth control
+            on a rail of seven. */}
+        <div className="map-controls">
+          {controls.map((control) => (
+            <button
+              key={control.key}
+              type="button"
+              className="icon-button"
+              data-active={control.active ? 'yes' : 'no'}
+              aria-pressed={control.pressed}
+              aria-label={control.label}
+              onClick={control.onClick}
+            >
+              {control.icon}
+            </button>
+          ))}
         </div>
 
         <RouteSheet
           plan={plan}
           sheet={sheet}
           onStart={() => void startRiding()}
-          onLoadSaved={(entry) => {
+          onOpenSaved={() => setSavedOpen(true)}
+          onOpenSetup={onOpenSetup}
+          onSaved={() => setLibrarySaves((n) => n + 1)}
+        />
+      </div>
+
+      <LayersSheet
+        open={layersOpen}
+        onOpenChange={setLayersOpen}
+        theme={theme}
+        onTheme={(next) => {
+          if (!suspended) setTheme(next)
+        }}
+        pathMode={pathMode}
+        onPathMode={setPathMode}
+        follow={follow}
+        onFollow={setFollow}
+      />
+
+      {/* Above the ride screen rather than instead of it: unmounting the map would drop its
+          OPFS handles and its tile cache, and loading a route from here puts one straight back
+          onto that map. */}
+      {savedOpen && (
+        <SavedScreen
+          onClose={() => setSavedOpen(false)}
+          reloadKey={librarySaves}
+          onLoad={(entry) => {
             if (plan.loadSaved(entry)) {
               sheet.setView('detail')
-              sheet.setOpen(false)
+              setSavedOpen(false)
             }
           }}
           onLoadTrack={(entry) => {
             if (plan.loadTrack(entry)) {
               sheet.setView('detail')
-              sheet.setOpen(false)
+              setSavedOpen(false)
             }
           }}
         />
-      </div>
+      )}
       {summary}
     </div>
   )
@@ -902,59 +913,10 @@ const FIX_LABEL: Record<string, (accuracy: number | null, wakeLock: boolean) => 
 /* Inline SVG rather than sprite lookups: a missing sprite entry would be one more thing that
    can fail silently offline. */
 
-/**
- * Sliders, not a cog. The obvious cog — a circle with eight spokes — is visually identical to
- * the sun used for the daylight toggle, and the two buttons sit near each other.
- */
-function SettingsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 7h6M14 7h6M4 17h10M18 17h2" />
-      <circle cx="12" cy="7" r="2.2" />
-      <circle cx="16" cy="17" r="2.2" />
-    </svg>
-  )
-}
 
-/**
- * A forking dashed track. Deliberately not the pixel bike, which already means ride mode, and
- * not a footprint, which would name the state the button is *least* often in.
- */
-function PathIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6 22v-6a4 4 0 0 1 4-4h4a4 4 0 0 0 4-4V2" strokeDasharray="3.5 2.6" />
-      <circle cx="6" cy="22" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="18" cy="2" r="1.5" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
 
-/** Names the state the button is *in*, not the one it moves to — the map already shows the
- *  change, so a label describing the next tap reads as a contradiction of what you can see. */
-const PATH_MODE_LABEL: Record<PathMode, string> = {
-  rideable: 'Paths: cycleways, tracks and bridleways. Tap to add footpaths',
-  all: 'Paths: all, including footpaths and steps. Tap to hide',
-  none: 'Paths hidden. Tap to show cycleways and tracks',
-}
 
-function PinIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" />
-      <circle cx="12" cy="10.4" r="2.4" />
-    </svg>
-  )
-}
 
-/** A bookmark, for the saved list. Not a star, which everywhere else means "favourite". */
-function BookmarkIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6.5 3h11a1 1 0 0 1 1 1v17l-6.5-4.4L5.5 21V4a1 1 0 0 1 1-1z" />
-    </svg>
-  )
-}
 
 /**
  * A compass needle, for course-up.
@@ -995,6 +957,20 @@ function SpeakerOffIcon() {
   )
 }
 
+/**
+ * Three stacked sheets. The obvious icon for layers, and the one every map app uses — which is
+ * the argument for it: this button opens the only thing on this screen a rider has met before.
+ */
+function LayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3 3 8l9 5 9-5-9-5z" />
+      <path d="M3 12l9 5 9-5" />
+      <path d="M3 16l9 5 9-5" />
+    </svg>
+  )
+}
+
 function TargetIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1005,39 +981,6 @@ function TargetIcon() {
   )
 }
 
-function NavigationIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 2.5 20 21l-8-4.4L4 21z" />
-    </svg>
-  )
-}
 
-/**
- * A single chevron, pointing the way the stack will move: down to put it away, up to bring it
- * back. Rotated by CSS so the glyph itself animates with the rail rather than swapping.
- */
-function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m6 9.5 6 6 6-6" />
-    </svg>
-  )
-}
 
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="4.2" />
-      <path d="M12 1.8v2.6M12 19.6v2.6M22.2 12h-2.6M4.4 12H1.8M19.2 4.8l-1.9 1.9M6.7 17.3l-1.9 1.9M19.2 19.2l-1.9-1.9M6.7 6.7 4.8 4.8" />
-    </svg>
-  )
-}
 
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z" />
-    </svg>
-  )
-}

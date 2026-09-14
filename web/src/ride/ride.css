@@ -1412,6 +1412,113 @@
   flex: 1;
 }
 
+/* ── Route detail furniture ─────────────────────────────────────────────────────────── */
+
+.detail-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.detail-title .drawer-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The four things you might do with a route, as icons with words under them. A row of four
+   equal tiles rather than four text buttons: they are peers, none of them is the action, and
+   Start ride is the only thing on this sheet that should look like a decision. */
+.route-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.drawer-body .route-actions button {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: center;
+  min-height: 0;
+  padding: 0.7rem 0.25rem;
+  border-radius: var(--radius);
+  background: var(--inset);
+  font-size: 0.72rem;
+}
+
+.route-actions svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/*
+ * Start ride, pinned.
+ *
+ * It sits in the same place on the expanded sheet as it does on the card, so the thumb does
+ * not have to move when the sheet grows. Sticky rather than fixed: the drawer body is what
+ * scrolls, and a fixed footer inside a portalled, dragged element fights the drag.
+ */
+.drawer-footer {
+  position: sticky;
+  bottom: 0;
+  margin: 0.4rem -1rem calc(var(--safe-bottom) * -1);
+  padding: 0.7rem 1rem var(--safe-bottom);
+  border-top: 1px solid var(--hairline);
+  background: var(--panel-strong);
+}
+
+.drawer-footer .primary {
+  width: 100%;
+}
+
+/* ── A switch ───────────────────────────────────────────────────────────────────────────
+   Drawn rather than an `<input type=checkbox>`, because the row it sits in is the button — a
+   real control inside a real button is two targets fighting over one tap, and the native one
+   cannot be styled to match anything else here anyway. */
+
+.switch {
+  position: relative;
+  flex: none;
+  display: block;
+  width: 50px;
+  height: 30px;
+  border-radius: 15px;
+  background: var(--track);
+  transition: background-color 180ms ease;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+  transition: transform 180ms ease;
+}
+
+.switch[data-on='yes'] {
+  background: var(--good-fill);
+}
+
+.switch[data-on='yes']::after {
+  transform: translateX(20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch::after {
+    transition: none;
+  }
+}
+
 /* ── Climbs on the planned route ────────────────────────────────────────────────────────
    Same colours as the riding profile's bars and the same `gradients()` behind them, so a
    climb read at the kitchen table and the same climb called out on the road look alike. */

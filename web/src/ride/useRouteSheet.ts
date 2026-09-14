@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Plan } from './useRoute'
 
-export type SheetView = 'compare' | 'detail' | 'library'
+export type SheetView = 'compare' | 'detail'
 
 /**
  * The drawer's open state and which view it is showing.
@@ -35,21 +35,16 @@ export function useRouteSheet(plan: Plan) {
       setOpen(true)
     },
     /**
-     * Opens the saved routes and rides.
+     * Commits to a route.
      *
-     * A third view of the same drawer rather than a screen of its own, for the same reason
-     * compare and detail share one: loading a saved route puts it on the map behind the
-     * drawer, so the drawer is already the right surface and a full screen would hide the
-     * thing being chosen.
+     * It does **not** open the detail view any more, and that is the redesign's point: a tap on
+     * a card — or on a line on the map — is the rider saying "this one", and the useful next
+     * thing is Start, which appears on the card itself. Throwing a full sheet of climbs over
+     * the map at the moment they picked a route made choosing feel like a commitment to
+     * reading. Details is now a row on the chosen card, for the riders who want it.
      */
-    showLibrary() {
-      setView('library')
-      setOpen(true)
-    },
-    /** Commits to a route and shows it. The one way into the detail view. */
     choose(id: string) {
       plan.chooseProfile(id)
-      setView('detail')
       setOpen(true)
     },
     /**

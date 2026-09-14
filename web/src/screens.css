@@ -1,0 +1,237 @@
+/*
+ * Full-screen document surfaces: Saved, and the two screens Setup pushes to.
+ *
+ * ## Why they are screens and not sheets
+ *
+ * Everything else in this app floats over the map, because everything else is *about* what is
+ * on the map. These are not. A list of routes you are not looking at, and a set of numbers
+ * describing your bike, have nothing behind them worth seeing through to — and putting them in
+ * a drawer meant they were permanently competing for width with a surface designed for three
+ * figures and a button.
+ *
+ * ## They are still overlays
+ *
+ * Same rule as Setup, and it is not a stylistic one: unmounting the ride screen takes the map
+ * with it, which drops its OPFS handles and its whole tile cache. So the ride screen keeps
+ * rendering underneath and this covers it. `background` is opaque for exactly that reason.
+ *
+ * ## The shape
+ *
+ * A 28px title with a back button beside it, a scrolling body, and an optional quiet footer.
+ * One vocabulary, so pushing from the Setup list to *You and the bike* and pushing from the
+ * plan card to *Saved* feel like the same gesture.
+ */
+
+.screen {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 50;
+  height: var(--app-height);
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overscroll-behavior: none;
+}
+
+.screen-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+  padding: calc(max(env(safe-area-inset-top), 0.6rem) + 0.5rem) 1rem 0;
+}
+
+.screen-head h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* The way back, and it is a real 40px surface rather than a bare chevron: on a screen that
+   scrolls, the only fixed thing has to be findable without looking. */
+.screen-back {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-small);
+  background: var(--card);
+  box-shadow: var(--lift-row);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.screen-back svg {
+  width: 20px;
+  height: 20px;
+}
+
+.screen-body {
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+  flex: 1;
+  min-height: 0;
+  padding: 1rem 1rem 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.screen-foot {
+  flex: none;
+  margin: 0;
+  padding: 0.6rem 1rem var(--safe-bottom);
+  color: var(--faint);
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+/* ── Rows in a list that opens ──────────────────────────────────────────────────────────
+   One target per entry rather than three buttons in a row. Delete a thumb-width from Load, on
+   a list you scroll, is a mistake waiting for a pothole; the actions moved inside, where
+   nothing is moving and they can be named. */
+
+.library-row {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  align-items: center;
+  column-gap: 0.75rem;
+  width: 100%;
+  min-height: 0;
+  padding: 0.7rem 0.85rem;
+  border: none;
+  border-radius: var(--r-large);
+  background: var(--card);
+  box-shadow: var(--lift-row);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.library-row .library-text {
+  display: grid;
+  gap: 0.12rem;
+  justify-items: start;
+  min-width: 0;
+}
+
+/* Planned or ridden, as a word. The colour of the thumbnail already separates them, but a
+   route's colour is its *profile's* — so two planned routes differ from each other by exactly
+   as much as a planned route differs from a ride, and colour alone cannot carry the kind. */
+.library-tag {
+  margin-top: 0.25rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: var(--r-pill);
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.library-tag[data-kind='route'] {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.library-tag[data-kind='ride'] {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.library-chevron {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--faint);
+}
+
+.library-detail-title h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.library-detail-title p {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* ── The Setup list ─────────────────────────────────────────────────────────────────────
+   Setup stopped being three tabs and became a short list that pushes. The tab strip was a
+   control with a current position, which is right when the three things are views of one
+   subject — and these are not: maps, the rider, and an engine harness have nothing to do with
+   each other, and the designs draw both of the first two as screens with a way back. */
+
+.setup-menu {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.setup-menu-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  column-gap: 0.85rem;
+  width: 100%;
+  min-height: 0;
+  padding: 0.85rem;
+  border: none;
+  border-radius: var(--r-large);
+  background: var(--card);
+  box-shadow: var(--lift-row);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-menu-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.setup-menu-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.setup-menu-text {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.setup-menu-text strong {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.setup-menu-text span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}

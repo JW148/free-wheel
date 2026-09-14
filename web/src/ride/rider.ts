@@ -11,12 +11,23 @@
  * this is a property of the rider that changes about once a year.
  */
 
+import { DEFAULT_PROFILES, PROFILES, type ProfileId } from './profiles'
+
 export interface RiderSetup {
   riderKg: number
   /** Bike, and anything strapped to it. Panniers belong here, not in `riderKg`. */
   bikeKg: number
   position: PositionId
   tyres: TyreId
+  /**
+   * The riding style offered first, set by the bike answered for on the first run.
+   *
+   * A property of the rider rather than of the plan, and that is the point: a plan is a route
+   * and changes every time you tap the map, but what you ride changes about as often as your
+   * weight does. It decides which of the three cards is suggested, and — when a route is too
+   * long to compute three of — which single one gets computed.
+   */
+  style: ProfileId
   /**
    * Whether leaving the route should route again from where the rider is.
    *
@@ -72,6 +83,7 @@ export const DEFAULT_RIDER: RiderSetup = {
   bikeKg: 10,
   position: 'hoods',
   tyres: 'allroad',
+  style: DEFAULT_PROFILES[0],
   autoReroute: true,
 }
 
@@ -106,6 +118,12 @@ export function migrateRider(raw: unknown): RiderSetup {
     tyres: TYRES.some((t) => t.id === stored.tyres)
       ? (stored.tyres as TyreId)
       : DEFAULT_RIDER.tyres,
+    // A stored setup from before the redesign has no style at all, and a renamed or withdrawn
+    // profile must not survive into a routing call — `run` would ask the engine for a `.brf`
+    // that does not exist.
+    style: PROFILES.some((p) => p.id === stored.style)
+      ? (stored.style as ProfileId)
+      : DEFAULT_RIDER.style,
     autoReroute:
       typeof stored.autoReroute === 'boolean' ? stored.autoReroute : DEFAULT_RIDER.autoReroute,
   }

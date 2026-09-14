@@ -1,66 +1,63 @@
 import { useState } from 'react'
 import { Drawer } from 'vaul'
-import { PROFILES, profileById } from './profiles'
+import { DEFAULT_PROFILES, PROFILES, profileById } from './profiles'
 import type { Plan } from './useRoute'
 import { formatDistance, formatDuration, hasHeights } from './gpx'
 import ElevationProfile from './ElevationProfile'
-import ElevationCompare from './ElevationCompare'
 import RouteClimbs from './RouteClimbs'
-import RouteLibrary from './RouteLibrary'
-import { putEntry, routeEntry, type SavedRide, type SavedRoute } from './library'
+import { putEntry, routeEntry } from './library'
 import { gpxFilename, shareGpx } from './share'
 import type { RouteSheetState } from './useRouteSheet'
 
 /**
- * The bottom bar, and the drawer it opens into.
+ * The plan card, and the sheet it opens into.
  *
- * The bar is always there: what is chosen, and the single action worth taking. Everything else
- * — the elevation profile, the profile picker, the waypoint list, export — lives in a drawer
- * you pull up and swipe away.
+ * ## The card has three things to say, and only ever one of them
  *
- * ## Two views, one drawer
+ * *Nothing placed* — an invitation and two quiet shortcuts. *One point placed* — the start,
+ * named, and a slot where the finish goes. *Routed* — what was chosen and the button that
+ * rides it. They share the handle, the inset and the shadow, so it reads as one object
+ * changing its mind rather than three panels swapping places.
  *
- * *Compare* is the list: tick the styles you want, hit Compare, and each result gets a row.
- * *Detail* is one route: its figures, its elevation profile in its own colour, and the button
- * that starts the ride. Choosing — a tap on a line on the map, or on a row's figures here —
- * is what moves between them.
+ * ## Choosing is three cards, not six tick-boxes
  *
- * They are two views of one `Drawer.Root` rather than two drawers. Stacking vaul on vaul
- * means two drag handlers, two overlays and two focus traps competing for the same touch, and
- * the back-and-forth here is navigation, not a new surface.
+ * The old flow asked the rider to tick routing profiles and press Compare — a question about
+ * the software, asked *before* any route existed, whose answer they had no way to evaluate.
+ * Now the second tap computes three and the choice is made by looking at them: Relaxed, Fast,
+ * Off-road, with their figures. The other three profiles are one tap away under *More riding
+ * styles*; nothing was removed.
+ *
+ * `plan.chosen` is still `null` until a card is tapped, and that is still the point. Anything
+ * reading "the route" has to handle `null` rather than fall back to a default — the fallback
+ * *was* the bug.
  *
  * ## Why vaul rather than a `max-height` transition
  *
- * The previous version was a flex child of the chrome layer that grew when opened. Two things
- * were wrong with that. Visibly, its height was capped in viewport units while its position
- * depended on the siblings above it, so on a phone it ran off the bottom of the screen.
- * Structurally, drag-to-dismiss done properly is velocity tracking, rubber-banding at the
- * limits, scroll/drag disambiguation inside the content, focus trapping and inert background
- * — all of which vaul already does correctly and none of which is interesting to rewrite.
- *
- * It portals to `document.body`, so it is not subject to the chrome layer's flexbox at all,
- * which is what makes the overflow impossible rather than merely fixed.
+ * Drag-to-dismiss done properly is velocity tracking, rubber-banding at the limits,
+ * scroll/drag disambiguation inside the content, focus trapping and inert background — all of
+ * which vaul already does correctly and none of which is interesting to rewrite. It portals to
+ * `document.body`, so it is not subject to the chrome layer's flexbox at all, which is what
+ * makes the overflow the old flex-child version suffered impossible rather than merely fixed.
  */
 
 export default function RouteSheet({
   plan,
   sheet,
   onStart,
-  onLoadSaved,
-  onLoadTrack,
+  onOpenSaved,
+  onOpenSetup,
+  onSaved,
 }: {
   plan: Plan
   sheet: RouteSheetState
   onStart: () => void
-  onLoadSaved: (entry: SavedRoute) => void
-  onLoadTrack: (entry: SavedRide) => void
+  onOpenSaved: () => void
+  onOpenSetup: () => void
+  /** A route was saved to the library, so the Saved screen's list is stale. */
+  onSaved: () => void
 }) {
-  /** Bumped after a save so the library list picks the new entry up. */
-  const [librarySaves, setLibrarySaves] = useState(0)
   const routeIds = Object.keys(plan.routes)
   const routed = routeIds.length > 0
-  const comparing = plan.selection.length > 1
-  const canRoute = plan.waypoints.length >= 2 && plan.routing === null
   const chosen = plan.route
 
   return (
@@ -68,68 +65,17 @@ export default function RouteSheet({
       <div className="sheet-bar panel">
         <button
           type="button"
-          className="sheet-toggle"
+          className="card-handle"
           onClick={sheet.openForPlan}
           aria-label="Route options"
-        >
-          {chosen && plan.chosen ? (
-            <>
-              <span className="sheet-profile">
-                <span className="swatch" style={{ background: profileById(plan.chosen).colour }} />
-                {profileById(plan.chosen).label}
-              </span>
-              <span className="sheet-count">
-                {formatDistance(chosen.distanceM)}
-                {chosen.timeS !== null && ` · ${formatDuration(chosen.timeS)}`}
-                {` · ${Math.round(chosen.ascendM)} m`}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="sheet-profile">
-                {routed
-                  ? `${routeIds.length} routes compared`
-                  : comparing
-                    ? `Comparing ${plan.selection.length} styles`
-                    : profileById(plan.selection[0]).label}
-              </span>
-              <span className="sheet-count">
-                {plan.routing
-                  ? `Routing ${profileById(plan.routing).label}…`
-                  : routed
-                    ? 'Tap a line to choose'
-                    : plan.waypoints.length === 0
-                      ? 'no points'
-                      : `${plan.waypoints.length} point${plan.waypoints.length === 1 ? '' : 's'}`}
-              </span>
-            </>
-          )}
-        </button>
+        />
 
-        {plan.routing !== null ? (
-          <button type="button" className="primary busy" onClick={plan.cancel}>
-            Stop
-          </button>
-        ) : chosen ? (
-          // Once a route is chosen, the useful action is riding it. Rerouting moves into the
-          // drawer, where the things you would reroute *because of* already are.
-          <button type="button" className="primary" onClick={onStart}>
-            Start
-          </button>
-        ) : routed ? (
-          // Routes exist but none is picked. The action is the decision, not the ride.
-          <button type="button" className="primary" onClick={sheet.showCompare}>
-            Choose
-          </button>
+        {routed || plan.routing ? (
+          <RoutedCard plan={plan} sheet={sheet} onStart={onStart} />
+        ) : plan.waypoints.length > 0 ? (
+          <PointsCard plan={plan} />
         ) : (
-          <button
-            type="button"
-            className="primary"
-            disabled={!canRoute}
-            onClick={() => void plan.run()}
-          >
-            {comparing ? 'Compare' : 'Find route'}
-          </button>
+          <InviteCard onOpenSaved={onOpenSaved} onOpenSetup={onOpenSetup} />
         )}
       </div>
 
@@ -139,218 +85,10 @@ export default function RouteSheet({
           <Drawer.Content className="drawer" aria-describedby={undefined}>
             <Drawer.Handle className="drawer-handle" />
             <div className="drawer-body">
-              {sheet.view === 'library' ? (
-                // No head here: the library draws its own, because it has two screens and
-                // only it knows whether the list or a ride's detail is showing.
-                <RouteLibrary
-                  onBack={() => sheet.setView('compare')}
-                  onLoad={onLoadSaved}
-                  onLoadTrack={onLoadTrack}
-                  reloadKey={librarySaves}
-                />
-              ) : sheet.view === 'detail' && chosen && plan.chosen ? (
-                <>
-                  <div className="drawer-head">
-                    <button
-                      type="button"
-                      className="drawer-back"
-                      onClick={() => sheet.setView('compare')}
-                      aria-label="Back to riding styles"
-                    >
-                      <ChevronLeftIcon />
-                    </button>
-                    <Drawer.Title className="drawer-title">
-                      <span className="swatch" style={{ background: profileById(plan.chosen).colour }} />
-                      {profileById(plan.chosen).label}
-                    </Drawer.Title>
-                    <button type="button" className="primary" onClick={onStart}>
-                      Ride this
-                    </button>
-                  </div>
-
-                  <dl className="detail-stats">
-                    <div>
-                      <dd>{formatDistance(chosen.distanceM)}</dd>
-                      <dt>distance</dt>
-                    </div>
-                    <div>
-                      <dd>{formatDuration(chosen.timeS)}</dd>
-                      <dt>moving</dt>
-                    </div>
-                    <div>
-                      <dd>{Math.round(chosen.ascendM)} m</dd>
-                      <dt>climbing</dt>
-                    </div>
-                  </dl>
-
-                  {/* A recorded track's heights came from whatever route it was ridden
-                      along, so a ride recorded without one has none at all — and an
-                      elevation chart drawn from zeros is a flat road, which is a claim
-                      about the terrain rather than an absence of one. */}
-                  {hasHeights(chosen) ? (
-                    <>
-                      <ElevationProfile
-                        route={chosen}
-                        colour={profileById(plan.chosen).colour}
-                        label={profileById(plan.chosen).label}
-                      />
-
-                      <RouteClimbs route={chosen} />
-                    </>
-                  ) : (
-                    <p className="warn">
-                      This track carries no surveyed heights, so there is no elevation profile
-                      and no climb list. Distance is measured from the track itself.
-                    </p>
-                  )}
-
-                  <Waypoints plan={plan} />
-
-                  {/* A recorded track is already in the library, and saving it as a *route*
-                      would file it under a profile that never produced it. */}
-                  {!plan.isRecordedTrack && (
-                    <SaveRoute plan={plan} onSaved={() => setLibrarySaves((n) => n + 1)} />
-                  )}
-
-                  <div className="sheet-actions">
-                    {/* Only where there is a comparison to go back to. With a lone route this
-                        would just disable Start and explain nothing. */}
-                    {plan.clearableChoice && (
-                      <button type="button" onClick={sheet.clearChoice}>
-                        Clear selection
-                      </button>
-                    )}
-                    {/* Turning round drops the computed route, because the way back is a
-                        different road — one-way streets and turn restrictions are not
-                        symmetric. The drawer falls back to the compare view, where Find route
-                        is the obvious next tap. */}
-                    <button type="button" onClick={plan.reverse}>
-                      Reverse
-                    </button>
-                    <button type="button" onClick={plan.clear}>
-                      Clear route
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        plan.chosenGpx &&
-                        plan.chosen &&
-                        void shareGpx(plan.chosenGpx, gpxFilename(plan.chosen))
-                      }
-                      disabled={!plan.chosenGpx}
-                    >
-                      Export GPX
-                    </button>
-                  </div>
-                </>
+              {sheet.view === 'detail' && chosen && plan.chosen ? (
+                <RouteDetail plan={plan} sheet={sheet} onStart={onStart} onSaved={onSaved} />
               ) : (
-                <>
-                  <div className="drawer-head">
-                    <Drawer.Title className="drawer-title">
-                      {comparing ? `Comparing ${plan.selection.length} styles` : 'Route'}
-                    </Drawer.Title>
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={!canRoute}
-                      onClick={() => void plan.run()}
-                    >
-                      {routed ? 'Reroute' : comparing ? 'Compare' : 'Find route'}
-                    </button>
-                  </div>
-
-                  {plan.warning && <p className="warn">{plan.warning}</p>}
-
-                  {routed && !chosen && (
-                    <p className="warn">
-                      {routeIds.length} routes are on the map. Tap one — here or on the map — to
-                      see its climbs and ride it.
-                    </p>
-                  )}
-
-                  {/* Above the list, because the shapes are what the list's numbers cannot
-                      show, and the decision is made looking at them. Renders nothing until
-                      there are two routes to compare. */}
-                  <ElevationCompare
-                    routes={plan.routes}
-                    chosen={plan.chosen}
-                    onChoose={sheet.choose}
-                  />
-
-                  <fieldset className="profiles">
-                    <legend className="section-label">
-                      Riding style — tick several to compare
-                    </legend>
-                    {PROFILES.map((option) => {
-                      const result = plan.routes[option.id]
-                      const ticked = plan.selection.includes(option.id)
-                      return (
-                        <div
-                          key={option.id}
-                          className="profile-row"
-                          data-selected={ticked ? 'yes' : 'no'}
-                          data-chosen={plan.chosen === option.id ? 'yes' : 'no'}
-                        >
-                          <input
-                            id={`profile-${option.id}`}
-                            type="checkbox"
-                            checked={ticked}
-                            onChange={() => plan.toggleProfile(option.id)}
-                          />
-                          <label htmlFor={`profile-${option.id}`} className="profile-text">
-                            <span className="profile-label">
-                              {/* Ties a row to its line on the map. Every route now takes
-                                  its profile's colour, including a lone one, so this is
-                                  always meaningful. */}
-                              <span className="swatch" style={{ background: option.colour }} />
-                              {option.label}
-                            </span>
-                            <span className="profile-note">{option.note}</span>
-                          </label>
-                          {result && (
-                            <button
-                              type="button"
-                              className="profile-pick"
-                              onClick={() =>
-                                plan.chosen === option.id
-                                  ? sheet.clearChoice()
-                                  : sheet.choose(option.id)
-                              }
-                              aria-label={
-                                plan.chosen === option.id
-                                  ? `Clear the ${option.label} selection`
-                                  : `Choose ${option.label} and see its detail`
-                              }
-                            >
-                              <span className="profile-figure">
-                                <strong>{formatDistance(result.distanceM)}</strong>
-                                {formatDuration(result.timeS)} · {Math.round(result.ascendM)} m
-                              </span>
-                              {/* The affordance has to match what the tap does, or the row
-                                  reads as "go in" when it now means "undo". */}
-                              {plan.chosen === option.id ? <ClearIcon /> : <ChevronRightIcon />}
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </fieldset>
-
-                  <Waypoints plan={plan} />
-
-                  <div className="sheet-actions">
-                    <button type="button" onClick={sheet.showLibrary}>
-                      Saved routes
-                    </button>
-                    <button
-                      type="button"
-                      onClick={plan.clear}
-                      disabled={plan.waypoints.length === 0}
-                    >
-                      Clear route
-                    </button>
-                  </div>
-                </>
+                <RouteChoice plan={plan} sheet={sheet} onStart={onStart} />
               )}
             </div>
           </Drawer.Content>
@@ -360,6 +98,469 @@ export default function RouteSheet({
   )
 }
 
+/** Nothing placed yet. The one sentence about what to do, and the two places worth going. */
+function InviteCard({
+  onOpenSaved,
+  onOpenSetup,
+}: {
+  onOpenSaved: () => void
+  onOpenSetup: () => void
+}) {
+  return (
+    <>
+      <div className="plan-invite">
+        <span className="plan-invite-icon" aria-hidden="true">
+          <PinIcon />
+        </span>
+        <span className="plan-invite-text">
+          <strong>Plan a ride</strong>
+          <span>Start, then finish. We do the rest.</span>
+        </span>
+      </div>
+      <div className="plan-shortcuts">
+        <button type="button" onClick={onOpenSaved}>
+          <BookmarkIcon />
+          Saved
+        </button>
+        <button type="button" onClick={onOpenSetup}>
+          <SettingsIcon />
+          Setup
+        </button>
+      </div>
+    </>
+  )
+}
+
+/**
+ * A start placed and a finish still to come.
+ *
+ * The coordinates are shown rather than a place name, because there is no geocoder on this
+ * phone and there is not going to be one — reverse geocoding is a network service, and the
+ * whole app is built on not needing one. Four decimal places is about 11 m, which is enough to
+ * tell two taps apart and short enough to fit.
+ */
+function PointsCard({ plan }: { plan: Plan }) {
+  const [start, ...rest] = plan.waypoints
+  const finish = rest.length > 0 ? rest[rest.length - 1] : null
+
+  return (
+    <>
+      <div className="plan-points">
+        <span className="plan-point-badge">S</span>
+        <span className="plan-point-label">{coords(start)}</span>
+        <button
+          type="button"
+          className="plan-point-remove"
+          onClick={() => plan.removeWaypoint(start.id)}
+          aria-label="Remove the start"
+        >
+          ×
+        </button>
+
+        <span className="plan-point-link" aria-hidden="true" />
+        <span />
+        <span />
+
+        <span className="plan-point-badge" data-placed={finish ? 'yes' : 'no'}>
+          F
+        </span>
+        <span className="plan-point-label" data-placed={finish ? 'yes' : 'no'}>
+          {finish ? coords(finish) : 'Tap the map for your finish'}
+        </span>
+        {finish && (
+          <button
+            type="button"
+            className="plan-point-remove"
+            onClick={() => plan.removeWaypoint(finish.id)}
+            aria-label="Remove the finish"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <p className="plan-note">Long-press a pin to drag it · add more stops after your finish</p>
+    </>
+  )
+}
+
+/** Routes exist, or are on their way. What was chosen, and the button that rides it. */
+function RoutedCard({
+  plan,
+  sheet,
+  onStart,
+}: {
+  plan: Plan
+  sheet: RouteSheetState
+  onStart: () => void
+}) {
+  const chosen = plan.route
+  const style = plan.chosen ? profileById(plan.chosen) : null
+
+  if (plan.routing) {
+    return (
+      <div className="action-row">
+        <span className="plan-invite-text">
+          <strong>Finding routes…</strong>
+          <span>{profileById(plan.routing).plain}</span>
+        </span>
+        <button type="button" className="primary busy" onClick={plan.cancel}>
+          Stop
+        </button>
+      </div>
+    )
+  }
+
+  if (!chosen || !style) {
+    // Routes on the map, none picked. The action is the decision, not the ride.
+    return (
+      <button type="button" className="primary" onClick={sheet.showCompare}>
+        Choose a route
+      </button>
+    )
+  }
+
+  return (
+    <>
+      <div className="plan-invite">
+        <span className="route-card-colour" style={{ background: style.colour, height: 34 }} />
+        <span className="plan-invite-text">
+          <strong>{style.plain}</strong>
+          <span>
+            {formatDistance(chosen.distanceM)}
+            {chosen.timeS !== null && ` · ${formatDuration(chosen.timeS)}`}
+            {` · ${Math.round(chosen.ascendM)} m up`}
+          </span>
+        </span>
+      </div>
+      <div className="action-row">
+        <button type="button" className="primary" onClick={onStart}>
+          Start ride
+        </button>
+      </div>
+    </>
+  )
+}
+
+/**
+ * The three routes, and the way to the other three.
+ *
+ * The cards are ordered by the selection, not by the results, so a card holds its place while
+ * the one above it is still computing — a list that reorders itself as results land is a list
+ * you cannot tap.
+ */
+function RouteChoice({
+  plan,
+  sheet,
+  onStart,
+}: {
+  plan: Plan
+  sheet: RouteSheetState
+  onStart: () => void
+}) {
+  const [more, setMore] = useState(false)
+  const extra = PROFILES.filter((p) => !DEFAULT_PROFILES.includes(p.id))
+  const shown = more ? PROFILES : PROFILES.filter((p) => plan.selection.includes(p.id))
+  const canRoute = plan.waypoints.length >= 2 && plan.routing === null
+
+  return (
+    <>
+      <div className="drawer-head">
+        <Drawer.Title className="drawer-title">Choose a route</Drawer.Title>
+        {plan.routing ? (
+          <button type="button" className="primary busy" onClick={plan.cancel}>
+            Stop
+          </button>
+        ) : (
+          Object.keys(plan.routes).length === 0 && (
+            <button
+              type="button"
+              className="primary"
+              disabled={!canRoute}
+              onClick={() => void plan.run()}
+            >
+              Find routes
+            </button>
+          )
+        )}
+      </div>
+
+      {plan.warning && <p className="warn">{plan.warning}</p>}
+
+      {plan.deferred.length > 0 && (
+        <p className="warn">
+          That is a long way, so only your usual style was worked out. The others will compute
+          when you tap them.
+        </p>
+      )}
+
+      <div className="route-cards">
+        {shown.map((option) => (
+          <RouteCard
+            key={option.id}
+            plan={plan}
+            sheet={sheet}
+            id={option.id}
+            onStart={onStart}
+          />
+        ))}
+      </div>
+
+      {extra.length > 0 && (
+        <button
+          type="button"
+          className="route-more"
+          aria-expanded={more}
+          onClick={() => setMore(!more)}
+        >
+          {more ? 'Fewer riding styles' : 'More riding styles'}
+          <ChevronDownIcon />
+        </button>
+      )}
+
+      <div className="sheet-actions">
+        <button type="button" onClick={plan.reverse} disabled={plan.waypoints.length < 2}>
+          Reverse
+        </button>
+        <button type="button" onClick={plan.clear} disabled={plan.waypoints.length === 0}>
+          Clear route
+        </button>
+      </div>
+    </>
+  )
+}
+
+/**
+ * One route, as a card.
+ *
+ * Four states, and each one has to be legible at a glance because three of them are on screen
+ * at once: computed, computing, deferred (too long to have been worked out unasked), and not
+ * offered at all — a profile revealed by *More riding styles* that has never been run.
+ */
+function RouteCard({
+  plan,
+  sheet,
+  id,
+  onStart,
+}: {
+  plan: Plan
+  sheet: RouteSheetState
+  id: string
+  onStart: () => void
+}) {
+  const option = profileById(id)
+  const result = plan.routes[id]
+  const isChosen = plan.chosen === id
+  const computing = plan.routing === id
+  const waiting = !result && !computing
+
+  return (
+    <div
+      className="route-card"
+      data-chosen={isChosen ? 'yes' : 'no'}
+      data-pending={waiting ? 'yes' : 'no'}
+      onClick={() => {
+        if (result) sheet.choose(id)
+        // No result and nothing running: this card is an offer to compute itself. That covers
+        // both a deferred profile and one just revealed by "More riding styles" — from the
+        // rider's side they are the same thing, a route they can see the name of and not the
+        // figures for.
+        else if (!computing && plan.waypoints.length >= 2) void plan.run(id)
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          if (result) sheet.choose(id)
+        }
+      }}
+    >
+      <span className="route-card-colour" style={{ background: option.colour }} />
+      <span className="route-card-text">
+        <span className="route-card-label">{option.plain}</span>
+        <span className="route-card-note">{option.note}</span>
+      </span>
+      <span className="route-card-figures">
+        {result ? (
+          <>
+            <strong>{result.timeS !== null ? formatDuration(result.timeS) : '—'}</strong>
+            <span>
+              {formatDistance(result.distanceM)} · {Math.round(result.ascendM)} m up
+            </span>
+          </>
+        ) : (
+          <span>{computing ? 'working…' : 'tap to work out'}</span>
+        )}
+      </span>
+
+      {/* Only on the chosen card. The way into the detail view — with the drag handle, one of
+          the two — and it exists nowhere else because there is nothing else it could describe. */}
+      {isChosen && (
+        <button
+          type="button"
+          className="route-card-details"
+          onClick={(e) => {
+            e.stopPropagation()
+            sheet.setView('detail')
+          }}
+        >
+          Details
+          <ChevronRightIcon />
+        </button>
+      )}
+      {isChosen && (
+        <div className="action-row" style={{ gridColumn: '1 / -1' }}>
+          <button type="button" className="primary" onClick={(e) => {
+            e.stopPropagation()
+            onStart()
+          }}>
+            Start ride
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Everything about one route, and the four things you might do with it. */
+function RouteDetail({
+  plan,
+  sheet,
+  onStart,
+  onSaved,
+}: {
+  plan: Plan
+  sheet: RouteSheetState
+  onStart: () => void
+  onSaved: () => void
+}) {
+  const chosen = plan.route!
+  const style = profileById(plan.chosen!)
+  const [saved, setSaved] = useState<'idle' | 'saved' | 'failed'>('idle')
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const save = async () => {
+    if (!plan.chosenGpx || !plan.chosen) return
+    try {
+      await putEntry(
+        routeEntry({
+          name: '',
+          waypoints: plan.waypoints,
+          profile: plan.chosen,
+          gpx: plan.chosenGpx,
+          route: chosen,
+        }),
+      )
+      setSaved('saved')
+      onSaved()
+    } catch (e) {
+      setSaved('failed')
+      setProblem(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <>
+      <div className="drawer-head">
+        <button
+          type="button"
+          className="drawer-back"
+          onClick={() => sheet.setView('compare')}
+          aria-label="Back to the routes"
+        >
+          <ChevronLeftIcon />
+          Routes
+        </button>
+      </div>
+
+      <div className="detail-title">
+        <span className="swatch" style={{ background: style.colour }} />
+        <Drawer.Title className="drawer-title">{style.plain}</Drawer.Title>
+        {/* The engine's own name for it. Not on the cards — at the moment of choosing,
+            "Trekking" is the word the rename was for — but here it is the useful fact, and
+            this is the only place a rider can meet it. */}
+        <span className="profile-pill">{style.label} profile</span>
+      </div>
+      <p className="plan-note">{style.note}</p>
+
+      <dl className="detail-stats">
+        <div>
+          <dd>{formatDistance(chosen.distanceM)}</dd>
+          <dt>distance</dt>
+        </div>
+        <div>
+          <dd>{formatDuration(chosen.timeS)}</dd>
+          <dt>moving</dt>
+        </div>
+        <div>
+          <dd>{Math.round(chosen.ascendM)} m</dd>
+          <dt>climbing</dt>
+        </div>
+      </dl>
+
+      {/* A recorded track's heights came from whatever route it was ridden along, so a ride
+          recorded without one has none at all — and an elevation chart drawn from zeros is a
+          flat road, which is a claim about the terrain rather than an absence of one. */}
+      {hasHeights(chosen) ? (
+        <>
+          <ElevationProfile route={chosen} colour={style.colour} label={style.plain} />
+          <RouteClimbs route={chosen} />
+        </>
+      ) : (
+        <p className="warn">
+          This track carries no surveyed heights, so there is no elevation profile and no climb
+          list. Distance is measured from the track itself.
+        </p>
+      )}
+
+      <div className="route-actions">
+        <button type="button" onClick={() => void save()} disabled={saved === 'saved'}>
+          <BookmarkIcon />
+          {saved === 'saved' ? 'Saved' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            plan.chosenGpx && plan.chosen && void shareGpx(plan.chosenGpx, gpxFilename(plan.chosen))
+          }
+          disabled={!plan.chosenGpx}
+        >
+          <ExportIcon />
+          Export
+        </button>
+        {/* Turning round drops the computed route, because the way back is a different road —
+            one-way streets and turn restrictions are not symmetric. */}
+        <button type="button" onClick={plan.reverse}>
+          <ReverseIcon />
+          Reverse
+        </button>
+        <button type="button" onClick={plan.clear}>
+          <ClearIcon />
+          Clear
+        </button>
+      </div>
+
+      {problem && (
+        <p className="warn" role="alert">
+          Could not save it: {problem}
+        </p>
+      )}
+
+      <Waypoints plan={plan} />
+
+      <div className="drawer-footer">
+        <button type="button" className="primary" onClick={onStart}>
+          Start ride
+        </button>
+      </div>
+    </>
+  )
+}
+
+function coords(point: { lat: number; lon: number }): string {
+  return `${point.lat.toFixed(4)}, ${point.lon.toFixed(4)}`
+}
+
 function Waypoints({ plan }: { plan: Plan }) {
   if (plan.waypoints.length === 0) return null
   return (
@@ -367,15 +568,9 @@ function Waypoints({ plan }: { plan: Plan }) {
       {plan.waypoints.map((waypoint, index) => (
         <li key={waypoint.id}>
           <span className="waypoint-role">
-            {index === 0
-              ? 'Start'
-              : index === plan.waypoints.length - 1
-                ? 'Finish'
-                : `Via ${index}`}
+            {index === 0 ? 'Start' : index === plan.waypoints.length - 1 ? 'Finish' : `Via ${index}`}
           </span>
-          <span className="waypoint-coords">
-            {waypoint.lat.toFixed(4)}, {waypoint.lon.toFixed(4)}
-          </span>
+          <span className="waypoint-coords">{coords(waypoint)}</span>
           <button
             type="button"
             onClick={() => plan.removeWaypoint(waypoint.id)}
@@ -389,10 +584,48 @@ function Waypoints({ plan }: { plan: Plan }) {
   )
 }
 
-function ChevronLeftIcon() {
+/* Inline SVG rather than sprite lookups: a missing sprite entry would be one more thing that
+   can fail silently offline. */
+
+function PinIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M15 5l-7 7 7 7" />
+      <path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" />
+      <circle cx="12" cy="10.4" r="2.4" />
+    </svg>
+  )
+}
+
+function BookmarkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.5 3h11a1 1 0 0 1 1 1v17l-6.5-4.4L5.5 21V4a1 1 0 0 1 1-1z" />
+    </svg>
+  )
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h6M14 7h6M4 17h10M18 17h2" />
+      <circle cx="12" cy="7" r="2.2" />
+      <circle cx="16" cy="17" r="2.2" />
+    </svg>
+  )
+}
+
+function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 15V4M8 8l4-4 4 4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" />
+    </svg>
+  )
+}
+
+function ReverseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 7h11l-3-3M17 17H6l3 3" />
     </svg>
   )
 }
@@ -400,8 +633,15 @@ function ChevronLeftIcon() {
 function ClearIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6" />
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  )
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 5l-7 7 7 7" />
     </svg>
   )
 }
@@ -414,79 +654,10 @@ function ChevronRightIcon() {
   )
 }
 
-/**
- * Saves the chosen route to the library, under a name if the rider wants one.
- *
- * Two steps rather than one, and the first step is a button rather than an always-visible
- * field. A name is worth asking for — "Pentlands loop" beats "8 Sep · 34.2 km" a month later —
- * but a text input sitting open in the drawer is a keyboard waiting to cover the map, and most
- * saves do not want one.
- */
-function SaveRoute({ plan, onSaved }: { plan: Plan; onSaved: () => void }) {
-  const [naming, setNaming] = useState(false)
-  const [name, setName] = useState('')
-  const [state, setState] = useState<'idle' | 'saved' | 'failed'>('idle')
-  const [problem, setProblem] = useState<string | null>(null)
-
-  const route = plan.route
-  const gpx = plan.chosenGpx
-  if (!route || !gpx || !plan.chosen) return null
-
-  const save = async () => {
-    try {
-      await putEntry(
-        routeEntry({
-          name,
-          waypoints: plan.waypoints,
-          profile: plan.chosen!,
-          gpx,
-          route,
-        }),
-      )
-      setState('saved')
-      setNaming(false)
-      setName('')
-      onSaved()
-    } catch (e) {
-      setState('failed')
-      setProblem(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  if (state === 'saved') {
-    return <p className="warn">Saved to the library on this phone.</p>
-  }
-
-  if (!naming) {
-    return (
-      <div className="sheet-actions">
-        <button type="button" onClick={() => setNaming(true)}>
-          Save this route
-        </button>
-      </div>
-    )
-  }
-
+function ChevronDownIcon() {
   return (
-    <>
-      <label className="named-save">
-        <span className="section-label">Name it, or leave it blank</span>
-        <input
-          type="text"
-          value={name}
-          placeholder="Pentlands loop"
-          onChange={(e) => setName(e.target.value)}
-        />
-      </label>
-      <div className="sheet-actions">
-        <button type="button" className="primary" onClick={() => void save()}>
-          Save
-        </button>
-        <button type="button" onClick={() => setNaming(false)}>
-          Cancel
-        </button>
-      </div>
-      {problem && <p className="warn" role="alert">Could not save it: {problem}</p>}
-    </>
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
   )
 }

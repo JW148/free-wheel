@@ -4,7 +4,7 @@ import { tilesForWaypoints } from '../engine/tiles'
 import { haversineM } from './geo'
 import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
 import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
-import { isRoutableProfile, RECORDED_TRACK } from './profiles'
+import { DEFAULT_PROFILES, isRoutableProfile, RECORDED_TRACK, type ProfileId } from './profiles'
 
 export type { Waypoint } from './plan'
 
@@ -18,6 +18,48 @@ export type { Waypoint } from './plan'
 const AIR_DISTANCE_CEILING_M = 150_000
 
 /**
+ * Air distance beyond which three routes is too many to compute without being asked.
+ *
+ * The second tap now produces three routes rather than one, and the Worker blocks inside Wasm
+ * for each of them in turn — so the wait is three times what it was. At a third of
+ * {@link AIR_DISTANCE_CEILING_M} that is still a few seconds; past it, it is a rider watching
+ * a spinner for something they did not ask for. Above this only the rider's own style runs,
+ * and the other two cards offer themselves.
+ *
+ * The two constants measure different things and are deliberately not the same number:
+ * `AIR_DISTANCE_CEILING_M` is where *one* route gets uncomfortable, this is where *three* do.
+ */
+export const COMPARE_CEILING_M = 50_000
+
+/** Straight-line length of a leg sequence, which is what both ceilings are measured against. */
+export function airDistanceM(points: { lon: number; lat: number }[]): number {
+  let total = 0
+  for (let i = 1; i < points.length; i++) {
+    total += haversineM([points[i - 1].lon, points[i - 1].lat], [points[i].lon, points[i].lat])
+  }
+  return total
+}
+
+/**
+ * Which profiles a run should actually compute, and whether that is all of them.
+ *
+ * Pure so the ceiling can be tested at either side of itself without a Worker. `preferred`
+ * leads the list either way: it is the rider's own style, so it is the one whose result is
+ * worth having first even when all three are coming.
+ */
+export function profilesToRun(
+  selection: string[],
+  preferred: string,
+  airM: number,
+): { run: string[]; deferred: string[] } {
+  const ordered = [preferred, ...selection.filter((id) => id !== preferred)].filter((id) =>
+    selection.includes(id),
+  )
+  if (ordered.length <= 1 || airM < COMPARE_CEILING_M) return { run: ordered, deferred: [] }
+  return { run: ordered.slice(0, 1), deferred: ordered.slice(1) }
+}
+
+/**
  * The plan: waypoints, which profiles to route them with, and which result the rider picked.
  *
  * `chosen` is the load-bearing piece. It is `null` while a comparison is open, and only a
@@ -26,9 +68,13 @@ const AIR_DISTANCE_CEILING_M = 150_000
  * and which line is drawn thick. The one exception is a run that returns a single route,
  * where there is nothing to weigh and committing saves a pointless tap.
  */
-export function useRoute() {
+export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   const restored = useRef<StoredPlan | null>(null)
   restored.current ??= loadPlan()
+  // `run` needs it and must not be rebuilt when it changes: a new `run` identity on every
+  // rider edit would re-fire every effect that depends on it, mid-ride included.
+  const preferredRef = useRef(preferred)
+  preferredRef.current = preferred
 
   const [waypoints, setWaypoints] = useState<Waypoint[]>(restored.current.waypoints)
   /** Profiles to route. One is the normal case; several is a comparison. */
@@ -51,6 +97,14 @@ export function useRoute() {
     return parsed
   })
   const [routing, setRouting] = useState<string | null>(null)
+  /**
+   * Profiles a run declined to compute because the route was too long to do three of.
+   *
+   * Not an error and not a failure — the cards are still offered, they just say so and route
+   * when tapped. Held in state rather than derived, because it has to survive the rider
+   * choosing one of the routes that *did* compute.
+   */
+  const [deferred, setDeferred] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Persist on change. The alternative — persisting on unload — does not fire reliably when
@@ -76,6 +130,7 @@ export function useRoute() {
     setRoutes({})
     setGpx({})
     setChosen(null)
+    setDeferred([])
     setError(null)
   }, [])
 
@@ -115,52 +170,84 @@ export function useRoute() {
    */
   const clearChoice = useCallback(() => setChosen(null), [])
 
-  const run = useCallback(async () => {
-    if (waypoints.length < 2) {
-      setError('Tap the map to set a start and a finish.')
-      return
-    }
-    setError(null)
-    setChosen(null)
-    const lonLats = waypoints.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
-
-    const computed: Record<string, ParsedRoute> = {}
-    const documents: Record<string, string> = {}
-    const failures: string[] = []
-
-    // Sequentially, because the engine Worker blocks inside Wasm for the duration of a
-    // route — issuing them in parallel would queue them anyway, and would lose the
-    // per-profile progress the rider can see.
-    try {
-      for (const id of selection) {
-        setRouting(id)
-        const outcome = await sharedEngine().route(id, lonLats)
-        if (!outcome.ok || !outcome.gpx) {
-          failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
-          continue
-        }
-        try {
-          computed[id] = parseBrouterGpx(outcome.gpx)
-          documents[id] = outcome.gpx
-        } catch (e) {
-          failures.push(e instanceof Error ? e.message : String(e))
-        }
+  /**
+   * Computes the routes on offer.
+   *
+   * Three things changed when the tick-list became three cards, and all three are about what
+   * the rider sees while they wait:
+   *
+   * - **Results land one at a time.** The Worker routes sequentially — it blocks inside Wasm,
+   *   so issuing them together only queues them — and each result is now committed to state
+   *   as it arrives rather than all of them at the end. The first card fills in while the
+   *   second is still computing, which is the difference between a list assembling itself and
+   *   a spinner.
+   * - **The rider's own style goes first**, so the card most likely to be chosen is the one
+   *   that is ready first.
+   * - **A long route defers the other two** rather than making the rider wait for three
+   *   searches they did not ask for. See {@link COMPARE_CEILING_M}.
+   *
+   * `only` runs a single profile without disturbing the rest, which is what a deferred card's
+   * own tap does.
+   */
+  const run = useCallback(
+    async (only?: string) => {
+      if (waypoints.length < 2) {
+        setError('Tap the map to set a start and a finish.')
+        return
       }
-    } catch (e) {
-      // The call itself rejecting — a worker that would not spawn — rather than a route that
-      // could not be found. Without the `finally` below it leaves the button reading
-      // "Routing…" until the app is reloaded.
-      failures.push(e instanceof Error ? e.message : String(e))
-    } finally {
-      setRouting(null)
-    }
-    setRoutes(computed)
-    setGpx(documents)
-    setChosen(chosenAfterRun(Object.keys(computed)))
+      setError(null)
+      const lonLats = waypoints.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
-    // A partial comparison is still useful — say what failed rather than discarding the rest.
-    if (failures.length) setError([...new Set(failures)].join(' '))
-  }, [waypoints, selection])
+      const { run: ids, deferred } = only
+        ? { run: [only], deferred: [] }
+        : profilesToRun(selection, preferredRef.current, airDistanceM(waypoints))
+
+      // A fresh run replaces what was on the map; a single deferred profile joins it.
+      if (!only) {
+        setChosen(null)
+        setRoutes({})
+        setGpx({})
+      }
+      setDeferred(deferred)
+
+      const computed: string[] = []
+      const failures: string[] = []
+
+      try {
+        for (const id of ids) {
+          setRouting(id)
+          const outcome = await sharedEngine().route(id, lonLats)
+          if (!outcome.ok || !outcome.gpx) {
+            failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
+            continue
+          }
+          try {
+            const parsed = parseBrouterGpx(outcome.gpx)
+            setRoutes((current) => ({ ...current, [id]: parsed }))
+            setGpx((current) => ({ ...current, [id]: outcome.gpx! }))
+            computed.push(id)
+          } catch (e) {
+            failures.push(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } catch (e) {
+        // The call itself rejecting — a worker that would not spawn — rather than a route that
+        // could not be found. Without the `finally` below it leaves the button reading
+        // "Routing…" until the app is reloaded.
+        failures.push(e instanceof Error ? e.message : String(e))
+      } finally {
+        setRouting(null)
+      }
+
+      // A lone result is not a choice, so it commits itself. Deferred profiles do not count as
+      // alternatives for this: they are not on the map, and there is nothing to weigh.
+      if (!only) setChosen(chosenAfterRun(computed))
+
+      // A partial comparison is still useful — say what failed rather than discarding the rest.
+      if (failures.length) setError([...new Set(failures)].join(' '))
+    },
+    [waypoints, selection],
+  )
 
   /**
    * Routes again from where the rider is now, through whatever is still ahead of them.
@@ -236,6 +323,7 @@ export function useRoute() {
     setRoutes({})
     setGpx({})
     setChosen(null)
+    setDeferred([])
     setError(null)
   }, [])
 
@@ -321,6 +409,8 @@ export function useRoute() {
     route: chosen ? routes[chosen] ?? null : null,
     chosenGpx: chosen ? gpx[chosen] ?? null : null,
     routing,
+    /** Profiles the run deferred. Their cards offer to compute themselves. */
+    deferred,
     error,
     warning: longRouteWarning(waypoints, selection.length),
     chooseProfile,
@@ -385,13 +475,7 @@ function explainRoutingFailure(message: string, waypoints: Waypoint[]): string {
 
 function longRouteWarning(waypoints: Waypoint[], profileCount: number): string | null {
   if (waypoints.length < 2) return null
-  let total = 0
-  for (let i = 1; i < waypoints.length; i++) {
-    total += haversineM(
-      [waypoints[i - 1].lon, waypoints[i - 1].lat],
-      [waypoints[i].lon, waypoints[i].lat],
-    )
-  }
+  const total = airDistanceM(waypoints)
   if (total < AIR_DISTANCE_CEILING_M) return null
   const each = profileCount > 1 ? ` — and you are comparing ${profileCount} profiles, one after another` : ''
   return `That is ${Math.round(total / 1000)} km as the crow flies. Routing cost grows roughly with the square of distance${each}, so this may take a while or time out.`

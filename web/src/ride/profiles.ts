@@ -52,30 +52,69 @@
  *
  * Assigned by profile and never cycled, so ticking a fourth profile cannot repaint the three
  * already on screen — which would make the map unreadable exactly when you are reading it.
+ *
+ * ## Two names, and the plain one is the one on screen
+ *
+ * `label` is BRouter's name for the profile. `plain` is what a rider calls the same thing. The
+ * old UI offered "Trekking", "Fast" and "Gravel" as a tick-list *before* any route existed,
+ * which asked the rider to pick a routing algorithm in order to find out what it did — a
+ * question about the software, not about the ride. "Relaxed", "Fast" and "Off-road" are three
+ * answers to "what sort of ride do you want", which is a question somebody can answer without
+ * knowing anything.
+ *
+ * Both are kept rather than one renamed. The engine name is still true, still what the `.brf`
+ * file is called, and still what the detail view puts in its pill — because once you have
+ * chosen a route, knowing which profile produced it is the useful fact, and it is the only
+ * place the rider can meet it.
  */
 export const PROFILES = [
   {
     id: 'trekking',
     label: 'Trekking',
-    note: 'The sane default — quiet roads and decent surfaces',
+    plain: 'Relaxed',
+    note: 'Quiet roads, decent surfaces',
     colour: '#fec241',
   },
-  { id: 'fastbike', label: 'Fast', note: 'Road bike; prefers speed over quiet', colour: '#28aeff' },
-  { id: 'gravel', label: 'Gravel', note: 'Happy on unsurfaced tracks', colour: '#389f48' },
+  {
+    id: 'fastbike',
+    label: 'Fast',
+    plain: 'Fast',
+    note: 'Road bike; speed over quiet',
+    colour: '#28aeff',
+  },
+  {
+    id: 'gravel',
+    label: 'Gravel',
+    plain: 'Off-road',
+    note: 'Happy on unsurfaced tracks',
+    colour: '#389f48',
+  },
   {
     id: 'fastbike-verylowtraffic',
     label: 'Fast, quiet',
+    plain: 'Fast, quiet',
     note: 'Road bike, traffic-averse',
     colour: '#b56daf',
   },
-  { id: 'mtb', label: 'MTB', note: 'Off-road', colour: '#fb3850' },
+  { id: 'mtb', label: 'MTB', plain: 'MTB', note: 'Off-road, the rough kind', colour: '#fb3850' },
   {
     id: 'shortest',
     label: 'Shortest',
-    note: 'Distance only, ignores surface and traffic',
+    plain: 'Shortest',
+    note: 'Distance only; ignores surface and traffic',
     colour: '#33e2d8',
   },
 ] as const
+
+/**
+ * The three offered without being asked for.
+ *
+ * Relaxed, Fast and Off-road: three answers that between them cover what a rider wants from a
+ * route, in three words none of which name a piece of software. The other three are not hidden
+ * — they are one tap away under *More riding styles* — but they are refinements of these, and
+ * a first-time rider should never have to meet them.
+ */
+export const DEFAULT_PROFILES = PROFILES.slice(0, 3).map((p) => p.id) as ProfileId[]
 
 export type ProfileId = (typeof PROFILES)[number]['id']
 
@@ -96,6 +135,7 @@ export type ProfileId = (typeof PROFILES)[number]['id']
 export const RECORDED_TRACK = {
   id: 'recorded',
   label: 'Recorded ride',
+  plain: 'Recorded ride',
   note: 'A track you rode, followed exactly as it was ridden',
   colour: '#ff7a3d',
 } as const

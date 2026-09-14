@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Drawer } from 'vaul'
 import { formatDistance, formatDuration } from './gpx'
 import { formatElapsed } from './format'
-import { profileById } from './profiles'
+import { profileById, RECORDED_TRACK } from './profiles'
 import {
   byNewest,
   deleteEntry,
@@ -23,6 +22,9 @@ import { gpxFilename, shareGpx } from './share'
 /**
  * Saved routes and finished rides.
  *
+ * Rendered inside `SavedScreen`, which owns the title and the way back to the map. This owns
+ * the list, the filter, and the detail each row opens into.
+ *
  * ## One list, with a filter over it
  *
  * They are the same object to a rider — "a thing I did, or a thing I mean to do" — and the
@@ -32,31 +34,33 @@ import { gpxFilename, shareGpx } from './share'
  * the list, and then the ordering that made the list easy to read makes the one thing in it
  * you were looking for impossible to find. Three chips, no navigation.
  *
+ * ## A row opens; the actions live inside
+ *
+ * Every row used to carry three buttons — Load, Export, Delete — which is Delete a thumb-width
+ * from the thing you meant to ride, on a list you scroll. Now the row is one target that opens
+ * the entry, and the actions are on a screen where nothing is moving and there is room to name
+ * them. It also made the two kinds consistent: a ride opened and a route did not, for no
+ * reason a rider could see.
+ *
  * ## What each kind offers
  *
- * A **route** can be loaded onto the map and ridden — one tap, because that is the only thing
- * anyone does with one.
- *
- * A **ride** has already happened, and it turns out to be two things rather than one. It is a
- * *record*: the figures the finish sheet showed, which used to vanish the moment that sheet
- * was dismissed and are now a tap away for as long as the ride is kept. And it is a *line on
- * the map*: a road you found and liked, which you can put back and follow, without the
- * router's opinion getting involved. So a ride row opens, and its detail carries both.
+ * A **route** can be put back on the map and ridden. A **ride** is two things: a *record* — the
+ * figures the finish sheet showed, which used to vanish with that sheet — and a *line on the
+ * map*, a road you found and liked, which you can follow again without the router being asked
+ * to guess at it.
  *
  * ## The thumbnail
  *
- * A shape, not a map. Forty-eight points normalised into a 44 px box is enough to tell a loop
+ * A shape, not a map. Forty-eight points normalised into a 52 px box is enough to tell a loop
  * from an out-and-back from a point-to-point at a glance, which is what actually identifies a
- * route in a list — far more than a name a rider did not bother to type.
+ * route in a list — far more than a name a rider did not bother to type. It is drawn in the
+ * entry's own colour, so the shape in the list and the line on the map are the same object.
  */
 export default function RouteLibrary({
-  onBack,
   onLoad,
   onLoadTrack,
   reloadKey,
 }: {
-  /** Leaves the library for the route. The head is drawn here, so the way out is too. */
-  onBack: () => void
   /** Puts a saved route back on the map, ready to ride. */
   onLoad: (entry: SavedRoute) => void
   /** Puts a recorded ride's own track back on the map, to be followed as it was ridden. */
@@ -67,8 +71,8 @@ export default function RouteLibrary({
   const [entries, setEntries] = useState<LibraryEntry[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [filter, setFilter] = useState<LibraryFilter>('all')
-  /** The ride whose figures are open, by id — not by object, so a refresh keeps it fresh. */
-  const [openRide, setOpenRide] = useState<string | null>(null)
+  /** The entry whose detail is open, by id — not by object, so a refresh keeps it fresh. */
+  const [openId, setOpenId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (!libraryAvailable()) {
@@ -100,7 +104,7 @@ export default function RouteLibrary({
     } catch (e) {
       failure = e instanceof Error ? e.message : String(e)
     }
-    if (openRide === entry.id) setOpenRide(null)
+    if (openId === entry.id) setOpenId(null)
     await refresh()
     if (failure) setProblem(failure)
   }
@@ -117,25 +121,18 @@ export default function RouteLibrary({
   }
 
   if (entries === null) {
-    return (
-      <div className="library">
-        <LibraryHead title="Saved" onBack={onBack} backLabel="Back to the route" />
-        <p className="section-label">Loading saved routes…</p>
-      </div>
-    )
+    return <p className="section-label">Loading saved routes…</p>
   }
 
-  const open = entries.find((entry) => entry.id === openRide && entry.kind === 'ride') as
-    | SavedRide
-    | undefined
+  const open = entries.find((entry) => entry.id === openId)
 
   if (open) {
     return (
-      <RideDetail
+      <EntryDetail
         key={open.id}
-        ride={open}
-        onBack={() => setOpenRide(null)}
-        onRide={() => onLoadTrack(open)}
+        entry={open}
+        onBack={() => setOpenId(null)}
+        onRide={() => (open.kind === 'route' ? onLoad(open) : onLoadTrack(open))}
         onRename={(name) => void rename(open, name)}
         onDelete={() => void remove(open)}
         problem={problem}
@@ -146,31 +143,26 @@ export default function RouteLibrary({
   const shown = filterEntries(entries, filter)
 
   return (
-    <div className="library">
-      <LibraryHead title="Saved" onBack={onBack} backLabel="Back to the route" />
-
-      <div className="library-head">
-        <p className="section-label">Routes and rides</p>
-        <div className="segmented" role="group" aria-label="Show">
-          {(
-            [
-              ['all', 'All'],
-              ['route', 'Planned'],
-              ['ride', 'Ridden'],
-            ] as [LibraryFilter, string][]
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className="segment"
-              data-active={filter === value ? 'yes' : 'no'}
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+    <>
+      <div className="segmented" role="group" aria-label="Show">
+        {(
+          [
+            ['all', 'All'],
+            ['route', 'Planned'],
+            ['ride', 'Ridden'],
+          ] as [LibraryFilter, string][]
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className="segment"
+            data-active={filter === value ? 'yes' : 'no'}
+            aria-pressed={filter === value}
+            onClick={() => setFilter(value)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {problem && <p className="warn">{problem}</p>}
@@ -193,62 +185,47 @@ export default function RouteLibrary({
       <ul className="library-list">
         {shown.map((entry) => (
           <li key={entry.id}>
-            <Thumbnail coords={entry.preview} />
-            <div className="library-text">
-              <span className="library-name">{entry.name}</span>
-              <span className="library-figures">
-                {entry.kind === 'route' ? routeFigures(entry) : rideFigures(entry)}
+            <button
+              type="button"
+              className="library-row"
+              onClick={() => setOpenId(entry.id)}
+              aria-label={`Open ${entry.name}`}
+            >
+              <Thumbnail coords={entry.preview} colour={colourOf(entry)} />
+              <span className="library-text">
+                <span className="library-name">{entry.name}</span>
+                <span className="library-figures">
+                  {entry.kind === 'route' ? routeFigures(entry) : rideFigures(entry)}
+                </span>
+                <span className="library-tag" data-kind={entry.kind}>
+                  {entry.kind === 'route' ? 'Planned' : 'Ridden'}
+                </span>
               </span>
-            </div>
-            <div className="library-actions">
-              {entry.kind === 'route' ? (
-                <button type="button" className="primary" onClick={() => onLoad(entry)}>
-                  Load
-                </button>
-              ) : (
-                <button type="button" className="primary" onClick={() => setOpenRide(entry.id)}>
-                  Open
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void shareGpx(entry.gpx, gpxFilename(entry.kind, entry.savedAt))}
-                aria-label={`Export ${entry.name}`}
-              >
-                Export
-              </button>
-              <button
-                type="button"
-                onClick={() => void remove(entry)}
-                aria-label={`Delete ${entry.name}`}
-              >
-                Delete
-              </button>
-            </div>
+              <ChevronRightIcon />
+            </button>
           </li>
         ))}
       </ul>
-    </div>
+    </>
   )
 }
 
 /**
- * One recorded ride: its figures, its name, and the two things you can do with it.
+ * One saved thing: its figures, its name, and what can be done with it.
  *
- * The figures are the finish sheet's, from the same component, because they are the same
- * figures — see `RideStats`. What is new here is the second use of a ride: **Ride this track**
- * puts the line back on the map to be followed, which is what makes a good route you stumbled
- * on repeatable without the router being asked to guess at it again.
+ * Both kinds share this because they share nearly everything — a name, an export, a delete,
+ * and one button that puts it on the map. What differs is the middle: a ride carries the six
+ * figures `RideStats` draws, and a route carries the line it was computed as.
  */
-function RideDetail({
-  ride,
+function EntryDetail({
+  entry,
   onBack,
   onRide,
   onRename,
   onDelete,
   problem,
 }: {
-  ride: SavedRide
+  entry: LibraryEntry
   onBack: () => void
   onRide: () => void
   onRename: (name: string) => void
@@ -256,26 +233,53 @@ function RideDetail({
   problem: string | null
 }) {
   const [naming, setNaming] = useState(false)
-  const [name, setName] = useState(ride.name)
+  const [name, setName] = useState(entry.name)
 
   return (
-    <div className="library">
-      <LibraryHead
-        title={
-          <span className="ride-detail-title">
-            <span className="library-name">{ride.name}</span>
-            <span className="library-figures">{rideWhen(ride.summary.startedAt)}</span>
-          </span>
-        }
-        onBack={onBack}
-        backLabel="Back to the saved list"
-      >
-        <button type="button" className="primary" onClick={onRide}>
-          Ride it
+    <>
+      <div className="drawer-head">
+        <button
+          type="button"
+          className="drawer-back"
+          onClick={onBack}
+          aria-label="Back to the saved list"
+        >
+          <ChevronLeftIcon />
+          Saved
         </button>
-      </LibraryHead>
+      </div>
 
-      <RideStats summary={ride.summary} />
+      <div className="library-detail-title">
+        <h2>{entry.name}</h2>
+        <p>
+          {entry.kind === 'ride'
+            ? rideWhen(entry.summary.startedAt)
+            : `${profileById(entry.profile).plain} · ${routeFigures(entry)}`}
+        </p>
+      </div>
+
+      {entry.kind === 'ride' ? (
+        <RideStats summary={entry.summary} />
+      ) : (
+        <dl className="detail-stats">
+          <div>
+            <dd>{formatDistance(entry.distanceM)}</dd>
+            <dt>distance</dt>
+          </div>
+          <div>
+            <dd>{entry.timeS !== null ? formatDuration(entry.timeS) : '—'}</dd>
+            <dt>moving</dt>
+          </div>
+          <div>
+            <dd>{Math.round(entry.ascentM)} m</dd>
+            <dt>climbing</dt>
+          </div>
+        </dl>
+      )}
+
+      <button type="button" className="primary" onClick={onRide}>
+        {entry.kind === 'route' ? 'Put it on the map' : 'Ride this track'}
+      </button>
 
       {/* The name field is here and not on the riding screen, and that is deliberate: a text
           input on a moving bike is what brings up iOS's shake-to-undo alert. See
@@ -305,7 +309,7 @@ function RideDetail({
             <button
               type="button"
               onClick={() => {
-                setName(ride.name)
+                setName(entry.name)
                 setNaming(false)
               }}
             >
@@ -320,11 +324,11 @@ function RideDetail({
           </button>
           <button
             type="button"
-            onClick={() => void shareGpx(ride.gpx, gpxFilename('ride', ride.savedAt))}
+            onClick={() => void shareGpx(entry.gpx, gpxFilename(entry.kind, entry.savedAt))}
           >
             Export GPX
           </button>
-          <button type="button" onClick={onDelete}>
+          <button type="button" className="danger" onClick={onDelete}>
             Delete
           </button>
         </div>
@@ -335,44 +339,23 @@ function RideDetail({
           {problem}
         </p>
       )}
-    </div>
+    </>
   )
 }
 
 /**
- * The library's own drawer head, in both of its states.
+ * The colour a saved thing is drawn in.
  *
- * It lives here rather than in `RouteSheet` because the library has two screens and only it
- * knows which one is showing. When the sheet drew the head, a ride's detail arrived *under*
- * the sheet's "Saved" bar and stacked two headers with two back chevrons — one going to the
- * list, one to the route — which reads as an app that has lost track of where you are.
+ * A route takes its profile's, so the thumbnail in the list and the line it will draw on the
+ * map are the same colour. A ride takes the recorded-track orange for the same reason — it is
+ * what it will be drawn as when it goes back on the map.
  */
-function LibraryHead({
-  title,
-  onBack,
-  backLabel,
-  children,
-}: {
-  title: React.ReactNode
-  onBack: () => void
-  /** Where back goes, said out loud — it is a different place on each screen. */
-  backLabel: string
-  children?: React.ReactNode
-}) {
-  return (
-    <div className="drawer-head">
-      <button type="button" className="drawer-back" onClick={onBack} aria-label={backLabel}>
-        <ChevronLeftIcon />
-      </button>
-      <Drawer.Title className="drawer-title">{title}</Drawer.Title>
-      {children}
-    </div>
-  )
+function colourOf(entry: LibraryEntry): string {
+  return entry.kind === 'route' ? profileById(entry.profile).colour : RECORDED_TRACK.colour
 }
 
 function routeFigures(entry: SavedRoute): string {
   return [
-    profileById(entry.profile).label,
     formatDistance(entry.distanceM),
     entry.timeS !== null ? formatDuration(entry.timeS) : null,
     `${Math.round(entry.ascentM)} m up`,
@@ -383,7 +366,6 @@ function routeFigures(entry: SavedRoute): string {
 
 function rideFigures(entry: SavedRide): string {
   return [
-    'Ridden',
     formatDistance(entry.summary.distanceM),
     formatElapsed(entry.summary.movingS),
     `${Math.round(entry.summary.ascentM)} m up`,
@@ -401,7 +383,7 @@ function rideFigures(entry: SavedRide): string {
  * proportion is most of what identifies a route: a long thin out-and-back stretched to fill a
  * square looks exactly like a compact loop.
  */
-function Thumbnail({ coords }: { coords: [number, number][] }) {
+function Thumbnail({ coords, colour }: { coords: [number, number][]; colour: string }) {
   if (coords.length < 2) return <span className="library-thumb" aria-hidden="true" />
 
   const midLat = coords[Math.floor(coords.length / 2)][1]
@@ -416,19 +398,19 @@ function Thumbnail({ coords }: { coords: [number, number][] }) {
 
   const path = coords
     .map((_, i) => {
-      const x = ((xs[i] - minX) / scale + offsetX) * 36 + 4
-      const y = ((ys[i] - minY) / scale + offsetY) * 36 + 4
+      const x = ((xs[i] - minX) / scale + offsetX) * 42 + 5
+      const y = ((ys[i] - minY) / scale + offsetY) * 42 + 5
       return `${x.toFixed(1)},${y.toFixed(1)}`
     })
     .join(' L')
 
   return (
-    <svg className="library-thumb" viewBox="0 0 44 44" aria-hidden="true">
+    <svg className="library-thumb" viewBox="0 0 52 52" aria-hidden="true">
       <path
         d={`M${path}`}
         fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
+        stroke={colour}
+        strokeWidth="3"
         strokeLinejoin="round"
         strokeLinecap="round"
       />
@@ -440,6 +422,14 @@ function ChevronLeftIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M15 5l-7 7 7 7" />
+    </svg>
+  )
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="library-chevron" aria-hidden="true">
+      <path d="M9 5l7 7-7 7" />
     </svg>
   )
 }

@@ -10,6 +10,8 @@
  * disk, `migratePlan` decides what the rider gets back. That is worth testing directly.
  */
 
+import { DEFAULT_PROFILES } from './profiles'
+
 export interface Waypoint {
   id: string
   lon: number
@@ -32,7 +34,7 @@ export interface StoredPlan {
   gpx?: Record<string, string>
 }
 
-export const PLAN_VERSION = 3
+export const PLAN_VERSION = 4
 
 const STORAGE_KEY = 'free-wheel.plan.v2'
 
@@ -42,7 +44,7 @@ const MAX_STORED_GPX = 2_000_000
 const EMPTY: StoredPlan = {
   v: PLAN_VERSION,
   waypoints: [],
-  selection: ['trekking'],
+  selection: [...DEFAULT_PROFILES],
   chosen: null,
 }
 
@@ -73,12 +75,31 @@ export function migratePlan(raw: unknown): StoredPlan {
     return { ...base, chosen }
   }
 
+  /*
+   * Version 3. The selection was a tick-list the rider built by hand and usually left at one;
+   * now it is the three cards the second tap computes. So a plan with **nothing computed** is
+   * a plan whose selection was never really a decision, and it gets the new default — that is
+   * the whole point of the upgrade, and leaving it at one profile would silently give every
+   * existing install the old one-route flow forever.
+   *
+   * A plan that *does* carry routes keeps its selection exactly. It describes what is on the
+   * map, and widening it would mean the next reroute quietly computed profiles the rider never
+   * asked for.
+   */
+  const upgraded =
+    plan.v === 3 && routed.length === 0 ? { ...base, selection: [...DEFAULT_PROFILES] } : base
+
+  if (plan.v === 3) {
+    const chosen = typeof plan.chosen === 'string' ? plan.chosen : null
+    return { ...upgraded, chosen }
+  }
+
   // Version 2 and earlier. `focused` was a default, not a decision, so it only survives where
   // it was the *only* possible answer — a single stored route. A stored comparison goes back
   // to the rider to choose, which is the whole point of the new flow.
   const focused = typeof plan.focused === 'string' ? plan.focused : null
   const chosen = routed.length === 1 && focused === routed[0] ? focused : null
-  return { ...base, chosen }
+  return { ...upgraded, chosen }
 }
 
 /**
