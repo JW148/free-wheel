@@ -229,3 +229,68 @@ invention, and it is not one the design or the original ever made.
    is 50 km the right ceiling? It is a guess until it is ridden.
 5. **Are the darkened gradient bands still readable at a glance**, or did clearing white cost
    more than it bought on the dark theme?
+
+## Follow-up, 2026-09-15 — the card and the sheet became one surface
+
+Two things the redesign left behind, both found by looking at the built app on a phone.
+
+### The plan card and the drawer were two components that resembled one
+
+The card was a flex child of the chrome layer; the drawer was a vaul sheet portalled to
+`<body>`. Opening faded the first out and slid the second up, which is not the same thing as one
+surface growing — and the way in was a *button* dressed as a grab handle, so the affordance the
+whole arrangement leaned on did not work.
+
+They are one element now. `--sheet-p` is 0 at the card and 1 open, and every difference between
+the two states is a `calc()` over it: the side and bottom insets that make the card float, the
+bottom two corner radii, the sheet's height, the scrim's opacity, and which of the two content
+layers is legible. `useSheetDrag` writes the number — from a finger during a gesture, straight
+to the element rather than through React state, because a re-render per frame of a tree holding
+three route cards and an elevation chart is a dropped frame per frame.
+
+Four things that were not obvious going in:
+
+- **vaul cannot do this, and the reason is worth writing down.** Snap points were the obvious
+  answer and they translate a single full-height box, so the box always continues past the
+  bottom of the screen. A minimised stop can therefore be a *bar*; it can never be an inset card
+  with a rounded bottom edge and a shadow under it. The card is the half worth keeping, so it
+  decided the mechanism. vaul still owns the Layers sheet and the finish sheet, which are modal
+  and have one stop each.
+- **A custom property has to be registered to animate.** `@property --sheet-p` with
+  `syntax: '<number>'`; without it the transition is a step from 0 to 1 and every `calc()`
+  reading it jumps. Safari has had it since 16.4 against an 18.4 baseline.
+- **Both content layers are laid out at a constant width**, each pushing back the edge the sheet
+  is moving. The sheet is 24 px narrower closed than open, and a layer whose width followed it
+  would re-wrap its text as the sheet moved — retargeting, mid-flight, the animation it was
+  halfway through. Their two measured heights are what the sheet interpolates between, so a
+  measurement taken at the wrong width is an animation that lands in the wrong place.
+- **The handle stayed a real `<button>` with a real `onClick`.** A press arrives as a click from
+  a keyboard, from VoiceOver's activation and from any synthetic press, so the pointer path
+  stands aside for a still release on the handle rather than toggling the sheet itself — which
+  would toggle it twice and land it back where it started. `wasTap` is that one decision, and it
+  is tested.
+
+The map buttons lost the card from under them when it left the flex column, so they clear it by
+the same `--bar-height` measurement the OSM credit uses, and for the same reason: there is no
+constant, because the card is an invitation, two coordinates or a routed summary.
+
+`sheetDrag.ts` holds the arithmetic — progress from a travelled distance, and which stop a
+release lands on — pure and in pixels of sheet height rather than screen coordinates, so it
+does not have to know which way is up. Twelve tests: the tap that toggles, the settle to the
+nearer stop, the flick that beats the distance in both directions, the drift too slow to be a
+flick, and the zero range that would otherwise write a `NaN` into a CSS variable and silently
+drop every rule reading it.
+
+**This makes question 3 below sharper, not softer.** A backdrop-filtered box whose height now
+changes every frame of a drag is more of what that question was already about. If it judders on
+the phone, the blur is the value to drop — it is one line, and the sheet covers the map anyway.
+
+### A saved route's chevron sat on top of its own figures
+
+`.library-list li` still carried the row's card — a `52px 1fr` grid, the padding, the background
+and the lift — from when a row's contents were its direct children. They became a single
+`.library-row` button when Saved was promoted to a screen, so that grid was placing the whole
+button in a 52 px column: the figures wrapped to three lines, the chevron landed across them,
+and the white box that read as a frame around the thumbnail was the row itself, squeezed. The
+rule is gone; `.library-row`'s own `52px 1fr auto` in `screens.css` was right the whole time.
+`.library-actions` went with it, dead since the actions moved inside the entry.
