@@ -93,6 +93,39 @@ async function shot(name) {
   console.log(`  → ${name}.png`)
 }
 
+/**
+ * Drags the plan sheet's handle to a fraction of the way open, and leaves the finger down.
+ *
+ * The sheet is one surface whose whole geometry is a `calc()` over `--sheet-p`, so the only
+ * frame worth looking at is a half-open one: it is the frame that says whether the card is
+ * becoming the sheet or being replaced by it. A `.click()` cannot produce it — that is an end
+ * state — so this dispatches the pointer sequence the hook listens for.
+ */
+const dragHandle = (fraction) =>
+  evaluate(`(() => {
+    const handle = document.querySelector('.sheet-handle')
+    const sheet = document.querySelector('.plan-sheet')
+    if (!handle || !sheet) return 'missing handle'
+    const style = getComputedStyle(document.querySelector('.sheet-layer'))
+    const card = parseFloat(style.getPropertyValue('--sheet-card'))
+    const open = parseFloat(style.getPropertyValue('--sheet-open'))
+    const y = sheet.getBoundingClientRect().top + 12
+    const at = (clientY, type) =>
+      handle.dispatchEvent(
+        new PointerEvent(type, { pointerId: 1, clientY, clientX: 195, bubbles: true }),
+      )
+    at(y, 'pointerdown')
+    at(y - (open - card) * ${JSON.stringify(fraction)}, 'pointermove')
+    return card + ' -> ' + open
+  })()`)
+
+const releaseHandle = () =>
+  evaluate(`(() => {
+    const handle = document.querySelector('.sheet-handle')
+    handle?.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+    return 'ok'
+  })()`)
+
 const click = (selector) =>
   evaluate(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)})
@@ -197,8 +230,19 @@ if (process.env.FW_SEED) {
   await click('.setup-close')
   await sleep(700)
   await shot('13-routed-card')
-  await click('.card-handle')
-  await sleep(700)
+
+  // Half way up and still under the finger: the one frame that says whether the card is
+  // becoming the sheet or being replaced by it.
+  console.log('  ' + (await dragHandle(0.45)))
+  await sleep(200)
+  await shot('13b-half-dragged')
+  // Released short of half way, so it settles back to the card rather than opening.
+  await releaseHandle()
+  await sleep(900)
+  await shot('13c-settled-back')
+
+  await click('.sheet-handle')
+  await sleep(900)
   await shot('14-route-cards')
   await click('.route-more')
   await sleep(500)
@@ -212,9 +256,32 @@ if (process.env.FW_SEED) {
   await click('.route-card-details')
   await sleep(700)
   await shot('16-route-detail')
-  await evaluate(`document.querySelector('.drawer-body').scrollTop = 500`)
+  await evaluate(`document.querySelector('.sheet-full .drawer-body').scrollTop = 500`)
   await sleep(300)
   await shot('17-route-detail-scrolled')
+
+  /*
+   * The library, which needs something in it.
+   *
+   * Save then Clear: clearing the plan is also the only way back to the invite card, which is
+   * where Saved is reachable from. The plan is seeded again afterwards for the riding shots.
+   */
+  console.log('Saved, with a route in it')
+  await click('.route-actions button:nth-child(1)')
+  await sleep(500)
+  await click('.route-actions button:nth-child(4)')
+  await sleep(700)
+  await click('.plan-shortcuts button:nth-child(1)')
+  await sleep(900)
+  await shot('11b-saved-list')
+  await click('.screen-back')
+  await sleep(400)
+
+  await evaluate(`localStorage.setItem('free-wheel.plan.v2', ${JSON.stringify(JSON.stringify(seed))})`)
+  await send('Page.navigate', { url: BASE })
+  await sleep(2500)
+  await click('.setup-close')
+  await sleep(700)
 
   /*
    * Riding.
@@ -229,7 +296,13 @@ if (process.env.FW_SEED) {
     longitude: -0.0864,
     accuracy: 8,
   })
-  await click('.drawer-footer .primary')
+  // The re-seeded plan has nothing chosen, so riding is two taps away: pick a route, then
+  // Start on the card it appeared on.
+  await click('.sheet-handle')
+  await sleep(800)
+  await click('.route-card-main')
+  await sleep(600)
+  await click('.route-card-start')
   await sleep(3000)
   await shot('18-riding')
   await click('.hud-collapse')
@@ -243,8 +316,8 @@ if (process.env.FW_SEED) {
   await click('.setup-close')
   await sleep(700)
   await shot('20-dark-plan')
-  await click('.card-handle')
-  await sleep(800)
+  await click('.sheet-handle')
+  await sleep(900)
   await shot('21-dark-cards')
 }
 

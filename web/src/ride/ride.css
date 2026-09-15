@@ -223,6 +223,19 @@
   pointer-events: none;
 }
 
+/*
+ * The planning screen's buttons clear the plan sheet by measurement, not by sitting above it.
+ *
+ * The card used to be the last child of the chrome's flex column, so the column simply ended
+ * where the card began. The sheet is fixed — it has to be, to reach the screen's edges — so
+ * there is nothing in flow below these any more, and a constant would be wrong for the same
+ * reason it is wrong for the map credit: the card is an invitation, two coordinates or a
+ * routed summary. `--bar-height` is that card, measured.
+ */
+.map-controls:not(.map-controls-riding) {
+  padding-bottom: calc(0.7rem + var(--bar-height, 5.7rem));
+}
+
 .map-controls .icon-button {
   pointer-events: auto;
 }
@@ -708,56 +721,217 @@
   cursor: default;
 }
 
-/* ── The plan card ──────────────────────────────────────────────────────────────────────
-   The floating card at the foot of the planning screen, and the minimised half of one
-   surface: pull it up, or tap a chosen route's Details row, and it becomes the drawer below.
+/* ── The plan sheet ─────────────────────────────────────────────────────────────────────
+   One surface with two stops, and a finger anywhere between them.
 
-   It is a card rather than a sheet on purpose. Apple's HIG has sheets edge-to-edge with
-   rounded top corners; an inset, floating, fully-rounded thing is a *card*, and pretending
-   otherwise is what made the old bar read as a sheet that had failed to reach the edges. So
-   the two states are drawn as what they each are, and the motion between them is the story.
+   The card at the foot of the planning screen and the sheet it opens into used to be two
+   components that resembled one: a flex child of the chrome layer, and a vaul drawer portalled
+   to `<body>`, the first fading out as the second slid up. Opening was a button press rather
+   than a pull, and nothing about the motion said the one had become the other.
 
-   Three states live in here — nothing placed, one point placed, routes computed — and they
-   share the handle, the inset and the shadow so the card looks like one object changing its
-   mind rather than three panels swapping. */
+   Everything that differs between the two states is now a `calc()` over a single number.
+   `--sheet-p` is 0 at the card and 1 open; `useSheetDrag` writes it, either from a finger or
+   as a transition between the ends. The insets close, the bottom two corners square off, the
+   height grows from one measured layer to the other and the scrim comes up — all in lockstep,
+   because they are all reading the same number.
 
-.sheet-bar {
-  display: flex;
-  flex-direction: column;
-  padding: 0.5rem 1rem 1rem;
-  background: var(--panel-strong);
-  transition: opacity 200ms ease;
+   It is a *card* at the closed stop and that is the whole argument for building it this way.
+   Apple's HIG has sheets edge to edge with rounded top corners; an inset, floating, fully
+   rounded thing is a card, and vaul's snap points cannot draw one — they translate a single
+   full-height box, which therefore always continues past the bottom of the screen. */
+
+/* Registering it is what makes it animatable: an unregistered custom property has no type to
+   interpolate through, so the transition below would be a step from 0 to 1 and every `calc()`
+   reading it would jump. */
+@property --sheet-p {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
 }
 
-/* `visibility` as well as `opacity`, so the hidden card is out of the tab order rather than an
-   invisible copy of itself under the sheet. */
-.sheet-bar[data-hidden='yes'] {
-  opacity: 0;
-  visibility: hidden;
+.sheet-layer {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--app-height);
+  z-index: 30;
+  /* The layer is a coordinate space, not a surface. The scrim and the sheet opt back in. */
+  pointer-events: none;
+
+  /*
+   * The two stops, in pixels, published by `useSheetDrag` from a `ResizeObserver` on each
+   * content layer. Neither is a constant — the card is an invitation, a pair of coordinates or
+   * a routed summary, and the sheet is three route cards or a chart and a climb list — which
+   * is the same reason the riding HUD measures its own two sizes rather than naming them.
+   *
+   * The values here are only what the first frame draws with, before anything is measured.
+   */
+  --sheet-card: 9rem;
+  --sheet-open: 55vh;
+
+  /* How far the card floats in from the sides, and the padding its content carries. */
+  --sheet-inset: max(env(safe-area-inset-left), 12px);
+  --sheet-pad: 1rem;
+  /* The room above both layers' content that the handle sits in. */
+  --sheet-head: 1.1rem;
+  /* Stopping short of the top leaves the map visibly there behind the sheet, so it reads as
+     covering the screen rather than replacing it. 60px is also what the status bar occupies. */
+  --sheet-cap: calc(var(--app-height) - 60px);
+
+  transition: --sheet-p 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Under a finger there is nothing to interpolate towards: the number *is* the finger. */
+.sheet-layer[data-dragging='yes'] {
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sheet-bar {
+  .sheet-layer,
+  .plan-sheet {
     transition: none;
   }
 }
 
-/* The grab handle. Also the affordance for the expansion — it and the Details row are the two
-   ways up, and a rider who has used any iOS sheet already knows this one. */
-.card-handle {
-  flex: none;
+/* Not a way out — the handle and Escape are those — so it takes no tab stop and carries no
+   label. It is here to dim the map and to catch the tap that means "put that away". */
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  opacity: var(--sheet-p);
+  pointer-events: none;
+}
+
+.sheet-layer[data-open='yes'] .sheet-scrim {
+  pointer-events: auto;
+}
+
+/*
+ * The surface itself.
+ *
+ * The hairline is an inset ring rather than a border because a border is layout: one pixel top
+ * and bottom would put the open layer's measured height two pixels past the box drawn around
+ * it, and the footer would lose its bottom edge. The shadow flips from a card's (cast
+ * downwards) to a sheet's (cast up into the map) on settling, which is a transition of its own
+ * — the two tokens have the same shape, so they interpolate.
+ */
+.plan-sheet {
+  position: absolute;
+  left: calc(var(--sheet-inset) * (1 - var(--sheet-p)));
+  right: calc(var(--sheet-inset) * (1 - var(--sheet-p)));
+  bottom: calc(var(--safe-bottom) * (1 - var(--sheet-p)));
+  height: calc(var(--sheet-card) + (var(--sheet-open) - var(--sheet-card)) * var(--sheet-p));
+  max-height: var(--sheet-cap);
+  overflow: hidden;
+  pointer-events: auto;
+  /* The sheet is dragged, so the browser must not claim the gesture first. The scroller inside
+     it hands `pan-y` back. */
+  touch-action: none;
+  border-radius: var(--r-panel) var(--r-panel) calc(var(--r-panel) * (1 - var(--sheet-p)))
+    calc(var(--r-panel) * (1 - var(--sheet-p)));
+  background: var(--panel-strong);
+  /* Stronger than a panel's: open, this covers most of the screen, and a chart and a paragraph
+     of type over moving map detail need the backdrop pushed further away than three numbers
+     do. It is also the most expensive thing on the screen on iOS — a sheet-sized backdrop
+     filter over a live WebGL canvas, now resized every frame of a drag. If it ever costs
+     frames, this is the value to drop. */
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: var(--lift-panel), inset 0 0 0 1px var(--hairline);
+  transition: box-shadow 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sheet-layer[data-open='yes'] .plan-sheet {
+  box-shadow: var(--lift-sheet), inset 0 0 0 1px var(--hairline);
+}
+
+/*
+ * The two content layers.
+ *
+ * Both are absolutely positioned, and both are laid out at a width that does **not** follow
+ * the sheet's. That is what makes measuring one while the other is on screen honest: the sheet
+ * is 24px narrower closed than open, and a layer whose width followed it would re-wrap its
+ * text as the sheet moved — retargeting, mid-flight, the animation it was halfway through.
+ * So each keeps its own width by pushing the edge the sheet is moving back out again.
+ */
+
+/* The card. Its right edge stays where the closed sheet's is; pinned in screen space at the
+   bottom too, because the sheet's bottom edge travels `--safe-bottom` on the way up and
+   without the correction the card would slide down while it faded. */
+.sheet-peek {
+  position: absolute;
+  left: 0;
+  right: calc(var(--sheet-inset) * 2 * var(--sheet-p));
+  bottom: calc(var(--safe-bottom) * var(--sheet-p));
+  display: flex;
+  flex-direction: column;
+  padding: var(--sheet-head) var(--sheet-pad) var(--sheet-pad);
+  /* Gone by a third of the way up. Anything slower and the card is still legible under the
+     sheet's own buttons — it is only 94% opaque, so what shows through reads as a ghost. */
+  opacity: calc(1 - var(--sheet-p) * 3);
+}
+
+/* The sheet. Its right edge stays where the open sheet's is — a negative offset closed, which
+   the sheet's own `overflow: hidden` clips. */
+.sheet-full {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: calc(var(--sheet-inset) * -2 * (1 - var(--sheet-p)));
+  max-height: var(--sheet-cap);
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--sheet-head);
+  /* Arrives after the card has gone rather than crossing it, so the two are never both half
+     legible over the same map. */
+  opacity: calc(var(--sheet-p) * 2.5 - 0.9);
+}
+
+/* The layer above carries the handle's room for both of them. */
+.sheet-full .drawer-body {
+  padding-top: 0;
+}
+
+/*
+ * The grab handle, and the sheet's only permanent control.
+ *
+ * It is deliberately a small hit area rather than the 44px a control usually earns: the card's
+ * own background drags too, so the target is most of the sheet, and a 44px box here would
+ * reach down over the first row — which on the two-point card is a Remove button.
+ */
+.sheet-handle {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 2;
+  width: 60px;
+  height: 24px;
+  /* The element rule in `App.css` gives every button 2.75rem of height and a hairline ring, so
+     a control is a thumb-sized target with an edge. A grab handle is neither. */
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  transform: translateX(-50%);
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet-handle:active {
+  cursor: grabbing;
+}
+
+.sheet-handle::before {
+  content: '';
+  position: absolute;
+  top: 9px;
+  left: 50%;
   width: 36px;
   height: 5px;
-  /* The element rule in `App.css` gives every button 2.75rem of height so a control is a
-     thumb-sized target. A grab handle is not a control with a label — its target is the whole
-     card above it — and without this reset it renders as a 44px grey slab. */
-  min-height: 0;
-  margin: 0 auto 0.85rem;
   border-radius: 3px;
-  border: none;
-  padding: 0;
   background: var(--edge-strong);
-  cursor: pointer;
+  transform: translateX(-50%);
 }
 
 /* ── Nothing placed: the invitation ───────────────────────────────────────────────── */
@@ -1712,17 +1886,16 @@
   list-style: none;
 }
 
-.library-list li {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  align-items: center;
-  column-gap: 0.75rem;
-  row-gap: 0.5rem;
-  padding: 0.7rem 0.85rem;
-  border-radius: var(--r-large);
-  background: var(--card);
-  box-shadow: var(--lift-row);
-}
+/*
+ * The list item styles nothing, and it used to style the card.
+ *
+ * It carried the thumbnail column, the padding, the background and the lift — correct when a
+ * row's contents were its direct children, wrong since they became one `.library-row` button
+ * (in `screens.css`, where the row's own `52px 1fr auto` grid lives). The two-column grid left
+ * behind was placing that whole button in a 52px column: the figures wrapped to three lines,
+ * the chevron landed on top of them, and the white box that looked like a frame around the
+ * thumbnail was the row itself, squeezed. An `<li>` in flow is all the grid above wants.
+ */
 
 .library-thumb {
   width: 52px;
@@ -1748,19 +1921,6 @@
 .library-figures {
   font-size: 0.76rem;
   color: var(--muted);
-}
-
-/* The actions wrap onto their own row under both columns. Three buttons beside a thumbnail
-   and a name does not fit a phone, and shrinking them to fit puts Delete a thumb-width from
-   Load. */
-.library-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.library-actions button {
-  flex: 1;
 }
 
 /* The name field, shown only once a rider has asked to name something. */
@@ -1911,10 +2071,11 @@
 /*
  * Three slots and no more: out, what is chosen, what to do about it.
  *
- * Built from the ride screen's `.sheet-bar` vocabulary — the middle *is* `.sheet-toggle`, the
+ * Built from the ride screen's plan-card vocabulary — the middle *is* `.sheet-toggle`, the
  * action *is* `.primary` — because it is the same idea: a permanent strip that names the
- * current decision and opens a drawer for the rest. The only difference is a screen with no
- * chrome above it, so this one floats and is blurred rather than sitting on a solid panel.
+ * current decision and opens a drawer for the rest. It is a strip rather than a stop on one
+ * surface, which is the difference worth knowing: the plan sheet grows into its own expanded
+ * state, this one opens a `vaul` drawer over itself.
  */
 .browse-bar {
   position: relative;

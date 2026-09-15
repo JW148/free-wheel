@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Drawer } from 'vaul'
 import { DEFAULT_PROFILES, PROFILES, profileById } from './profiles'
 import type { Plan } from './useRoute'
 import { formatDistance, formatDuration, hasHeights } from './gpx'
@@ -8,6 +7,7 @@ import RouteClimbs from './RouteClimbs'
 import { putEntry, routeEntry } from './library'
 import { gpxFilename, shareGpx } from './share'
 import type { RouteSheetState } from './useRouteSheet'
+import { useSheetDrag } from './useSheetDrag'
 
 /**
  * The plan card, and the sheet it opens into.
@@ -31,13 +31,24 @@ import type { RouteSheetState } from './useRouteSheet'
  * reading "the route" has to handle `null` rather than fall back to a default — the fallback
  * *was* the bug.
  *
- * ## Why vaul rather than a `max-height` transition
+ * ## One surface, not two components that resemble one
  *
- * Drag-to-dismiss done properly is velocity tracking, rubber-banding at the limits,
- * scroll/drag disambiguation inside the content, focus trapping and inert background — all of
- * which vaul already does correctly and none of which is interesting to rewrite. It portals to
- * `document.body`, so it is not subject to the chrome layer's flexbox at all, which is what
- * makes the overflow the old flex-child version suffered impossible rather than merely fixed.
+ * The card and the sheet used to be exactly that: a flex child of the chrome layer, and a
+ * vaul drawer portalled to `<body>`, with the first fading out as the second slid up. Nothing
+ * connected them. Opening was a button press rather than a pull, and the card did not become
+ * the sheet so much as get out of its way.
+ *
+ * Now there is one element. `--sheet-p` runs from 0 at the card to 1 open, and every
+ * difference between the two states is a `calc()` over it — the side and bottom insets that
+ * make the card float, the corner radii, the height, the scrim, and which of the two content
+ * layers is legible. A finger writes the number directly; `useSheetDrag` does the arithmetic
+ * and `sheetDrag.ts` holds the part with a decision in it.
+ *
+ * vaul was the obvious thing to reach for and it cannot do this. Its snap points translate one
+ * full-height box up and down, so the box always continues past the bottom of the screen: a
+ * minimised stop can be a bar, never an inset card with a rounded bottom edge and a shadow
+ * under it. The card is the half worth keeping, so it decided the mechanism. vaul still owns
+ * the Layers sheet and the finish sheet, which are modal and have one stop each.
  */
 
 export default function RouteSheet({
@@ -60,67 +71,89 @@ export default function RouteSheet({
   const routed = routeIds.length > 0
   const chosen = plan.route
   const detail = sheet.view === 'detail' && chosen !== null && plan.chosen !== null
+  /*
+   * Opening goes through `openForPlan`, not through `setOpen`, so a pull lands on the view the
+   * rider is owed: the detail of a route they have already chosen, or the comparison if the
+   * choice is still to make. The handle is now one of the three ways in — the map's route
+   * lines and the chosen card's Details row are the others — and all of them ask the same
+   * question.
+   */
+  const surface = useSheetDrag({
+    open: sheet.open,
+    setOpen: (next) => (next ? sheet.openForPlan() : sheet.setOpen(false)),
+  })
 
   return (
-    <>
-      {/*
-        The card steps aside while the sheet is up.
-        They are the two states of one surface, so both at once is a contradiction — and the
-        sheet is only 94% opaque, so the card behind it bleeds through as a ghost of itself
-        under the sheet's own buttons.
-      */}
-      {/* `data-bottom-bar` is measured by the ride screen, so the map credit sits clear of
-          whichever bar is on screen — this card's height changes with what it has to say. */}
-      <div className="sheet-bar panel" data-hidden={sheet.open ? 'yes' : 'no'} data-bottom-bar="">
+    <div className="sheet-layer" ref={surface.layer} data-open={sheet.open ? 'yes' : 'no'}>
+      {/* Decorative, and deliberately not a button: this is not a modal dialog but a bar that
+          is always on screen, so the scrim is a convenience rather than the way out. Escape
+          and the handle are the ways out that a keyboard can reach. */}
+      <div className="sheet-scrim" aria-hidden="true" onClick={surface.collapse} />
+
+      <div className="plan-sheet">
+        {/* The one control the sheet always has, in both states. It drags — and a press on it
+            is left to the click, which is the one form a keyboard and VoiceOver both arrive
+            in. The pointer path stands aside rather than toggling the sheet twice. */}
         <button
           type="button"
-          className="card-handle"
-          onClick={sheet.openForPlan}
+          className="sheet-handle"
+          data-sheet-handle=""
           aria-label="Route options"
+          aria-expanded={sheet.open}
+          aria-controls="plan-sheet-full"
+          onClick={surface.onClick}
+          {...surface.drag}
         />
 
-        {routed || plan.routing ? (
-          <RoutedCard plan={plan} sheet={sheet} onStart={onStart} />
-        ) : plan.waypoints.length > 0 ? (
-          <PointsCard plan={plan} />
-        ) : (
-          <InviteCard onOpenSaved={onOpenSaved} onOpenSetup={onOpenSetup} />
-        )}
-      </div>
+        {/*
+          The card. `data-bottom-bar` is measured by the ride screen so the map credit sits
+          clear of it, and the height it reports is this layer's own — which is why the layer
+          is laid out at a constant width and the sheet's growing one never reaches it.
+        */}
+        <div
+          className="sheet-peek"
+          ref={surface.peek}
+          data-bottom-bar=""
+          inert={sheet.open}
+          {...surface.drag}
+        >
+          {routed || plan.routing ? (
+            <RoutedCard plan={plan} sheet={sheet} onStart={onStart} />
+          ) : plan.waypoints.length > 0 ? (
+            <PointsCard plan={plan} />
+          ) : (
+            <InviteCard onOpenSaved={onOpenSaved} onOpenSetup={onOpenSetup} />
+          )}
+        </div>
 
-      <Drawer.Root open={sheet.open} onOpenChange={sheet.setOpen}>
-        <Drawer.Portal>
-          <Drawer.Overlay className="drawer-overlay" />
-          <Drawer.Content className="drawer" aria-describedby={undefined}>
-            <Drawer.Handle className="drawer-handle" />
-            <div className="drawer-body">
-              {detail ? (
-                <RouteDetail plan={plan} sheet={sheet} onSaved={onSaved} />
-              ) : (
-                <RouteChoice plan={plan} sheet={sheet} onStart={onStart} />
-              )}
-            </div>
-            {/*
-              Start ride is a sibling of the scroller, not the last thing inside it.
-
-              It was a `position: sticky` child, and sticky cannot be pushed outside its
-              containing block — which ends at the scroller's own bottom padding, the home
-              indicator's clearance. So the button pinned itself `--safe-bottom` short of the
-              bottom and the climb list scrolled through the strip underneath it, in full view.
-              Out here it is laid out by the drawer's flex column instead: it cannot be
-              overlapped because nothing scrolls behind it.
-            */}
-            {detail && (
-              <div className="drawer-footer">
-                <button type="button" className="primary" onClick={onStart}>
-                  Start ride
-                </button>
-              </div>
+        <div className="sheet-full" id="plan-sheet-full" ref={surface.full} inert={!sheet.open}>
+          <div className="drawer-body">
+            {detail ? (
+              <RouteDetail plan={plan} sheet={sheet} onSaved={onSaved} />
+            ) : (
+              <RouteChoice plan={plan} sheet={sheet} onStart={onStart} />
             )}
-          </Drawer.Content>
-        </Drawer.Portal>
-      </Drawer.Root>
-    </>
+          </div>
+          {/*
+            Start ride is a sibling of the scroller, not the last thing inside it.
+
+            It was a `position: sticky` child, and sticky cannot be pushed outside its
+            containing block — which ends at the scroller's own bottom padding, the home
+            indicator's clearance. So the button pinned itself `--safe-bottom` short of the
+            bottom and the climb list scrolled through the strip underneath it, in full view.
+            Out here the sheet's flex column places it, nothing scrolls behind it, and it needs
+            no background of its own.
+          */}
+          {detail && (
+            <div className="drawer-footer">
+              <button type="button" className="primary" onClick={onStart}>
+                Start ride
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -291,7 +324,7 @@ function RouteChoice({
   return (
     <>
       <div className="drawer-head">
-        <Drawer.Title className="drawer-title">Choose a route</Drawer.Title>
+        <h2 className="drawer-title">Choose a route</h2>
         {plan.routing ? (
           <button type="button" className="primary busy" onClick={plan.cancel}>
             Stop
@@ -493,7 +526,7 @@ function RouteDetail({
 
       <div className="detail-title">
         <span className="swatch" style={{ background: style.colour }} />
-        <Drawer.Title className="drawer-title">{style.plain}</Drawer.Title>
+        <h2 className="drawer-title">{style.plain}</h2>
         {/* The engine's own name for it. Not on the cards — at the moment of choosing,
             "Trekking" is the word the rename was for — but here it is the useful fact, and
             this is the only place a rider can meet it. */}

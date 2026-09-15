@@ -464,14 +464,32 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   the more specific intent, and dropping a waypoint on the line you were pointing at would
   reroute the thing you were trying to select. Mid-ride the decision is already made, so
   `routeAt` is skipped entirely — a bump in the road must not throw the drawer over the map.
-- **The `--panel*` translucency tokens live on `:root`, not `.ride`.** vaul portals the drawer
-  to `<body>`, so anything scoped to the ride screen is invisible to it.
+- **The plan card and the sheet it opens are one element, not two.** `--sheet-p` runs 0 at the
+  card to 1 open and every difference between them is a `calc()` over it — the insets that make
+  the card float, the bottom two radii, the height, the scrim. `useSheetDrag` writes the number
+  straight to the element rather than through React state, because a re-render per frame of a
+  tree holding three route cards and a chart is a dropped frame per frame. **vaul cannot do
+  this**, which is the part worth remembering before reaching for it again: its snap points
+  translate one full-height box, so the box always continues past the bottom of the screen and a
+  minimised stop can be a bar but never an inset card. vaul still owns the Layers and finish
+  sheets, which are modal with one stop each. Registering `--sheet-p` with `@property` is what
+  makes it animatable at all; unregistered, the transition is a step and every `calc()` jumps.
+- **Both of the sheet's content layers are laid out at a constant width**, each pushing back the
+  edge the sheet is moving. Their measured heights are the two stops the sheet interpolates
+  between, and the sheet is 24px narrower closed than open — so a layer whose width followed it
+  would re-wrap its text and retarget, mid-flight, the animation it was halfway through.
+- **The sheet's handle is a real button with a real `onClick`, and the pointer path stands aside
+  for it.** A press arrives as a click from a keyboard, from VoiceOver and from any synthetic
+  press. Handling the tap in the pointer release *as well* toggles twice and lands the sheet
+  back where it started; `wasTap` in `sheetDrag.ts` is that one decision, and it is tested.
+- **The `--panel*` translucency tokens live on `:root`, not `.ride`.** vaul portals the Layers
+  and finish sheets to `<body>`, so anything scoped to the ride screen is invisible to them.
 - **A pinned drawer footer is a sibling of the scroller, never `position: sticky` inside it.**
   Sticky cannot be pushed outside its containing block, and that block ends at the scroller's
   bottom padding — the home indicator's clearance. `Start ride` pinned itself `--safe-bottom`
   above the true bottom and the climb list scrolled through the strip beneath it; the negative
   bottom margin written to bleed past that edge was ignored by the clamp. It hides at a desk,
-  where `env(safe-area-inset-bottom)` is 0 and the leak is 12 px rather than 46. `.drawer` is a
+  where `env(safe-area-inset-bottom)` is 0 and the leak is 12 px rather than 46. `.sheet-full` is a
   flex column, so the footer just goes after `.drawer-body` — and then it needs no background,
   because nothing scrolls behind it.
 - **Nothing may be positioned above the bottom bar by a constant, because there is no
@@ -480,7 +498,8 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   visible — sat across the route's own name for exactly this reason: `5.7rem` reserved against
   a card that measures 164 px. Whichever bar is up carries `data-bottom-bar`,
   `useBottomBarHeight` measures it and publishes `--bar-height`. Same argument as the HUD's
-  measured height.
+  measured height. The map buttons clear the plan sheet by that same measurement rather than by
+  sitting above it in flow, because the sheet is fixed — it has to be, to reach the edges.
 - **Setup must be reachable with a plan on the map.** Its only door used to be the plan card's
   shortcuts, which are the card's *empty* state — so placing one waypoint shut the rider out of
   the regions, the rider settings and diagnostics until they cleared the plan. It is a row at
@@ -575,6 +594,11 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   is neutral grey — it has stopped being a route — and "climb ahead" is a blurred halo in black
   or white by theme, which is a *lightness* effect and so needs no clearance rule and works
   over a line of any colour. Do not give either one a hue.
+- **A list row's card belongs to the button, not to the `<li>`.** Saved's rows became one
+  `.library-row` button when the library was promoted to a screen, and the `52px 1fr` grid left
+  on the `<li>` went on placing that whole button in a 52px column — figures wrapped to three
+  lines, chevron across them, and the white box that read as a frame around the thumbnail was
+  the row itself, squeezed. When a row's contents become one element, the `<li>` styles nothing.
 - **The route library is IndexedDB, and neither of the other two stores would do.**
   `localStorage` is ~5 MB per origin *shared with the plan, the theme and the basemap choice*,
   so twenty 240 kB GPX documents evict all of them with a silent `QuotaExceededError`. OPFS is
