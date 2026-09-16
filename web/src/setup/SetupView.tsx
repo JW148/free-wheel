@@ -43,16 +43,25 @@ export default function SetupView({
   basemap,
   rider,
   gate,
+  openOn,
   onClose,
 }: {
   basemap: ReturnType<typeof useMapLibre>
   rider: Rider
   /** This phone has nothing to ride on, so Maps opens first and the exit is worded for it. */
   gate: boolean
+  /**
+   * Which page to land on, for a caller that already knows what the rider came for.
+   *
+   * The search screen uses it: a rider who typed a town this phone has no map for and tapped
+   * the region it is in should arrive at the regions, not at a menu with the word Maps on it.
+   * Unlike `gate` it changes nothing else — the menu is still behind it, and back goes there.
+   */
+  openOn?: Page
   onClose: () => void
 }) {
   /** `null` is the menu; anything else is a screen pushed on top of it. */
-  const [page, setPage] = useState<Page | null>(gate ? 'maps' : null)
+  const [page, setPage] = useState<Page | null>(gate ? 'maps' : (openOn ?? null))
   const [installedCount, setInstalledCount] = useState<number | null>(null)
   const jobs = useDownloads()
   const queue = queueSummary(jobs)

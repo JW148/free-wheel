@@ -29,6 +29,9 @@ import SavedScreen from '../library/SavedScreen'
 import RideHud from './RideHud'
 import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
+import SearchScreen from '../search/SearchScreen'
+import { places } from '../search/searchStore'
+import type { PlanSlot } from './plan'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -107,7 +110,7 @@ export default function RideView({
    */
   suspended: boolean
   rider: Rider
-  onOpenSetup: () => void
+  onOpenSetup: (page?: 'maps' | 'rider') => void
 }) {
   const {
     map,
@@ -131,6 +134,22 @@ export default function RideView({
    */
   const [layersOpen, setLayersOpen] = useState(false)
   const [savedOpen, setSavedOpen] = useState(false)
+  /**
+   * Which end of the plan the search screen is choosing, or `null` when it is closed.
+   *
+   * A slot rather than a boolean, because the screen is opened from three places that mean
+   * three different things — the field at the top of the map, the start row, the finish row.
+   */
+  const [searching, setSearching] = useState<PlanSlot | null>(null)
+  /**
+   * The next tap on the map replaces this end of the plan rather than appending a point.
+   *
+   * The app's oldest rule is that a tap always places a waypoint, because a mode you can be in
+   * without knowing is how a rider ends up tapping a map that has stopped responding. This is a
+   * mode, so it is allowed only with a strip on screen saying so and a Cancel beside it — and it
+   * ends on the first tap either way.
+   */
+  const [aiming, setAiming] = useState<PlanSlot | null>(null)
   /** Bumped after a save, so the Saved list picks the new entry up when it next opens. */
   const [librarySaves, setLibrarySaves] = useState(0)
   const [follow, setFollow] = useState(false)
@@ -264,6 +283,14 @@ export default function RideView({
   const editable = !riding
   const canPlace = useRef(editable)
   canPlace.current = editable
+  // Read from the tap handler, which is registered once and must not be rebuilt when the mode
+  // changes — re-registering a map listener per render is how a tap gets handled twice.
+  const aimingAt = useRef<PlanSlot | null>(null)
+  aimingAt.current = aiming
+  const placeAt = useRef(plan.placeAt)
+  placeAt.current = plan.placeAt
+  const stopAiming = useRef<() => void>(() => {})
+  stopAiming.current = () => setAiming(null)
   const closeSheet = useRef<() => void>(() => {})
   closeSheet.current = () => sheet.setOpen(false)
   // Read from callbacks that must not be rebuilt on every render — a reroute reads the plan,
@@ -289,7 +316,17 @@ export default function RideView({
       })
       if (action.do === 'choose') chooseRoute.current(action.profile)
       else if (action.do === 'clear') clearChoice.current()
-      else if (action.do === 'place') addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
+      else if (action.do === 'place') {
+        // "Choose on the map" armed a slot: this tap *replaces* that end rather than adding a
+        // seventh point. It disarms either way, so the mode cannot outlive the tap it was for.
+        const slot = aimingAt.current
+        if (slot) {
+          placeAt.current(slot, { lon: e.lngLat.lng, lat: e.lngLat.lat })
+          stopAiming.current()
+        } else {
+          addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
+        }
+      }
     }
     instance.on('click', onClick)
     return () => {
@@ -653,6 +690,17 @@ export default function RideView({
     void reroute()
   }, [riding, telemetry.offRoute, telemetry.progress, rerouting, rider.setup.autoReroute, reroute])
 
+  /**
+   * Building a place index blocks the engine Worker for a few seconds, and the next thing that
+   * Worker might be asked for is the reroute that gets a lost rider home. So it stops for the
+   * length of the ride. Nothing is lost by waiting: the map still draws every name it always
+   * did, and the search screen is not reachable from the riding screen anyway.
+   */
+  useEffect(() => {
+    places.hold(riding)
+    return () => places.hold(false)
+  }, [riding])
+
   const startRiding = useCallback(async () => {
     if (suspended) return
     setRiding(true)
@@ -725,6 +773,22 @@ export default function RideView({
   const routeCount = Object.keys(plan.routes).length
 
   const bar = useBottomBarHeight(riding)
+
+  /**
+   * Where the search measures its distances from.
+   *
+   * The rider's own fix when there is one, and the middle of the map otherwise. The map centre
+   * is the better fallback than nothing: a rider who has panned to Peebles is asking about
+   * Peebles, and "5.2 km" against every result is most of what makes a list of forty streets
+   * usable. Read when the screen opens rather than followed, because a `move` listener that
+   * re-ranks a list under a rider's thumb is worse than a figure a few seconds old.
+   */
+  const searchNear = useMemo(() => {
+    if (fix) return { lon: fix.lon, lat: fix.lat }
+    const centre = map.current?.getCenter()
+    return centre ? { lon: centre.lng, lat: centre.lat } : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fix, searching])
 
   const summary = telemetry.finished && telemetry.finishedRecord && (
     <RideSummarySheet
@@ -815,7 +879,60 @@ export default function RideView({
           repeating them over the map was the same numbers twice, one copy of which was covering
           the road the rider was looking at.
         */}
+        {/*
+          The search field, and the one piece of chrome at the top of the planning screen.
+
+          It replaces the two "tap the map" hints rather than joining them: the plan card already
+          says both, and a map app that opens with an instruction where every other one opens
+          with a search field reads as missing the field. The other four hints below are states
+          the rider genuinely cannot see from the map — no map installed, a failed open, a run in
+          progress, a choice still to make.
+        */}
         <div className="rail">
+          {aiming ? (
+            <p className="map-aim">
+              <span>Tap the map for your {aiming === 'start' ? 'start' : aiming === 'stop' ? 'stop' : 'finish'}</span>
+              <button type="button" onClick={() => setAiming(null)}>
+                Cancel
+              </button>
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="map-search"
+              data-planned={plan.waypoints.length > 0 ? 'yes' : 'no'}
+              onClick={() => setSearching(plan.waypoints.length === 0 ? 'start' : 'finish')}
+            >
+              <SearchIcon />
+              <span className="map-search-label">{searchLabel(plan)}</span>
+              {plan.waypoints.length > 0 && (
+                <span
+                  className="map-search-clear"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Clear the route"
+                  onClick={(event) => {
+                    // The row is a button and so is this; nesting them is invalid HTML and a
+                    // target VoiceOver cannot describe, so it is a `role="button"` span and the
+                    // press is stopped from reaching the field behind it.
+                    event.stopPropagation()
+                    plan.clear()
+                    sheet.setOpen(false)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    plan.clear()
+                    sheet.setOpen(false)
+                  }}
+                >
+                  ×
+                </span>
+              )}
+            </button>
+          )}
+
           {mapStatus === 'no-basemap' ? (
             /* The one state where the routing hints below are nonsense: there is no map to
                tap. It is reachable by choice — "carry on without a region" — so it has to
@@ -838,10 +955,6 @@ export default function RideView({
             <p className="rail-hint panel">Working out your routes…</p>
           ) : routeCount > 1 && plan.chosen === null ? (
             <p className="rail-hint panel">Tap a line, or a card, to choose it.</p>
-          ) : plan.waypoints.length === 0 ? (
-            <p className="rail-hint panel">Tap the map to set your start</p>
-          ) : plan.waypoints.length === 1 ? (
-            <p className="rail-hint panel">Now tap where you're heading</p>
           ) : null}
         </div>
 
@@ -915,9 +1028,44 @@ export default function RideView({
           }}
         />
       )}
+      {/* Above the ride screen rather than instead of it, for the reason every other overlay
+          here is: unmounting the map would drop its OPFS handles and its whole tile cache, and
+          picking a destination puts a pin straight back on that map. */}
+      {searching && (
+        <SearchScreen
+          plan={plan}
+          slot={searching}
+          near={searchNear}
+          onClose={() => setSearching(null)}
+          onChooseOnMap={(slot) => {
+            setSearching(null)
+            setAiming(slot)
+          }}
+          onLocate={locateOnce}
+          onOpenMaps={() => {
+            setSearching(null)
+            onOpenSetup('maps')
+          }}
+        />
+      )}
       {summary}
     </div>
   )
+}
+
+/**
+ * What the field at the top of the map says.
+ *
+ * Three states, and only the first is an invitation. Once there is a plan the field is
+ * *describing* it — which is also what makes the × beside it read as clearing that plan rather
+ * than clearing a search box.
+ */
+function searchLabel(plan: { waypoints: { label?: string; lat: number; lon: number }[] }): string {
+  const named = (point: { label?: string; lat: number; lon: number }) =>
+    point.label ?? `${point.lat.toFixed(4)}, ${point.lon.toFixed(4)}`
+  if (plan.waypoints.length === 0) return 'Search a place or address'
+  if (plan.waypoints.length === 1) return `From ${named(plan.waypoints[0])} — where to?`
+  return `${named(plan.waypoints[0])} → ${named(plan.waypoints[plan.waypoints.length - 1])}`
 }
 
 /**
@@ -1045,6 +1193,11 @@ function TargetIcon() {
   )
 }
 
-
-
-
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m15.8 15.8 4.2 4.2" />
+    </svg>
+  )
+}

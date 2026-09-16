@@ -183,6 +183,39 @@ export function spread(
 }
 
 /**
+ * Which region a point belongs to, by the same rule the partition is drawn with.
+ *
+ * Nearest seed **among the regions whose published box covers it** — the clip is what keeps it
+ * honest, since a seed can only redistribute published coverage and never invent it. `null` for
+ * a point no published box covers, which is every place outside Great Britain and a rider who
+ * has typed the name of a French town into the search.
+ *
+ * Exists because the search needs it: typing a place the phone has no map for is a dead end
+ * unless the app can say *which region to download*, and that question is exactly "which region
+ * would paint this point". Drawing the whole partition to answer it for one place would be
+ * thirty-six thousand cells for a single town.
+ */
+export function regionAt(
+  regions: RegionEntry[],
+  lon: number,
+  lat: number,
+): RegionEntry | null {
+  let best = Infinity
+  let found: RegionEntry | null = null
+  for (const region of regions) {
+    if (!covers(region.bbox, lon, lat)) continue
+    for (const seed of seedsFor(region)) {
+      const distance = spread([lon, lat], seed)
+      if (distance < best) {
+        best = distance
+        found = region
+      }
+    }
+  }
+  return found
+}
+
+/**
  * The partition, one shape per region, in the order the regions were given.
  *
  * A region always gets a shape — an empty one if some other box claims every cell it has, which

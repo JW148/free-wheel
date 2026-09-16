@@ -8,10 +8,12 @@ import { useRider } from './ride/useRider'
 import { sharedEngine } from './engine/engineClient'
 import { downloads } from './setup/downloadStore'
 import { readyToRide } from './setup/pickerModel'
+import { places } from './search/searchStore'
 import './ride/ride.css'
 import './App.css'
 import './screens.css'
 import './onboarding/onboarding.css'
+import './search/search.css'
 
 /**
  * Two screens: the ride, and everything that supports it.
@@ -43,7 +45,8 @@ export default function App() {
   // Setup edits it, and Setup is an overlay *over* the ride screen rather than a replacement,
   // so two copies would drift.
   const rider = useRider()
-  const [setupOpen, setSetupOpen] = useState(false)
+  /** `null` is closed; a string is open on that page, and `''` is open on the menu. */
+  const [setupOpen, setSetupOpen] = useState<'maps' | 'rider' | '' | null>(null)
   /** Read once, at mount: it must not re-show because a render happened. */
   const [onboarding, setOnboarding] = useState(() => !hasOnboarded())
   /**
@@ -93,6 +96,19 @@ export default function App() {
   useEffect(() => downloads.onInstalled(() => void basemap.sync()), [basemap.sync])
 
   /**
+   * The place index follows the archives, from here rather than from the search screen.
+   *
+   * Same rule as the engine's own setup: never let it depend on a component having mounted. A
+   * rider who downloads a region and then opens search should find it already searchable, and
+   * one who opens search the moment the app starts should not be the reason the index gets
+   * built. `basemap.archives` is what `sync` publishes, so this fires on startup, on a finished
+   * download, on a hand import and on a removal — the same four moments the map itself changes.
+   */
+  useEffect(() => {
+    void places.sync(basemap.archives)
+  }, [basemap.archives])
+
+  /**
    * Leaving Setup.
    *
    * It only ever stands the first-run screen *down*, never back up. Deleting every region in
@@ -101,11 +117,11 @@ export default function App() {
    * with a takeover. It gets its turn on the next launch, where it belongs.
    */
   const closeSetup = useCallback(() => {
-    setSetupOpen(false)
+    setSetupOpen(null)
     setNeedsSetup(false)
   }, [])
 
-  const openSetup = useCallback(() => setSetupOpen(true), [])
+  const openSetup = useCallback((page?: 'maps' | 'rider') => setSetupOpen(page ?? ''), [])
 
   /**
    * Finishing the walkthrough.
@@ -124,7 +140,7 @@ export default function App() {
 
   // The walkthrough covers the gate, so the gate does not also render underneath it. Both are
   // full-screen and opaque; stacking them would mean a flash of Setup on every first launch.
-  const showSetup = !onboarding && (setupOpen || needsSetup === true)
+  const showSetup = !onboarding && (setupOpen !== null || needsSetup === true)
 
   return (
     <>
@@ -140,6 +156,7 @@ export default function App() {
           basemap={basemap}
           rider={rider}
           gate={needsSetup === true}
+          openOn={setupOpen || undefined}
           onClose={closeSetup}
         />
       )}

@@ -17,6 +17,17 @@ export interface Waypoint {
   lon: number
   lat: number
   /**
+   * What the rider called this point, when they chose it by name.
+   *
+   * Only ever a name they were *given*: a search result, a saved place. Never derived from the
+   * coordinates. The rule in CLAUDE.md — there is no geocoder, and where a design shows a place
+   * name the app shows coordinates — is about turning a position into a name, which is a thing
+   * this app will not do. Remembering a name the rider picked off a list is the opposite
+   * direction and costs nothing. A point tapped on the map still has none, and still shows its
+   * coordinates.
+   */
+  label?: string
+  /**
    * Where this point came from, when it was not a tap on the map.
    *
    * `'reroute'` is a point the app added on the rider's behalf: rejoining the route after a
@@ -142,4 +153,42 @@ export function savePlan(plan: Omit<StoredPlan, 'v'>): void {
   } catch {
     // Quota, or private browsing. Losing persistence is not worth breaking the ride over.
   }
+}
+
+/** Where a searched place goes in the plan. */
+export type PlanSlot = 'start' | 'finish' | 'stop'
+
+/**
+ * The plan after putting a place at one end of it, or in the middle.
+ *
+ * Pure, because the interesting part is not the assignment but the four shapes a plan can be in
+ * when a rider picks a destination: empty, one point, two, or two with stops between them. A
+ * finish chosen on an empty plan has to become the *only* point rather than the second of two
+ * — otherwise the app is quietly routing from nowhere.
+ *
+ * Points the app placed itself are dropped first. A rejoin point belongs to the ride it was
+ * added during (see `stitch.ts`); carrying one into a plan the rider has just typed a new
+ * destination into would route them through a layby they passed last Tuesday.
+ */
+export function withEndpoint(
+  waypoints: Waypoint[],
+  slot: PlanSlot,
+  point: { lon: number; lat: number; label?: string },
+): Waypoint[] {
+  const placed = waypoints.filter((w) => w.kind !== 'reroute')
+  const next: Waypoint = {
+    id: crypto.randomUUID(),
+    lon: point.lon,
+    lat: point.lat,
+    ...(point.label ? { label: point.label } : {}),
+  }
+
+  if (placed.length === 0) return [next]
+  if (slot === 'start') return [next, ...placed.slice(1)]
+  if (slot === 'stop') {
+    return placed.length === 1
+      ? [...placed, next]
+      : [...placed.slice(0, -1), next, placed[placed.length - 1]]
+  }
+  return placed.length === 1 ? [...placed, next] : [...placed.slice(0, -1), next]
 }

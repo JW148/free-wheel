@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chosenAfterRun, migratePlan, PLAN_VERSION } from './plan'
+import { chosenAfterRun, migratePlan, PLAN_VERSION, withEndpoint } from './plan'
 import { DEFAULT_PROFILES } from './profiles'
 
 describe('migratePlan', () => {
@@ -112,5 +112,53 @@ describe('chosenAfterRun', () => {
 
   it('has nothing to choose when everything failed', () => {
     expect(chosenAfterRun([])).toBeNull()
+  })
+})
+
+/**
+ * A place chosen from the search has to land in the right slot whatever shape the plan was
+ * already in — and the empty plan is the one that catches a naive implementation, where a
+ * finish becomes the second of two points and the first is nowhere.
+ */
+describe('withEndpoint', () => {
+  const p = (lon: number) => ({ lon, lat: 55.95 })
+  const lons = (points: { lon: number }[]) => points.map((w) => w.lon)
+
+  it('makes the first place chosen the only point, whichever slot it was chosen for', () => {
+    expect(lons(withEndpoint([], 'start', p(1)))).toEqual([1])
+    expect(lons(withEndpoint([], 'finish', p(1)))).toEqual([1])
+  })
+
+  it('replaces the start and keeps everything after it', () => {
+    const plan = [...withEndpoint([], 'start', p(1)), ...withEndpoint([], 'finish', p(2))]
+    expect(lons(withEndpoint(plan, 'start', p(9)))).toEqual([9, 2])
+  })
+
+  it('adds a finish to a lone start, then replaces it', () => {
+    const one = withEndpoint([], 'start', p(1))
+    const two = withEndpoint(one, 'finish', p(2))
+    expect(lons(two)).toEqual([1, 2])
+    expect(lons(withEndpoint(two, 'finish', p(3)))).toEqual([1, 3])
+  })
+
+  it('puts a stop before the finish, not after it', () => {
+    const two = withEndpoint(withEndpoint([], 'start', p(1)), 'finish', p(3))
+    expect(lons(withEndpoint(two, 'stop', p(2)))).toEqual([1, 2, 3])
+  })
+
+  it('drops the points a reroute added', () => {
+    // They belong to the ride they were added during. Carrying one into a plan the rider has
+    // just typed a new destination into would route them through last Tuesday's layby.
+    const ridden = [
+      { id: 'a', lon: 1, lat: 55.95 },
+      { id: 'b', lon: 2, lat: 55.95, kind: 'reroute' as const },
+      { id: 'c', lon: 3, lat: 55.95 },
+    ]
+    expect(lons(withEndpoint(ridden, 'finish', p(9)))).toEqual([1, 9])
+  })
+
+  it('gives every new point its own identity', () => {
+    const one = withEndpoint([], 'start', p(1))
+    expect(withEndpoint(one, 'start', p(1))[0].id).not.toBe(one[0].id)
   })
 })

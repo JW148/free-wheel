@@ -3,7 +3,15 @@ import { sharedEngine } from '../engine/engineClient'
 import { tilesForWaypoints } from '../engine/tiles'
 import { haversineM } from './geo'
 import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
-import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
+import {
+  chosenAfterRun,
+  loadPlan,
+  savePlan,
+  withEndpoint,
+  type PlanSlot,
+  type StoredPlan,
+  type Waypoint,
+} from './plan'
 import { DEFAULT_PROFILES, isRoutableProfile, RECORDED_TRACK, type ProfileId } from './profiles'
 import { stitchRoute, stitchedGpx, type RiddenPrefix } from './stitch'
 
@@ -107,6 +115,13 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    */
   const [deferred, setDeferred] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  /**
+   * A route was asked for by something that had to change the waypoints first.
+   *
+   * Consumed by an effect, because `run` is built from the *current* `waypoints` and a caller
+   * that has just replaced them is holding the previous one. See {@link placeAt}.
+   */
+  const [runWanted, setRunWanted] = useState(false)
 
   // Persist on change. The alternative — persisting on unload — does not fire reliably when
   // iOS kills a backgrounded web app.
@@ -423,12 +438,44 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     }
   }, [])
 
+  /**
+   * Puts a searched place at one end of the plan, and routes it once both ends exist.
+   *
+   * The routing is deferred to an effect rather than done here, and that is the whole of the
+   * fiddliness: `run` closes over `waypoints`, so calling it in the same tick as `setWaypoints`
+   * would route the plan as it was a moment ago — which for a rider who has just chosen a
+   * destination is a route to their previous one. The flag below is set here and consumed after
+   * the state has committed, by which time `run` is the one that knows about the new plan.
+   *
+   * Routes are cleared either way. A line on the map computed for a start the rider has just
+   * replaced is not a stale figure, it is a wrong one.
+   */
+  const placeAt = useCallback(
+    (slot: PlanSlot, point: { lon: number; lat: number; label?: string }) => {
+      const next = withEndpoint(waypoints, slot, point)
+      setWaypoints(next)
+      setRoutes({})
+      setGpx({})
+      setChosen(null)
+      setDeferred([])
+      setError(null)
+      setRunWanted(next.length >= 2)
+    },
+    [waypoints],
+  )
+
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
     sharedEngine().cancel()
     setRouting(null)
     setError('Cancelled.')
   }, [])
+
+  useEffect(() => {
+    if (!runWanted) return
+    setRunWanted(false)
+    if (waypoints.length >= 2) void run()
+  }, [runWanted, waypoints, run])
 
   return {
     waypoints,
@@ -454,6 +501,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     clearableChoice: chosen !== null && Object.keys(routes).length > 1,
     toggleProfile,
     addWaypoint,
+    placeAt,
     moveWaypoint,
     removeWaypoint,
     clear,

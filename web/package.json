@@ -17,8 +17,10 @@
     "mirror:basemaps": "node tools/mirror/cut-basemaps.mjs"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^2.0.5",
     "comlink": "^4.4.2",
     "maplibre-gl": "^6.0.0",
+    "pbf": "^5.1.2",
     "pmtiles": "^4.4.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

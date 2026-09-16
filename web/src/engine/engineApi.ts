@@ -14,9 +14,11 @@ import {
   importTileFile,
   installedBasemaps,
   installedTiles,
+  BASEMAP_DIR,
   SEGMENT_DIR,
   type ImportProgress,
 } from './tileStore'
+import { buildPlaceIndex, type IndexProgress } from '../search/buildIndex'
 import type { ProvisionProgress } from './opfsVfs'
 import type { RegionProgress } from './downloads'
 import { downloadPlan } from '../data/regions'
@@ -206,6 +208,29 @@ const engineApi = {
 
   async installedBasemaps() {
     return installedBasemaps()
+  },
+
+  /**
+   * Reads every name out of one basemap archive, for the offline place search.
+   *
+   * Here rather than on the main thread for the reason everything about OPFS is here: exactly
+   * one sync access handle may be open per file and this registry owns it, so a second opener
+   * on the main thread would collide with the map. `openHandle` is idempotent — `mountBasemap`
+   * has usually opened this file already — and the reads underneath are synchronous, which is
+   * the difference between one pass over the archive and 2,760 round trips across a thread
+   * boundary.
+   *
+   * It blocks this Worker while it runs, like a route does, for a few seconds per region. The
+   * caller is responsible for not asking during a ride; see `searchStore.hold`.
+   *
+   * The three typed arrays are transferred rather than copied. They are the bulk of the result —
+   * about 0.4 MB for a region — and nothing here keeps them afterwards.
+   */
+  async buildPlaceIndex(name: string, onProgress?: (progress: IndexProgress) => void) {
+    const path = `${BASEMAP_DIR}/${name}`
+    const handle = await openHandle(path)
+    const index = await buildPlaceIndex(path, name, handle.getSize(), readRangeFromOpfs, onProgress)
+    return Comlink.transfer(index, [index.kinds.buffer, index.lons.buffer, index.lats.buffer])
   },
 
   /**
