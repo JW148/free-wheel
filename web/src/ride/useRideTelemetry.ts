@@ -113,6 +113,10 @@ export function useRideTelemetry(input: {
   riderRef.current = rider
   const geometryRef = useRef(geometry)
   geometryRef.current = geometry
+  // Read by the effect above, which keys on `geometry` and must not also key on `route` — they
+  // change together, and listing both would run it twice per reroute.
+  const routeRef = useRef(route)
+  routeRef.current = route
   const ridingRef = useRef(riding)
   ridingRef.current = riding
 
@@ -144,12 +148,19 @@ export function useRideTelemetry(input: {
   // A new route means the old progress describes nothing. This also covers a reroute, which
   // replaces the route under a rider who is still moving.
   //
-  // Power is cleared with it. It is derived from the *route's* gradient, so the moment the
+  // The snap hint is *seeded* rather than cleared when the new route says where the rider
+  // rejoined it. A stitched route's first half is road they have already been down, and a
+  // hintless snap falls back to a global scan — which on an out-and-back picks between two
+  // coincident lines by floating-point luck and can put the rider back where they were half an
+  // hour ago. `resumeAtM` is set only by `stitchRoute`; everything the engine computed in one
+  // piece still starts blind, which is correct for a route the rider has never been on.
+  //
+  // Power is cleared either way. It is derived from the *route's* gradient, so the moment the
   // route changes the last figure describes a hill that is no longer ahead — and leaving a
   // live-looking wattage next to a dashed-out distance is worse than showing nothing for the
   // one second until the next fix.
   useEffect(() => {
-    hintM.current = null
+    hintM.current = routeRef.current?.resumeAtM ?? null
     smoothPower.current = null
     setProgress(null)
     setPowerW(null)

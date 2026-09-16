@@ -16,6 +16,18 @@ export interface Waypoint {
   id: string
   lon: number
   lat: number
+  /**
+   * Where this point came from, when it was not a tap on the map.
+   *
+   * `'reroute'` is a point the app added on the rider's behalf: rejoining the route after a
+   * wrong turn keeps the original start and every via already passed, and records where the
+   * rider rejoined as one more point along the way (see `stitch.ts`). It is drawn as a quiet
+   * dot rather than a numbered pin and does not shift the numbering of the ones the rider
+   * placed — a point you did not put there should not look like one you did.
+   *
+   * Optional, so a plan written by an earlier version restores unchanged.
+   */
+  kind?: 'reroute'
 }
 
 export interface StoredPlan {

@@ -9,7 +9,8 @@ import { useHeading } from './useHeading'
 import { useRideTelemetry } from './useRideTelemetry'
 import { useAnnouncer } from './useAnnouncer'
 import type { Rider } from './useRider'
-import { sliceAlong, waypointsAhead } from './progress'
+import { sliceAlong, splitWaypoints } from './progress'
+import { riddenPrefix } from './stitch'
 import {
   boundsOf,
   drawnRoutes,
@@ -368,10 +369,21 @@ export default function RideView({
       }
     }
 
+    /*
+     * Numbering counts only the points the rider placed.
+     *
+     * A reroute adds a point where they rejoined the route — that is what keeps the original
+     * start (see `stitch.ts`) — and it is not a via they chose. Counting it would renumber
+     * every pin after it in the middle of a ride, and drawing it like the others would claim
+     * they put it there.
+     */
+    let placed = 0
     plan.waypoints.forEach((waypoint, index) => {
       const last = index === plan.waypoints.length - 1
-      const label = index === 0 ? 'S' : last ? 'F' : String(index)
-      const role = index === 0 ? 'start' : last ? 'finish' : 'via'
+      const rejoin = waypoint.kind === 'reroute' && !last && index > 0
+      const ordinal = rejoin ? placed : placed++
+      const label = rejoin ? '' : index === 0 ? 'S' : last ? 'F' : String(ordinal)
+      const role = rejoin ? 'rejoin' : index === 0 ? 'start' : last ? 'finish' : 'via'
 
       let marker = markers.current.get(waypoint.id)
       if (!marker) {
@@ -402,9 +414,10 @@ export default function RideView({
       element.dataset.role = role
       element.dataset.editable = editable ? 'yes' : 'no'
       element.textContent = label
+      const described = rejoin ? 'the point you rejoined the route at' : `${role} point ${label}`
       element.setAttribute(
         'aria-label',
-        editable ? `${role} point ${label}. Tap to remove.` : `${role} point ${label}`,
+        editable ? `${described}. Tap to remove.` : described,
       )
     })
   }, [map, styleReady, suspended, plan.waypoints, editable])
@@ -594,6 +607,15 @@ export default function RideView({
   }, [courseUp, heading])
 
   // ── Rerouting ─────────────────────────────────────────────────────────────────────────
+  /**
+   * Route again from here, and keep the ride that has already happened.
+   *
+   * The engine is only ever asked about the road ahead. Everything behind the rider — the line
+   * they rode, the start they set off from, the vias they have gone through, the distance and
+   * the climbing they have banked — is kept and the new leg is joined onto it. Replacing the
+   * whole route, which is what this did, made every figure on the screen change at once because
+   * of a wrong turn. See `stitch.ts` and `useRoute.rerouteFrom`.
+   */
   const reroute = useCallback(async () => {
     const { plan: current, fix: here, telemetry: state } = live.current
     // `rerouteProfile`, not `chosen`: following a recorded track sets `chosen` to a
@@ -604,12 +626,21 @@ export default function RideView({
     lastRerouteAt.current = Date.now()
     setRerouting(true)
     try {
-      const remaining = waypointsAhead(
-        state.geometry,
-        current.waypoints,
-        state.progress?.position.alongM ?? 0,
-      )
-      await current.rerouteFrom({ lon: here.lon, lat: here.lat }, remaining, profile)
+      const alongM = state.progress?.position.alongM ?? 0
+      const { behind, ahead } = splitWaypoints(state.geometry, current.waypoints, alongM)
+      await current.rerouteFrom({
+        from: { lon: here.lon, lat: here.lat },
+        behind,
+        remaining: ahead,
+        profileId: profile,
+        // No snapped position means nothing is known about how far along the rider is, and a
+        // prefix guessed at zero would claim they are still at the start. Then, and only then,
+        // the old behaviour is the honest one: route from here and start the trip again.
+        prefix:
+          state.progress && current.route
+            ? riddenPrefix(state.geometry, current.route, alongM)
+            : null,
+      })
     } finally {
       setRerouting(false)
     }

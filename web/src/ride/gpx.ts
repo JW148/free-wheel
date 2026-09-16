@@ -43,6 +43,17 @@ export interface ParsedRoute {
    */
   timeS: number | null
   name: string | null
+  /**
+   * Where along this route the rider rejoined it, for a route that was *stitched* rather than
+   * computed in one piece.
+   *
+   * Absent on everything the engine produced, which is nearly everything. It exists because
+   * `snapToRoute` searches a window around a hint before it falls back to a global scan, and a
+   * stitched route's first half is a road the rider has already been down — so a blind scan
+   * after a reroute can put an out-and-back rider back where they were half an hour ago. See
+   * `stitch.ts`.
+   */
+  resumeAtM?: number
 }
 
 /**

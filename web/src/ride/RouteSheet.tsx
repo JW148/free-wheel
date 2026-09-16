@@ -127,7 +127,10 @@ export default function RouteSheet({
         </div>
 
         <div className="sheet-full" id="plan-sheet-full" ref={surface.full} inert={!sheet.open}>
-          <div className="drawer-body">
+          {/* The scroller drags the sheet too, from its top. The handle alone was 60×24px on
+              the one surface a rider uses without looking; see `pendingVerdict` for how a
+              press here stays a tap when it turns out to be one. */}
+          <div className="drawer-body" {...surface.bodyDrag}>
             {detail ? (
               <RouteDetail plan={plan} sheet={sheet} onSaved={onSaved} />
             ) : (
@@ -606,14 +609,26 @@ function coords(point: { lat: number; lon: number }): string {
   return `${point.lat.toFixed(4)}, ${point.lon.toFixed(4)}`
 }
 
+/**
+ * Every point the route runs through, named.
+ *
+ * A reroute adds one of its own — where the rider rejoined the line after a wrong turn — and it
+ * is named for what it is rather than counted as a via. Counting it would renumber the points
+ * the rider actually placed, which is the same argument the pins on the map make.
+ */
 function Waypoints({ plan }: { plan: Plan }) {
   if (plan.waypoints.length === 0) return null
+  let placed = 0
   return (
     <ol className="waypoints">
-      {plan.waypoints.map((waypoint, index) => (
+      {plan.waypoints.map((waypoint, index) => {
+        const last = index === plan.waypoints.length - 1
+        const rejoin = waypoint.kind === 'reroute' && !last && index > 0
+        const ordinal = rejoin ? placed : placed++
+        return (
         <li key={waypoint.id}>
           <span className="waypoint-role">
-            {index === 0 ? 'Start' : index === plan.waypoints.length - 1 ? 'Finish' : `Via ${index}`}
+            {rejoin ? 'Rejoined' : index === 0 ? 'Start' : last ? 'Finish' : `Via ${ordinal}`}
           </span>
           <span className="waypoint-coords">{coords(waypoint)}</span>
           <button
@@ -624,7 +639,8 @@ function Waypoints({ plan }: { plan: Plan }) {
             Remove
           </button>
         </li>
-      ))}
+        )
+      })}
     </ol>
   )
 }

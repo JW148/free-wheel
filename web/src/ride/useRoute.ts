@@ -5,6 +5,7 @@ import { haversineM } from './geo'
 import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
 import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
 import { DEFAULT_PROFILES, isRoutableProfile, RECORDED_TRACK, type ProfileId } from './profiles'
+import { stitchRoute, stitchedGpx, type RiddenPrefix } from './stitch'
 
 export type { Waypoint } from './plan'
 
@@ -254,47 +255,74 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   )
 
   /**
-   * Routes again from where the rider is now, through whatever is still ahead of them.
+   * Routes again from where the rider is now, and joins it onto the ride they have already done.
    *
-   * Mid-ride, and so deliberately unlike {@link run} in three ways:
+   * Mid-ride, and so deliberately unlike {@link run} in four ways:
    *
    * - **One profile.** The comparison is over — the rider is on a road, committed. Routing six
    *   profiles one after another would take six times as long at the moment it matters most.
-   * - **The plan is rewritten.** `waypoints` becomes the rider's position plus what is left,
-   *   because a route that starts 20 km behind the rider is not a route they can follow, and a
-   *   second reroute would otherwise be computed from the same stale start.
+   * - **Only the road ahead is computed.** The engine is asked for the rider's position through
+   *   to the finish, which is the only part that is still a question.
+   * - **The journey is kept.** What comes back is *stitched* onto the part already ridden, and
+   *   the plan keeps its original start and every via already passed, with the rider's position
+   *   added as one more point along the way. Replacing the route instead — which is what this
+   *   used to do — resets the trip length, the progress bar and the climbing done, all at once,
+   *   in the middle of a ride where nothing has actually changed except a wrong turn. See
+   *   `stitch.ts`.
    * - **A failure changes nothing.** The old route stays on the map and the rider keeps
    *   whatever they had. The alternative — clearing the route because the reroute failed — is
    *   the worst possible response to being lost.
    *
-   * `remaining` comes from `waypointsAhead`, which is what stops a rider being sent back to a
-   * via point they have already gone through.
+   * `behind` and `remaining` come from `splitWaypoints`, which is one function precisely so the
+   * two halves cannot disagree and send a rider back through a via point they have gone past.
+   * `prefix` is `null` when there is nothing to stitch to — no geometry, no progress — and then
+   * this behaves as it always did.
    */
   const rerouteFrom = useCallback(
-    async (
-      from: { lon: number; lat: number },
-      remaining: { lon: number; lat: number }[],
-      profileId: string,
-    ): Promise<boolean> => {
+    async ({
+      from,
+      behind,
+      remaining,
+      profileId,
+      prefix,
+    }: {
+      from: { lon: number; lat: number }
+      behind: Waypoint[]
+      remaining: Waypoint[]
+      profileId: string
+      prefix: RiddenPrefix | null
+    }): Promise<boolean> => {
       if (remaining.length === 0) return false
-      const next: Waypoint[] = [
-        { id: crypto.randomUUID(), lon: from.lon, lat: from.lat },
-        ...remaining.map((w) => ({ id: crypto.randomUUID(), lon: w.lon, lat: w.lat })),
-      ]
-      const lonLats = next.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
+      const here: Waypoint = {
+        id: crypto.randomUUID(),
+        lon: from.lon,
+        lat: from.lat,
+        kind: 'reroute',
+      }
+      const leg = [here, ...remaining]
+      const next: Waypoint[] = [...behind, ...leg]
+      // Only the leg goes to the engine. `behind` is road that has already happened, and asking
+      // for it again would both cost a search the rider is waiting on and risk coming back with
+      // a different answer for a ride they have already done.
+      const lonLats = leg.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
       setRouting(profileId)
       setError(null)
       try {
         const outcome = await sharedEngine().route(profileId, lonLats)
         if (!outcome.ok || !outcome.gpx) {
-          setError(explainRoutingFailure(outcome.error ?? 'routing failed', next))
+          setError(explainRoutingFailure(outcome.error ?? 'routing failed', leg))
           return false
         }
-        const parsed = parseBrouterGpx(outcome.gpx)
+        const fresh = parseBrouterGpx(outcome.gpx)
+        const joined = prefix ? stitchRoute(prefix, fresh) : fresh
         setWaypoints(next)
-        setRoutes({ [profileId]: parsed })
-        setGpx({ [profileId]: outcome.gpx })
+        setRoutes({ [profileId]: joined })
+        // The document has to describe the same line the map is drawing, or Save and Export
+        // hand back the tail of a ride rather than the ride.
+        setGpx({
+          [profileId]: prefix ? stitchedGpx(joined, `free-wheel_${profileId}`) : outcome.gpx,
+        })
         setChosen(profileId)
         return true
       } catch (e) {

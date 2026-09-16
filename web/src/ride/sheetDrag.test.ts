@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sheetProgress, sheetRelease, wasTap } from './sheetDrag'
+import { pendingVerdict, sheetProgress, sheetRelease, wasTap } from './sheetDrag'
 
 const RANGE = 400
 
@@ -76,5 +76,33 @@ describe('sheetRelease', () => {
 
   it('holds its ground when the range is unmeasurable', () => {
     expect(release({ from: 'open', travelledPx: -80, rangePx: 0 })).toBe('open')
+  })
+})
+
+/**
+ * A press inside the open sheet's body is three gestures wearing one costume: a drag that
+ * shuts the sheet, a scroll, and a tap on whichever route card is under the thumb. These are
+ * the first dozen pixels that tell them apart.
+ */
+describe('pendingVerdict', () => {
+  it('says nothing until the finger has committed to something', () => {
+    expect(pendingVerdict(0, 0)).toBe('wait')
+    expect(pendingVerdict(3, -6)).toBe('wait')
+  })
+
+  it('becomes a drag on a deliberate pull downwards', () => {
+    expect(pendingVerdict(0, -20)).toBe('drag')
+  })
+
+  it('gives an upward pull back to the scroller', () => {
+    expect(pendingVerdict(0, 30)).toBe('abandon')
+  })
+
+  it('gives a sideways swipe back, however far down it also drifted', () => {
+    expect(pendingVerdict(-40, -20)).toBe('abandon')
+  })
+
+  it('keeps a mostly-vertical drag that drifted sideways', () => {
+    expect(pendingVerdict(-14, -30)).toBe('drag')
   })
 })
