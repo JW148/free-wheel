@@ -4,6 +4,7 @@ import type { ProvisionProgress } from './opfsVfs'
 import type { ImportProgress } from './tileStore'
 import type { RegionProgress } from './downloads'
 import type { DataManifest, InstalledRegion, RegionEntry } from '../data/manifest'
+import type { IndexProgress } from '../search/buildIndex'
 
 /**
  * The one engine instance for the whole app.
@@ -78,6 +79,18 @@ export class EngineClient {
   async installedBasemaps() {
     await this.init()
     return this.spawn().installedBasemaps()
+  }
+
+  /**
+   * Builds one archive's place index.
+   *
+   * Blocks the Worker for a few seconds, exactly as a route does — which is why the caller
+   * ({@link searchStore}) refuses to start one while the rider is riding, where the Worker's
+   * next job might be the reroute that gets them home.
+   */
+  async buildPlaceIndex(name: string, onProgress?: (progress: IndexProgress) => void) {
+    await this.init()
+    return this.spawn().buildPlaceIndex(name, onProgress ? Comlink.proxy(onProgress) : undefined)
   }
 
   /** Deletes one hand-imported map archive. Throws if a downloaded region owns it. */

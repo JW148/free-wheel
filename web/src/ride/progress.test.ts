@@ -16,6 +16,7 @@ import {
   routeGeometry,
   sliceAlong,
   snapToRoute,
+  splitWaypoints,
   trackOffRoute,
   waypointsAhead,
 } from './progress'
@@ -388,5 +389,55 @@ describe('trackOffRoute', () => {
     let state = ON_ROUTE
     for (let i = 1; i <= 8; i++) state = trackOffRoute(state, fix(200, i))
     expect(trackOffRoute(state, fix(10, 9))).toEqual(ON_ROUTE)
+  })
+})
+
+/**
+ * A reroute keeps the original start and everything already passed, and routes only what is
+ * left. Both halves come from here, and the property that matters is that they are exactly
+ * complementary — a via in both is one the rider is sent back through.
+ */
+describe('splitWaypoints', () => {
+  const route = straightEastRoute(
+    Array.from({ length: 21 }, (_, i) => i * 100),
+    Array.from({ length: 21 }, () => 0),
+  )
+  const geometry = routeGeometry(route)!
+  const points = [
+    { lon: route.coords[0][0], lat: route.coords[0][1], id: 'start' },
+    { lon: route.coords[5][0], lat: route.coords[5][1], id: 'early' },
+    { lon: route.coords[15][0], lat: route.coords[15][1], id: 'late' },
+    {
+      lon: route.coords[route.coords.length - 1][0],
+      lat: route.coords[route.coords.length - 1][1],
+      id: 'finish',
+    },
+  ]
+
+  it('partitions the plan: every point in exactly one half', () => {
+    const at = geometry.cumulativeM[10]
+    const { behind, ahead } = splitWaypoints(geometry, points, at)
+    expect([...behind, ...ahead].map((p) => p.id).sort()).toEqual(
+      points.map((p) => p.id).sort(),
+    )
+  })
+
+  it('keeps the start behind and the finish ahead, always', () => {
+    const { behind, ahead } = splitWaypoints(geometry, points, geometry.totalM)
+    expect(behind[0].id).toBe('start')
+    expect(ahead[ahead.length - 1].id).toBe('finish')
+  })
+
+  it('leaves a via just behind the rider ahead of them', () => {
+    // Standing 15 m past a via is not the same as having gone through it, and a fix cannot tell
+    // the difference.
+    const { ahead } = splitWaypoints(geometry, points, geometry.cumulativeM[5] + 15)
+    expect(ahead.map((p) => p.id)).toContain('early')
+  })
+
+  it('makes a single point the destination rather than both ends of nothing', () => {
+    const { behind, ahead } = splitWaypoints(geometry, [points[0]], 0)
+    expect(behind).toEqual([])
+    expect(ahead).toEqual([points[0]])
   })
 })

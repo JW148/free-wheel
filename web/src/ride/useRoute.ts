@@ -3,8 +3,17 @@ import { sharedEngine } from '../engine/engineClient'
 import { tilesForWaypoints } from '../engine/tiles'
 import { haversineM } from './geo'
 import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
-import { chosenAfterRun, loadPlan, savePlan, type StoredPlan, type Waypoint } from './plan'
+import {
+  chosenAfterRun,
+  loadPlan,
+  savePlan,
+  withEndpoint,
+  type PlanSlot,
+  type StoredPlan,
+  type Waypoint,
+} from './plan'
 import { DEFAULT_PROFILES, isRoutableProfile, RECORDED_TRACK, type ProfileId } from './profiles'
+import { stitchRoute, stitchedGpx, type RiddenPrefix } from './stitch'
 
 export type { Waypoint } from './plan'
 
@@ -106,6 +115,26 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    */
   const [deferred, setDeferred] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  /**
+   * A route was asked for by something that had to change the waypoints first.
+   *
+   * Consumed by an effect, because `run` is built from the *current* `waypoints` and a caller
+   * that has just replaced them is holding the previous one. See {@link placeAt}.
+   */
+  const [runWanted, setRunWanted] = useState(false)
+  /**
+   * Which run's results are still wanted.
+   *
+   * A run is a sequence of Worker calls with an `await` between each — seconds long — and three
+   * things can happen during one: the rider picks a new destination from the search, reverses
+   * the plan, or clears it. All three replace the waypoints the run was computed for, so a
+   * result landing afterwards would draw a line between two places that are no longer the plan.
+   * Every one of them bumps this, and a run that finds it has been superseded commits nothing.
+   *
+   * A ref rather than state: it has to be readable inside a closure that started several
+   * renders ago, which is exactly what state cannot do.
+   */
+  const runSeq = useRef(0)
 
   // Persist on change. The alternative — persisting on unload — does not fire reliably when
   // iOS kills a backgrounded web app.
@@ -113,9 +142,28 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     savePlan({ waypoints, selection, chosen, gpx })
   }, [waypoints, selection, chosen, gpx])
 
-  const addWaypoint = useCallback((lon: number, lat: number) => {
-    setWaypoints((current) => [...current, { id: crypto.randomUUID(), lon, lat }])
-  }, [])
+  /**
+   * A tap on the map, which is also the app's central gesture: the **second** one routes.
+   *
+   * The run is asked for here rather than by the ride screen, which is where it used to live.
+   * Two callers now put a second point on a plan — a tap and a search result — and having each
+   * of them arrange its own run meant a plan built from the search fired *both*, since the ride
+   * screen's one-to-two transition guard cannot tell where the second point came from. Two
+   * simultaneous searches for the same route is the Worker doing everything twice at the one
+   * moment the rider is watching a spinner.
+   *
+   * So the plan owns "this needs routing" and the screen owns "and here is the sheet showing
+   * it". Only the transition from one point to two, exactly as before: a third point is a via
+   * the rider is still placing, and a plan restored from storage arrives with two already on it
+   * and must not re-route itself on every launch.
+   */
+  const addWaypoint = useCallback(
+    (lon: number, lat: number) => {
+      setWaypoints([...waypoints, { id: crypto.randomUUID(), lon, lat }])
+      setRunWanted(waypoints.length === 1)
+    },
+    [waypoints],
+  )
 
   const moveWaypoint = useCallback((id: string, lon: number, lat: number) => {
     setWaypoints((current) => current.map((w) => (w.id === id ? { ...w, lon, lat } : w)))
@@ -126,6 +174,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   }, [])
 
   const clear = useCallback(() => {
+    runSeq.current++
     setWaypoints([])
     setRoutes({})
     setGpx({})
@@ -196,6 +245,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
         return
       }
       setError(null)
+      const seq = ++runSeq.current
       const lonLats = waypoints.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
       const { run: ids, deferred } = only
@@ -217,6 +267,9 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
         for (const id of ids) {
           setRouting(id)
           const outcome = await sharedEngine().route(id, lonLats)
+          // The plan changed under us while the Worker was busy. Everything below writes to
+          // state, and all of it would describe the previous destination.
+          if (runSeq.current !== seq) return
           if (!outcome.ok || !outcome.gpx) {
             failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
             continue
@@ -240,7 +293,9 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
         // "Routing…" until the app is reloaded.
         failures.push(e instanceof Error ? e.message : String(e))
       } finally {
-        setRouting(null)
+        // Only if we are still the current run: a superseded one must not take the spinner off
+        // the newer one that replaced it.
+        if (runSeq.current === seq) setRouting(null)
       }
 
       // A lone result is not a choice, so it commits itself. Deferred profiles do not count as
@@ -254,47 +309,74 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   )
 
   /**
-   * Routes again from where the rider is now, through whatever is still ahead of them.
+   * Routes again from where the rider is now, and joins it onto the ride they have already done.
    *
-   * Mid-ride, and so deliberately unlike {@link run} in three ways:
+   * Mid-ride, and so deliberately unlike {@link run} in four ways:
    *
    * - **One profile.** The comparison is over — the rider is on a road, committed. Routing six
    *   profiles one after another would take six times as long at the moment it matters most.
-   * - **The plan is rewritten.** `waypoints` becomes the rider's position plus what is left,
-   *   because a route that starts 20 km behind the rider is not a route they can follow, and a
-   *   second reroute would otherwise be computed from the same stale start.
+   * - **Only the road ahead is computed.** The engine is asked for the rider's position through
+   *   to the finish, which is the only part that is still a question.
+   * - **The journey is kept.** What comes back is *stitched* onto the part already ridden, and
+   *   the plan keeps its original start and every via already passed, with the rider's position
+   *   added as one more point along the way. Replacing the route instead — which is what this
+   *   used to do — resets the trip length, the progress bar and the climbing done, all at once,
+   *   in the middle of a ride where nothing has actually changed except a wrong turn. See
+   *   `stitch.ts`.
    * - **A failure changes nothing.** The old route stays on the map and the rider keeps
    *   whatever they had. The alternative — clearing the route because the reroute failed — is
    *   the worst possible response to being lost.
    *
-   * `remaining` comes from `waypointsAhead`, which is what stops a rider being sent back to a
-   * via point they have already gone through.
+   * `behind` and `remaining` come from `splitWaypoints`, which is one function precisely so the
+   * two halves cannot disagree and send a rider back through a via point they have gone past.
+   * `prefix` is `null` when there is nothing to stitch to — no geometry, no progress — and then
+   * this behaves as it always did.
    */
   const rerouteFrom = useCallback(
-    async (
-      from: { lon: number; lat: number },
-      remaining: { lon: number; lat: number }[],
-      profileId: string,
-    ): Promise<boolean> => {
+    async ({
+      from,
+      behind,
+      remaining,
+      profileId,
+      prefix,
+    }: {
+      from: { lon: number; lat: number }
+      behind: Waypoint[]
+      remaining: Waypoint[]
+      profileId: string
+      prefix: RiddenPrefix | null
+    }): Promise<boolean> => {
       if (remaining.length === 0) return false
-      const next: Waypoint[] = [
-        { id: crypto.randomUUID(), lon: from.lon, lat: from.lat },
-        ...remaining.map((w) => ({ id: crypto.randomUUID(), lon: w.lon, lat: w.lat })),
-      ]
-      const lonLats = next.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
+      const here: Waypoint = {
+        id: crypto.randomUUID(),
+        lon: from.lon,
+        lat: from.lat,
+        kind: 'reroute',
+      }
+      const leg = [here, ...remaining]
+      const next: Waypoint[] = [...behind, ...leg]
+      // Only the leg goes to the engine. `behind` is road that has already happened, and asking
+      // for it again would both cost a search the rider is waiting on and risk coming back with
+      // a different answer for a ride they have already done.
+      const lonLats = leg.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
       setRouting(profileId)
       setError(null)
       try {
         const outcome = await sharedEngine().route(profileId, lonLats)
         if (!outcome.ok || !outcome.gpx) {
-          setError(explainRoutingFailure(outcome.error ?? 'routing failed', next))
+          setError(explainRoutingFailure(outcome.error ?? 'routing failed', leg))
           return false
         }
-        const parsed = parseBrouterGpx(outcome.gpx)
+        const fresh = parseBrouterGpx(outcome.gpx)
+        const joined = prefix ? stitchRoute(prefix, fresh) : fresh
         setWaypoints(next)
-        setRoutes({ [profileId]: parsed })
-        setGpx({ [profileId]: outcome.gpx })
+        setRoutes({ [profileId]: joined })
+        // The document has to describe the same line the map is drawing, or Save and Export
+        // hand back the tail of a ride rather than the ride.
+        setGpx({
+          [profileId]: prefix ? stitchedGpx(joined, `free-wheel_${profileId}`) : outcome.gpx,
+        })
         setChosen(profileId)
         return true
       } catch (e) {
@@ -323,13 +405,19 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    * comparing three styles on the way out, you want the same three on the way back.
    */
   const reverse = useCallback(() => {
-    setWaypoints((current) => [...current].reverse())
+    runSeq.current++
+    setWaypoints([...waypoints].reverse())
     setRoutes({})
     setGpx({})
     setChosen(null)
     setDeferred([])
     setError(null)
-  }, [])
+    // It routes itself, which is what the doc comment above has always said and what the code
+    // did not do: Reverse cleared the line and left the rider on a plan card inviting them to
+    // tap the map, with a Find routes button two gestures away inside the sheet. The swap
+    // button on the search screen has no such button at all, so from there it was a dead end.
+    setRunWanted(waypoints.length >= 2)
+  }, [waypoints])
 
   /**
    * Puts a saved route back on the map, exactly as it was computed.
@@ -395,12 +483,73 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     }
   }, [])
 
+  /**
+   * Puts a searched place at one end of the plan, and routes it once both ends exist.
+   *
+   * The routing is deferred to an effect rather than done here, and that is the whole of the
+   * fiddliness: `run` closes over `waypoints`, so calling it in the same tick as `setWaypoints`
+   * would route the plan as it was a moment ago — which for a rider who has just chosen a
+   * destination is a route to their previous one. The flag below is set here and consumed after
+   * the state has committed, by which time `run` is the one that knows about the new plan.
+   *
+   * Routes are cleared either way. A line on the map computed for a start the rider has just
+   * replaced is not a stale figure, it is a wrong one.
+   */
+  const placeAt = useCallback(
+    (slot: PlanSlot, point: { lon: number; lat: number; label?: string }) => {
+      runSeq.current++
+      const next = withEndpoint(waypoints, slot, point)
+      setWaypoints(next)
+      setRoutes({})
+      setGpx({})
+      setChosen(null)
+      setDeferred([])
+      setError(null)
+      setRunWanted(next.length >= 2)
+    },
+    [waypoints],
+  )
+
+  /**
+   * Replaces the plan with two ends and routes them.
+   *
+   * For the one gesture that names a whole journey at once: tapping a saved place from the
+   * search screen's empty state, which means "from where I am to there". Two calls to
+   * {@link placeAt} cannot do it — the second would close over the waypoints the first has not
+   * committed yet — and this is also the honest shape, because it is genuinely one decision.
+   */
+  const routeBetween = useCallback(
+    (
+      from: { lon: number; lat: number; label?: string },
+      to: { lon: number; lat: number; label?: string },
+    ) => {
+      runSeq.current++
+      setWaypoints([
+        { id: crypto.randomUUID(), lon: from.lon, lat: from.lat, ...(from.label ? { label: from.label } : {}) },
+        { id: crypto.randomUUID(), lon: to.lon, lat: to.lat, ...(to.label ? { label: to.label } : {}) },
+      ])
+      setRoutes({})
+      setGpx({})
+      setChosen(null)
+      setDeferred([])
+      setError(null)
+      setRunWanted(true)
+    },
+    [],
+  )
+
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
     sharedEngine().cancel()
     setRouting(null)
     setError('Cancelled.')
   }, [])
+
+  useEffect(() => {
+    if (!runWanted) return
+    setRunWanted(false)
+    if (waypoints.length >= 2) void run()
+  }, [runWanted, waypoints, run])
 
   return {
     waypoints,
@@ -426,6 +575,8 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     clearableChoice: chosen !== null && Object.keys(routes).length > 1,
     toggleProfile,
     addWaypoint,
+    placeAt,
+    routeBetween,
     moveWaypoint,
     removeWaypoint,
     clear,

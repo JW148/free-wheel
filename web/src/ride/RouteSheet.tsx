@@ -127,7 +127,10 @@ export default function RouteSheet({
         </div>
 
         <div className="sheet-full" id="plan-sheet-full" ref={surface.full} inert={!sheet.open}>
-          <div className="drawer-body">
+          {/* The scroller drags the sheet too, from its top. The handle alone was 60×24px on
+              the one surface a rider uses without looking; see `pendingVerdict` for how a
+              press here stays a tap when it turns out to be one. */}
+          <div className="drawer-body" {...surface.bodyDrag}>
             {detail ? (
               <RouteDetail plan={plan} sheet={sheet} onSaved={onSaved} />
             ) : (
@@ -173,7 +176,7 @@ function InviteCard({
         </span>
         <span className="plan-invite-text">
           <strong>Plan a ride</strong>
-          <span>Start, then finish. We do the rest.</span>
+          <span>Search a place, or tap the map to drop your start.</span>
         </span>
       </div>
       <div className="plan-shortcuts">
@@ -193,10 +196,14 @@ function InviteCard({
 /**
  * A start placed and a finish still to come.
  *
- * The coordinates are shown rather than a place name, because there is no geocoder on this
- * phone and there is not going to be one — reverse geocoding is a network service, and the
- * whole app is built on not needing one. Four decimal places is about 11 m, which is enough to
- * tell two taps apart and short enough to fit.
+ * A point tapped on the map shows its **coordinates**, because there is no geocoder on this
+ * phone and there is not going to be one — turning a position into a name is a network service
+ * and the whole app is built on not needing one. Four decimal places is about 11 m, which is
+ * enough to tell two taps apart and short enough to fit.
+ *
+ * A point chosen *by name* from the search shows that name, and that is not the same thing
+ * going the other way: the rider was handed a list and picked a row off it, so the name is
+ * something they told the app rather than something it inferred.
  */
 function PointsCard({ plan }: { plan: Plan }) {
   const [start, ...rest] = plan.waypoints
@@ -206,7 +213,7 @@ function PointsCard({ plan }: { plan: Plan }) {
     <>
       <div className="plan-points">
         <span className="plan-point-badge">S</span>
-        <span className="plan-point-label">{coords(start)}</span>
+        <span className="plan-point-label">{named(start)}</span>
         <button
           type="button"
           className="plan-point-remove"
@@ -224,7 +231,7 @@ function PointsCard({ plan }: { plan: Plan }) {
           F
         </span>
         <span className="plan-point-label" data-placed={finish ? 'yes' : 'no'}>
-          {finish ? coords(finish) : 'Tap the map for your finish'}
+          {finish ? named(finish) : 'Search, or tap the map, for your finish'}
         </span>
         {finish && (
           <button
@@ -606,16 +613,33 @@ function coords(point: { lat: number; lon: number }): string {
   return `${point.lat.toFixed(4)}, ${point.lon.toFixed(4)}`
 }
 
+/** The name the rider chose, or the coordinates for a point they put down with a finger. */
+function named(point: { lat: number; lon: number; label?: string }): string {
+  return point.label ?? coords(point)
+}
+
+/**
+ * Every point the route runs through, named.
+ *
+ * A reroute adds one of its own — where the rider rejoined the line after a wrong turn — and it
+ * is named for what it is rather than counted as a via. Counting it would renumber the points
+ * the rider actually placed, which is the same argument the pins on the map make.
+ */
 function Waypoints({ plan }: { plan: Plan }) {
   if (plan.waypoints.length === 0) return null
+  let placed = 0
   return (
     <ol className="waypoints">
-      {plan.waypoints.map((waypoint, index) => (
+      {plan.waypoints.map((waypoint, index) => {
+        const last = index === plan.waypoints.length - 1
+        const rejoin = waypoint.kind === 'reroute' && !last && index > 0
+        const ordinal = rejoin ? placed : placed++
+        return (
         <li key={waypoint.id}>
           <span className="waypoint-role">
-            {index === 0 ? 'Start' : index === plan.waypoints.length - 1 ? 'Finish' : `Via ${index}`}
+            {rejoin ? 'Rejoined' : index === 0 ? 'Start' : last ? 'Finish' : `Via ${ordinal}`}
           </span>
-          <span className="waypoint-coords">{coords(waypoint)}</span>
+          <span className="waypoint-coords">{named(waypoint)}</span>
           <button
             type="button"
             onClick={() => plan.removeWaypoint(waypoint.id)}
@@ -624,7 +648,8 @@ function Waypoints({ plan }: { plan: Plan }) {
             Remove
           </button>
         </li>
-      ))}
+        )
+      })}
     </ol>
   )
 }

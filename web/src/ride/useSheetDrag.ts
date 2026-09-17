@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
-import { sheetProgress, sheetRelease, wasTap, type SheetStop } from './sheetDrag'
+import { pendingVerdict, sheetProgress, sheetRelease, wasTap, type SheetStop } from './sheetDrag'
 
 /**
  * The plan sheet's finger, and the three numbers CSS needs to draw it.
@@ -103,7 +103,9 @@ export function useSheetDrag({
       gesture.current = {
         id: event.pointerId,
         fromHandle,
+        pending: false,
         from: open ? 'open' : 'card',
+        startX: event.clientX,
         startY: event.clientY,
         travelled: 0,
         lastY: event.clientY,
@@ -126,10 +128,68 @@ export function useSheetDrag({
     [open],
   )
 
+  /**
+   * A press inside the open sheet's scrolling body.
+   *
+   * The handle is no longer the only way to put the sheet away. It starts *pending*: no
+   * capture, no `data-dragging`, nothing written to the element — so a press that turns out to
+   * be a tap on a route card still produces that card's click, and a press that turns out to
+   * be a scroll is still a scroll. {@link pendingVerdict} decides which it was, on the first
+   * dozen pixels.
+   *
+   * Only from the top of the scroller. Below that, pulling down means "back to what I scrolled
+   * past", and taking that gesture would make a list you cannot return to the top of.
+   */
+  const onBodyPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (gesture.current) return
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      if (!open) return
+      if (event.currentTarget.scrollTop > 0) return
+
+      gesture.current = {
+        id: event.pointerId,
+        fromHandle: false,
+        pending: true,
+        from: 'open',
+        startX: event.clientX,
+        startY: event.clientY,
+        travelled: 0,
+        lastY: event.clientY,
+        lastAt: event.timeStamp,
+        velocity: 0,
+        range: range.current,
+      }
+    },
+    [open],
+  )
+
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
       const drag = gesture.current
       if (!drag || drag.id !== event.pointerId) return
+
+      if (drag.pending) {
+        const verdict = pendingVerdict(
+          event.clientX - drag.startX,
+          drag.startY - event.clientY,
+        )
+        if (verdict === 'abandon') {
+          gesture.current = null
+          return
+        }
+        if (verdict === 'wait') return
+        drag.pending = false
+        // Re-datumed to where the finger crossed the threshold, so the sheet does not jump the
+        // commit distance the instant it starts moving.
+        drag.startY = event.clientY
+        layer.current?.setAttribute('data-dragging', 'yes')
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId)
+        } catch {
+          /* not capturable — moves still arrive while the pointer is over the sheet */
+        }
+      }
 
       drag.travelled = drag.startY - event.clientY
       const elapsed = event.timeStamp - drag.lastAt
@@ -150,6 +210,10 @@ export function useSheetDrag({
       const drag = gesture.current
       if (!drag || drag.id !== event.pointerId) return
       end(gesture, layer)
+
+      // Still undecided when the finger left: it was a tap, and the thing under it — a route
+      // card, Details, Start ride — is about to receive the click that says so.
+      if (drag.pending) return
 
       // A press on the handle is left to the click it is about to produce — see `wasTap`.
       // Doing it here as well would toggle the sheet twice and land it back where it started.
@@ -184,7 +248,9 @@ export function useSheetDrag({
       const drag = gesture.current
       if (!drag || drag.id !== event.pointerId) return
       end(gesture, layer)
-      settle(drag.from)
+      // A pending press never moved the sheet, so there is nothing to put back — and settling
+      // would set React state for a gesture that was only ever a scroll the browser took over.
+      if (!drag.pending) settle(drag.from)
     },
     [settle],
   )
@@ -204,6 +270,16 @@ export function useSheetDrag({
     full,
     /** Spread onto the handle and onto the card layer behind it. */
     drag: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    /**
+     * Spread onto the open sheet's scroller, so the sheet can be put away from anywhere in it
+     * rather than only from the handle.
+     */
+    bodyDrag: {
+      onPointerDown: onBodyPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel,
+    },
     onClick,
     collapse: useCallback(() => setOpen(false), [setOpen]),
   }
@@ -213,7 +289,15 @@ type Gesture = {
   id: number
   /** The handle produces a click of its own; the card behind it does not. */
   fromHandle: boolean
+  /**
+   * Started in the scrolling body, and not yet known to be a drag at all.
+   *
+   * A pending gesture writes nothing and captures nothing, so whatever it turns out to be —
+   * a tap on a card, a scroll, a drag — still works.
+   */
+  pending: boolean
   from: SheetStop
+  startX: number
   startY: number
   travelled: number
   lastY: number

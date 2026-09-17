@@ -1,0 +1,567 @@
+/*
+ * The search screen, and the field on the map that opens it.
+ *
+ * Built out of the vocabulary that already exists — `.screen` from `screens.css`, `.setup-group`
+ * and `.section-label` from `App.css`, the role tokens from `tokens.css`. The only genuinely new
+ * shapes are the field stack in the header and the place row, and the place row is the library
+ * row with a different middle.
+ *
+ * Every colour here is a role token. See the note at the top of `tokens.css`: a rule that names
+ * a colour is a rule that is wrong in one of the two themes.
+ */
+
+/* ── The field on the map ─────────────────────────────────────────────────────────────── */
+
+/*
+ * The one piece of chrome at the top of the planning screen.
+ *
+ * It replaces the two hints that used to live there — "Tap the map to set your start" and "Now
+ * tap where you're heading" — rather than joining them. The plan card already says both, and a
+ * screen that opens with an instruction where every other map app opens with a search field is
+ * a screen that reads as missing one.
+ *
+ * A button rather than an input, and that is not a shortcut: a real field here would bring the
+ * keyboard up over the map, and the results have nowhere to go. It is the door to the screen
+ * that has room for them.
+ */
+.map-search {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 46px;
+  padding: 0 0.5rem 0 0.9rem;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--panel-strong);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: var(--lift-panel), inset 0 0 0 1px var(--hairline);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-search svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.map-search-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Named, the field is describing the plan rather than inviting one, so it reads as content. */
+.map-search[data-planned='yes'] .map-search-label {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/*
+ * Clearing the plan, from the one place a rider looks when they want to start again.
+ *
+ * "I found it hard to clear my previous route" — and it was: Clear route lived at the bottom of
+ * the comparison view, three gestures down, on a sheet you had to know dragged open. It is still
+ * there, because that is where you are when you decide a route is wrong. This is the other
+ * half: the same act, on the thing that is showing you the plan you want rid of.
+ */
+.map-search-clear {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--fill);
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/*
+ * The strip that says a tap is about to mean something specific.
+ *
+ * The app's oldest rule is that a tap on the map always places a waypoint, because a mode you
+ * can be in without knowing is how a rider ends up tapping a map that has stopped responding.
+ * "Choose on the map" *is* such a mode — it makes the next tap replace an endpoint rather than
+ * append one — so it is allowed to exist only with this on screen saying so and a way out
+ * beside it.
+ */
+.map-aim {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.6rem 0.6rem 0.6rem 1rem;
+  border-radius: var(--r-pill);
+  background: var(--mode);
+  box-shadow: var(--lift-panel);
+  color: var(--mode-ink);
+  font-size: 0.9rem;
+}
+
+.map-aim span {
+  flex: 1;
+  min-width: 0;
+}
+
+.map-aim button {
+  flex: none;
+  min-height: 0;
+  padding: 0.35rem 0.85rem;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--mode-fill);
+  box-shadow: none;
+  color: var(--mode-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── The screen ───────────────────────────────────────────────────────────────────────── */
+
+.search-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  flex: none;
+  padding: calc(max(env(safe-area-inset-top), 0.6rem) + 0.5rem) 1rem 0.6rem;
+}
+
+.search-fields {
+  display: grid;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0 0.4rem 0 0.7rem;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--lift-row), inset 0 0 0 1px var(--hairline);
+}
+
+/* The row being edited carries the ring, so "which field am I typing into" survives a glance. */
+.search-row[data-active='yes'] {
+  box-shadow: var(--lift-row), inset 0 0 0 2px var(--ink);
+}
+
+/*
+ * S for the start; the finish is a hollow square.
+ *
+ * The same two-tone logic the map pins use — a filled mark and its inverse — so the badge in the
+ * field and the pin on the map are recognisably the same pair.
+ */
+.search-badge {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.search-badge[data-role='finish'] {
+  border-radius: 5px;
+  background: none;
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.search-field {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 1rem;
+}
+
+.search-field:focus {
+  outline: none;
+}
+
+/* WebKit draws its own clear button inside a `type="search"`, and it collides with ours. */
+.search-field::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.search-clear,
+.search-swap {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--fill);
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search-swap {
+  align-self: center;
+  width: 40px;
+  height: 40px;
+}
+
+.search-swap svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The back chevron. `screens.css` sizes it and nothing sets the stroke, so without this the
+   path renders as a filled triangle — the other screens carry the attributes inline. */
+.search-head .screen-back svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/*
+ * Rows sized by their contents, and stacked from the top.
+ *
+ * `.screen-body` is a grid inside a fixed-height flex column, and a long results list is the
+ * first thing in this app to overflow one. Auto rows in that situation are free to be squeezed:
+ * the list was laid out 692px tall over 1,417px of rows and the footer under it was given no
+ * height at all and drawn across the middle of the list. `max-content` takes the negotiation
+ * away — every row is exactly as tall as what is in it, and the body scrolls.
+ */
+.search-body {
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 0.7rem;
+  padding-top: 0.2rem;
+}
+
+/* `.setup-footer` carries a top margin for the groups it sits under on the Setup screens. Here
+   the grid gap already spaces it, and both together open a hole. */
+.search-body .setup-footer {
+  margin: 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* ── A place, as a row ────────────────────────────────────────────────────────────────── */
+
+/*
+ * `min-height: min-content` is load-bearing, and its absence is invisible until the list is long.
+ *
+ * `overflow: hidden` is what rounds the first and last rows against the card, and it also makes
+ * this a scroll container — whose *automatic minimum size* is therefore 0 rather than its
+ * content. The grid row in `.screen-body` above is then free to compress it, so a list of
+ * twenty-one results laid itself out 692px tall over 1,417px of rows, clipped the rest, and
+ * reported to the scroller that everything fitted. Measured: `scrollHeight === clientHeight` on a
+ * body holding twice its own height.
+ */
+.place-list {
+  display: grid;
+  gap: 2px;
+  min-height: min-content;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--r-large);
+  background: var(--card);
+  box-shadow: var(--lift-row), inset 0 0 0 1px var(--hairline);
+  list-style: none;
+  overflow: hidden;
+}
+
+/*
+ * The row is a grid on the `<li>` only because the star sits outside the button.
+ *
+ * The lesson the library row taught: when a row's contents become one element, the `<li>` styles
+ * nothing. Here they are genuinely two — one target that picks the place and one that keeps it —
+ * because an interactive element inside an interactive element is a target a screen reader
+ * cannot describe and a keyboard cannot reach past.
+ */
+.place-item {
+  display: flex;
+  align-items: stretch;
+  padding-right: 0.3rem;
+}
+
+.place-item + .place-item {
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.place-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex: 1;
+  min-width: 0;
+  min-height: 58px;
+  padding: 0.55rem 0.4rem 0.55rem 0.85rem;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.place-row:active {
+  background: var(--fill);
+}
+
+.place-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-small);
+  background: var(--inset);
+  color: var(--ink);
+}
+
+.place-glyph svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.place-text {
+  display: grid;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.place-name,
+.place-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.place-name {
+  font-size: 0.98rem;
+  font-weight: 550;
+}
+
+/* The typed text, so a list of twelve streets is scannable rather than read. */
+.place-name b {
+  font-weight: 750;
+}
+
+.place-detail {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.place-away {
+  flex: none;
+  align-self: center;
+  color: var(--faint);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.place-action {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: center;
+  width: 38px;
+  height: 38px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  box-shadow: none;
+  color: var(--faint);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* A saved place's star is filled. The `fill` below has to be a rule rather than an attribute on
+   the SVG: `.place-action svg` sets `fill: none`, and a stylesheet beats a presentation
+   attribute. */
+.place-action[data-on='yes'] {
+  color: var(--ink);
+}
+
+.place-action[data-on='yes'] svg {
+  fill: currentColor;
+}
+
+/*
+ * "From where I am, to here", in one tap.
+ *
+ * Filled rather than quiet, because unlike the star beside it this is not housekeeping — it is
+ * the whole journey, and on the empty plan it is the fastest thing on the screen. It only ever
+ * appears where "Home" can mean exactly one thing; see `fresh` in `SearchScreen`.
+ */
+.place-go {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.place-action svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── Somewhere the phone has no map for ───────────────────────────────────────────────── */
+
+.search-elsewhere {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border-radius: var(--r-large);
+  background: var(--card);
+  box-shadow: var(--lift-row), inset 0 0 0 1px var(--hairline);
+}
+
+.search-elsewhere p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.search-elsewhere-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.search-elsewhere-head svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--bad);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.search-elsewhere-head > span {
+  display: grid;
+  gap: 2px;
+}
+
+.search-elsewhere-head strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.search-download {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--inset);
+  box-shadow: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-download svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.search-download > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.search-download span span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* The provenance line under the results. It is the promise the feature is built on, so it is
+   quiet but it is always there. */
+.search-body .setup-footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+.search-body .setup-footer svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

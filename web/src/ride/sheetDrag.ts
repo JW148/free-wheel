@@ -85,3 +85,42 @@ export function sheetRelease({
 
   return sheetProgress({ from, travelledPx, rangePx }) >= SETTLE ? 'open' : 'card'
 }
+
+/**
+ * How far down the finger has to travel before a press inside the sheet's *body* becomes a
+ * drag rather than a scroll or a tap.
+ *
+ * Bigger than {@link TAP_SLOP_PX}, because this threshold is arbitrating between two things a
+ * rider legitimately wants from the same square inch: dragging the sheet shut, and pressing
+ * the route card under their thumb. A press that commits at six pixels swallows taps.
+ */
+const BODY_COMMIT_PX = 12
+
+/** What a press that started inside the sheet's body has turned out to be. */
+export type PendingVerdict = 'wait' | 'drag' | 'abandon'
+
+/**
+ * Whether a press inside the body has become a drag, and if not, whether it still might.
+ *
+ * The open sheet used to be draggable only by its handle — 60×24px, which is a target you have
+ * to look at to hit, on the one surface designed to be used without looking. The fix is that
+ * the body drags too, and the whole difficulty is that the body also *scrolls* and is full of
+ * buttons. So a press there starts as nothing: it commits to a drag only once the finger has
+ * moved measurably **downwards**, and gives up the moment it moves up or sideways, where the
+ * scroller and the horizontal gestures have the better claim.
+ *
+ * `travelledPx` is positive towards open, as everywhere else here, so a downward drag — the
+ * one that shuts the sheet — is negative.
+ *
+ * The caller only offers this at all when the scroller is already at its top. Below that,
+ * pulling down means "show me what I scrolled past", and hijacking it would make a list you
+ * cannot get back to the top of.
+ */
+export function pendingVerdict(acrossPx: number, travelledPx: number): PendingVerdict {
+  if (Math.abs(acrossPx) > Math.abs(travelledPx) && Math.abs(acrossPx) > BODY_COMMIT_PX) {
+    return 'abandon'
+  }
+  if (travelledPx <= -BODY_COMMIT_PX) return 'drag'
+  if (travelledPx >= BODY_COMMIT_PX) return 'abandon'
+  return 'wait'
+}

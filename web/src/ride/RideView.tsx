@@ -9,7 +9,8 @@ import { useHeading } from './useHeading'
 import { useRideTelemetry } from './useRideTelemetry'
 import { useAnnouncer } from './useAnnouncer'
 import type { Rider } from './useRider'
-import { sliceAlong, waypointsAhead } from './progress'
+import { sliceAlong, splitWaypoints } from './progress'
+import { riddenPrefix } from './stitch'
 import {
   boundsOf,
   drawnRoutes,
@@ -28,6 +29,9 @@ import SavedScreen from '../library/SavedScreen'
 import RideHud from './RideHud'
 import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
+import SearchScreen from '../search/SearchScreen'
+import { places } from '../search/searchStore'
+import type { PlanSlot } from './plan'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -106,7 +110,7 @@ export default function RideView({
    */
   suspended: boolean
   rider: Rider
-  onOpenSetup: () => void
+  onOpenSetup: (page?: 'maps' | 'rider') => void
 }) {
   const {
     map,
@@ -130,6 +134,22 @@ export default function RideView({
    */
   const [layersOpen, setLayersOpen] = useState(false)
   const [savedOpen, setSavedOpen] = useState(false)
+  /**
+   * Which end of the plan the search screen is choosing, or `null` when it is closed.
+   *
+   * A slot rather than a boolean, because the screen is opened from three places that mean
+   * three different things — the field at the top of the map, the start row, the finish row.
+   */
+  const [searching, setSearching] = useState<PlanSlot | null>(null)
+  /**
+   * The next tap on the map replaces this end of the plan rather than appending a point.
+   *
+   * The app's oldest rule is that a tap always places a waypoint, because a mode you can be in
+   * without knowing is how a rider ends up tapping a map that has stopped responding. This is a
+   * mode, so it is allowed only with a strip on screen saying so and a Cancel beside it — and it
+   * ends on the first tap either way.
+   */
+  const [aiming, setAiming] = useState<PlanSlot | null>(null)
   /** Bumped after a save, so the Saved list picks the new entry up when it next opens. */
   const [librarySaves, setLibrarySaves] = useState(0)
   const [follow, setFollow] = useState(false)
@@ -263,6 +283,14 @@ export default function RideView({
   const editable = !riding
   const canPlace = useRef(editable)
   canPlace.current = editable
+  // Read from the tap handler, which is registered once and must not be rebuilt when the mode
+  // changes — re-registering a map listener per render is how a tap gets handled twice.
+  const aimingAt = useRef<PlanSlot | null>(null)
+  aimingAt.current = aiming
+  const placeAt = useRef(plan.placeAt)
+  placeAt.current = plan.placeAt
+  const stopAiming = useRef<() => void>(() => {})
+  stopAiming.current = () => setAiming(null)
   const closeSheet = useRef<() => void>(() => {})
   closeSheet.current = () => sheet.setOpen(false)
   // Read from callbacks that must not be rebuilt on every render — a reroute reads the plan,
@@ -288,7 +316,17 @@ export default function RideView({
       })
       if (action.do === 'choose') chooseRoute.current(action.profile)
       else if (action.do === 'clear') clearChoice.current()
-      else if (action.do === 'place') addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
+      else if (action.do === 'place') {
+        // "Choose on the map" armed a slot: this tap *replaces* that end rather than adding a
+        // seventh point. It disarms either way, so the mode cannot outlive the tap it was for.
+        const slot = aimingAt.current
+        if (slot) {
+          placeAt.current(slot, { lon: e.lngLat.lng, lat: e.lngLat.lat })
+          stopAiming.current()
+        } else {
+          addWaypoint.current(e.lngLat.lng, e.lngLat.lat)
+        }
+      }
     }
     instance.on('click', onClick)
     return () => {
@@ -297,28 +335,23 @@ export default function RideView({
   }, [map, styleReady, suspended])
 
   /**
-   * The second tap routes, without being asked.
+   * The second point opens the sheet onto the cards.
    *
-   * This is the redesign's central move: two taps and three routes, rather than two taps, a
-   * profile decision and a button. The guard is a *transition* from one waypoint to two rather
-   * than a count, so a plan restored from storage — which arrives with two points already on
-   * it and possibly a route — does not re-route itself on every launch.
-   *
-   * `plan.run` decides how many profiles to actually compute; past `COMPARE_CEILING_M` it does
-   * one and offers the rest. The drawer opens onto the cards either way, because a result the
-   * rider has to go looking for is a result they will not know arrived.
+   * The *routing* is `useRoute`'s now — see `addWaypoint` and `placeAt` — because two different
+   * gestures put a second point on a plan and a transition guard here cannot tell a tap from a
+   * search result, so both fired and the Worker searched the same route twice. What is left is
+   * the half that is genuinely the screen's: a result the rider has to go looking for is a
+   * result they will not know arrived.
    */
   const lastPointCount = useRef(plan.waypoints.length)
   useEffect(() => {
     const was = lastPointCount.current
     lastPointCount.current = plan.waypoints.length
     if (was !== 1 || plan.waypoints.length !== 2) return
-    if (riding || suspended || plan.routing !== null) return
-    if (Object.keys(plan.routes).length > 0) return
-    void plan.run()
+    if (riding || suspended) return
     sheet.showCompare()
-    // `plan` and `sheet` are rebuilt on every render; the transition guard above is what makes
-    // this fire once rather than continuously.
+    // `sheet` is rebuilt on every render; the transition guard above is what makes this fire
+    // once rather than continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan.waypoints.length])
 
@@ -368,10 +401,21 @@ export default function RideView({
       }
     }
 
+    /*
+     * Numbering counts only the points the rider placed.
+     *
+     * A reroute adds a point where they rejoined the route — that is what keeps the original
+     * start (see `stitch.ts`) — and it is not a via they chose. Counting it would renumber
+     * every pin after it in the middle of a ride, and drawing it like the others would claim
+     * they put it there.
+     */
+    let placed = 0
     plan.waypoints.forEach((waypoint, index) => {
       const last = index === plan.waypoints.length - 1
-      const label = index === 0 ? 'S' : last ? 'F' : String(index)
-      const role = index === 0 ? 'start' : last ? 'finish' : 'via'
+      const rejoin = waypoint.kind === 'reroute' && !last && index > 0
+      const ordinal = rejoin ? placed : placed++
+      const label = rejoin ? '' : index === 0 ? 'S' : last ? 'F' : String(ordinal)
+      const role = rejoin ? 'rejoin' : index === 0 ? 'start' : last ? 'finish' : 'via'
 
       let marker = markers.current.get(waypoint.id)
       if (!marker) {
@@ -402,9 +446,10 @@ export default function RideView({
       element.dataset.role = role
       element.dataset.editable = editable ? 'yes' : 'no'
       element.textContent = label
+      const described = rejoin ? 'the point you rejoined the route at' : `${role} point ${label}`
       element.setAttribute(
         'aria-label',
-        editable ? `${role} point ${label}. Tap to remove.` : `${role} point ${label}`,
+        editable ? `${described}. Tap to remove.` : described,
       )
     })
   }, [map, styleReady, suspended, plan.waypoints, editable])
@@ -594,6 +639,15 @@ export default function RideView({
   }, [courseUp, heading])
 
   // ── Rerouting ─────────────────────────────────────────────────────────────────────────
+  /**
+   * Route again from here, and keep the ride that has already happened.
+   *
+   * The engine is only ever asked about the road ahead. Everything behind the rider — the line
+   * they rode, the start they set off from, the vias they have gone through, the distance and
+   * the climbing they have banked — is kept and the new leg is joined onto it. Replacing the
+   * whole route, which is what this did, made every figure on the screen change at once because
+   * of a wrong turn. See `stitch.ts` and `useRoute.rerouteFrom`.
+   */
   const reroute = useCallback(async () => {
     const { plan: current, fix: here, telemetry: state } = live.current
     // `rerouteProfile`, not `chosen`: following a recorded track sets `chosen` to a
@@ -604,12 +658,21 @@ export default function RideView({
     lastRerouteAt.current = Date.now()
     setRerouting(true)
     try {
-      const remaining = waypointsAhead(
-        state.geometry,
-        current.waypoints,
-        state.progress?.position.alongM ?? 0,
-      )
-      await current.rerouteFrom({ lon: here.lon, lat: here.lat }, remaining, profile)
+      const alongM = state.progress?.position.alongM ?? 0
+      const { behind, ahead } = splitWaypoints(state.geometry, current.waypoints, alongM)
+      await current.rerouteFrom({
+        from: { lon: here.lon, lat: here.lat },
+        behind,
+        remaining: ahead,
+        profileId: profile,
+        // No snapped position means nothing is known about how far along the rider is, and a
+        // prefix guessed at zero would claim they are still at the start. Then, and only then,
+        // the old behaviour is the honest one: route from here and start the trip again.
+        prefix:
+          state.progress && current.route
+            ? riddenPrefix(state.geometry, current.route, alongM)
+            : null,
+      })
     } finally {
       setRerouting(false)
     }
@@ -621,6 +684,17 @@ export default function RideView({
     if (Date.now() - lastRerouteAt.current < REROUTE_COOLDOWN_MS) return
     void reroute()
   }, [riding, telemetry.offRoute, telemetry.progress, rerouting, rider.setup.autoReroute, reroute])
+
+  /**
+   * Building a place index blocks the engine Worker for a few seconds, and the next thing that
+   * Worker might be asked for is the reroute that gets a lost rider home. So it stops for the
+   * length of the ride. Nothing is lost by waiting: the map still draws every name it always
+   * did, and the search screen is not reachable from the riding screen anyway.
+   */
+  useEffect(() => {
+    places.hold(riding)
+    return () => places.hold(false)
+  }, [riding])
 
   const startRiding = useCallback(async () => {
     if (suspended) return
@@ -693,7 +767,63 @@ export default function RideView({
   /** How many routes are on the map. More than one, with none chosen, is the decision state. */
   const routeCount = Object.keys(plan.routes).length
 
+  /**
+   * Frames the plan the search screen is about to commit.
+   *
+   * Without it the rider picks Portobello from a list and the map stays wherever it was — which
+   * on a first run is the middle of whichever region opened. The route's own `fitBounds` cannot
+   * do this: it only runs once there is a line, and the two most interesting moments are before
+   * that (one end chosen) and instead of it (routing failed for want of road data).
+   *
+   * It takes coordinates rather than a slot and a point, because the search screen already knows
+   * what the plan is about to be — one place, both ends, or a saved place plus the rider — and
+   * three ways of saying that here would be three ways to get it wrong.
+   *
+   * It is deliberately **not** in the waypoint effect. A tap on the map must never move the
+   * camera — that is a rider placing a pin and having the ground slide out from under the next
+   * one — so this is only ever called from the search screen, which is the one place a point
+   * arrives from somewhere the rider is not already looking.
+   */
+  const framePicked = useCallback(
+    (coords: [number, number][]) => {
+      const instance = map.current
+      if (!instance || suspended || coords.length === 0) return
+      if (coords.length === 1) {
+        instance.easeTo({
+          center: coords[0],
+          zoom: Math.max(instance.getZoom(), 14),
+          duration: 600,
+        })
+        return
+      }
+      const bounds = boundsOf(coords)
+      if (bounds) {
+        instance.fitBounds(bounds, {
+          padding: { top: 110, bottom: sheetClearance(instance.getContainer()), left: 45, right: 45 },
+          duration: 700,
+        })
+      }
+    },
+    [map, suspended],
+  )
+
   const bar = useBottomBarHeight(riding)
+
+  /**
+   * Where the search measures its distances from.
+   *
+   * The rider's own fix when there is one, and the middle of the map otherwise. The map centre
+   * is the better fallback than nothing: a rider who has panned to Peebles is asking about
+   * Peebles, and "5.2 km" against every result is most of what makes a list of forty streets
+   * usable. Read when the screen opens rather than followed, because a `move` listener that
+   * re-ranks a list under a rider's thumb is worse than a figure a few seconds old.
+   */
+  const searchNear = useMemo(() => {
+    if (fix) return { lon: fix.lon, lat: fix.lat }
+    const centre = map.current?.getCenter()
+    return centre ? { lon: centre.lng, lat: centre.lat } : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fix, searching])
 
   const summary = telemetry.finished && telemetry.finishedRecord && (
     <RideSummarySheet
@@ -784,7 +914,60 @@ export default function RideView({
           repeating them over the map was the same numbers twice, one copy of which was covering
           the road the rider was looking at.
         */}
+        {/*
+          The search field, and the one piece of chrome at the top of the planning screen.
+
+          It replaces the two "tap the map" hints rather than joining them: the plan card already
+          says both, and a map app that opens with an instruction where every other one opens
+          with a search field reads as missing the field. The other four hints below are states
+          the rider genuinely cannot see from the map — no map installed, a failed open, a run in
+          progress, a choice still to make.
+        */}
         <div className="rail">
+          {aiming ? (
+            <p className="map-aim">
+              <span>Tap the map for your {aiming === 'start' ? 'start' : aiming === 'stop' ? 'stop' : 'finish'}</span>
+              <button type="button" onClick={() => setAiming(null)}>
+                Cancel
+              </button>
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="map-search"
+              data-planned={plan.waypoints.length > 0 ? 'yes' : 'no'}
+              onClick={() => setSearching(plan.waypoints.length === 0 ? 'start' : 'finish')}
+            >
+              <SearchIcon />
+              <span className="map-search-label">{searchLabel(plan)}</span>
+              {plan.waypoints.length > 0 && (
+                <span
+                  className="map-search-clear"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Clear the route"
+                  onClick={(event) => {
+                    // The row is a button and so is this; nesting them is invalid HTML and a
+                    // target VoiceOver cannot describe, so it is a `role="button"` span and the
+                    // press is stopped from reaching the field behind it.
+                    event.stopPropagation()
+                    plan.clear()
+                    sheet.setOpen(false)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    plan.clear()
+                    sheet.setOpen(false)
+                  }}
+                >
+                  ×
+                </span>
+              )}
+            </button>
+          )}
+
           {mapStatus === 'no-basemap' ? (
             /* The one state where the routing hints below are nonsense: there is no map to
                tap. It is reachable by choice — "carry on without a region" — so it has to
@@ -807,10 +990,6 @@ export default function RideView({
             <p className="rail-hint panel">Working out your routes…</p>
           ) : routeCount > 1 && plan.chosen === null ? (
             <p className="rail-hint panel">Tap a line, or a card, to choose it.</p>
-          ) : plan.waypoints.length === 0 ? (
-            <p className="rail-hint panel">Tap the map to set your start</p>
-          ) : plan.waypoints.length === 1 ? (
-            <p className="rail-hint panel">Now tap where you're heading</p>
           ) : null}
         </div>
 
@@ -884,9 +1063,67 @@ export default function RideView({
           }}
         />
       )}
+      {/* Above the ride screen rather than instead of it, for the reason every other overlay
+          here is: unmounting the map would drop its OPFS handles and its whole tile cache, and
+          picking a destination puts a pin straight back on that map. */}
+      {searching && (
+        <SearchScreen
+          plan={plan}
+          slot={searching}
+          near={searchNear}
+          onClose={() => setSearching(null)}
+          onPicked={framePicked}
+          onChooseOnMap={(slot) => {
+            setSearching(null)
+            setAiming(slot)
+          }}
+          onLocate={locateOnce}
+          onOpenMaps={() => {
+            setSearching(null)
+            onOpenSetup('maps')
+          }}
+        />
+      )}
       {summary}
     </div>
   )
+}
+
+/**
+ * How much of the bottom of the map the sheet is about to cover.
+ *
+ * A second point completes the plan, which opens the sheet onto the route cards — so framing
+ * the two ends against the *whole* viewport puts both of them behind it. Measured: the pins
+ * landed at y 342 and 392 on an 844-high screen whose sheet starts at 345.
+ *
+ * `--sheet-open` is the open layer's own measured height, published by `useSheetDrag` for the
+ * `calc()`s that draw the sheet. Reading it here is a small coupling and the honest one: it is
+ * the number, and the alternative is a constant that is wrong for every state of the card. It
+ * is clamped so a tall sheet cannot leave `fitBounds` with no room to fit anything into, and it
+ * falls back to the closed card's clearance if the layer has not been measured yet.
+ */
+function sheetClearance(container: HTMLElement): number {
+  const layer = container.ownerDocument.querySelector('.sheet-layer')
+  const measured = layer
+    ? Number.parseFloat(getComputedStyle(layer).getPropertyValue('--sheet-open'))
+    : NaN
+  if (!Number.isFinite(measured) || measured <= 0) return 190
+  return Math.min(measured + 16, Math.max(190, container.clientHeight - 260))
+}
+
+/**
+ * What the field at the top of the map says.
+ *
+ * Three states, and only the first is an invitation. Once there is a plan the field is
+ * *describing* it — which is also what makes the × beside it read as clearing that plan rather
+ * than clearing a search box.
+ */
+function searchLabel(plan: { waypoints: { label?: string; lat: number; lon: number }[] }): string {
+  const named = (point: { label?: string; lat: number; lon: number }) =>
+    point.label ?? `${point.lat.toFixed(4)}, ${point.lon.toFixed(4)}`
+  if (plan.waypoints.length === 0) return 'Search a place or address'
+  if (plan.waypoints.length === 1) return `From ${named(plan.waypoints[0])} — where to?`
+  return `${named(plan.waypoints[0])} → ${named(plan.waypoints[plan.waypoints.length - 1])}`
 }
 
 /**
@@ -1014,6 +1251,11 @@ function TargetIcon() {
   )
 }
 
-
-
-
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m15.8 15.8 4.2 4.2" />
+    </svg>
+  )
+}

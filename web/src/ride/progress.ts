@@ -499,12 +499,39 @@ export function waypointsAhead<T extends { lon: number; lat: number }>(
   waypoints: T[],
   alongM: number,
 ): T[] {
-  if (waypoints.length === 0) return []
+  return splitWaypoints(geometry, waypoints, alongM).ahead
+}
+
+/**
+ * The same cut, from both sides.
+ *
+ * A reroute needs both halves now, not just the half it routes through. The rider's journey
+ * keeps its original start and every via they have already gone past — that is what stops a
+ * reroute resetting the trip to zero — and only what is left goes to the engine.
+ *
+ * Defined as one function so the two can never disagree. They were a filter and its negation
+ * living in different places for about an hour, which is exactly long enough for a via point to
+ * end up in both halves and be ridden to twice.
+ */
+export function splitWaypoints<T extends { lon: number; lat: number }>(
+  geometry: RouteGeometry,
+  waypoints: T[],
+  alongM: number,
+): { behind: T[]; ahead: T[] } {
+  if (waypoints.length === 0) return { behind: [], ahead: [] }
+  // One point is a destination, not a journey: there is nothing behind the rider to keep, and
+  // the single point is what they are heading for. Without this the start and the finish are
+  // the same object and it lands in both halves.
+  if (waypoints.length === 1) return { behind: [], ahead: [waypoints[0]] }
+  const start = waypoints[0]
   const finish = waypoints[waypoints.length - 1]
-  const ahead = waypoints
-    .slice(1, -1)
-    .filter((w) => snapToRoute(geometry, [w.lon, w.lat]).alongM > alongM - PASSED_MARGIN_M)
-  return [...ahead, finish]
+  const middle = waypoints.slice(1, -1)
+  const passed = (w: T) =>
+    snapToRoute(geometry, [w.lon, w.lat]).alongM <= alongM - PASSED_MARGIN_M
+  return {
+    behind: [start, ...middle.filter(passed)],
+    ahead: [...middle.filter((w) => !passed(w)), finish],
+  }
 }
 
 /**

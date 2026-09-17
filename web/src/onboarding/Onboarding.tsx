@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { GLYPHS, type Glyph } from './glyphs'
 import { BIKES, DEFAULT_BIKE, SLIDES, markOnboarded, type BikeChoice } from './slides'
+import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
 
 /**
  * The first run: six cards, a pager, and one question that changes anything.
@@ -13,6 +14,12 @@ import { BIKES, DEFAULT_BIKE, SLIDES, markOnboarded, type BikeChoice } from './s
  * being confused. Six cards is the smallest number that covers them and still ends on the
  * permission prompt, which has to be last because it is the only card that asks for
  * something.
+ *
+ * ## It is a carousel, so it swipes
+ *
+ * The pips under it say how many cards there are and which one you are on, which is a promise;
+ * until now the only way to keep it was the Next button. Both work now, and the buttons are
+ * still the path a keyboard and VoiceOver take. The gesture logic is in `swipe.ts`.
  *
  * ## It is shown once, and skipping counts
  *
@@ -36,6 +43,7 @@ export default function Onboarding({
   const [bike, setBike] = useState(DEFAULT_BIKE.id)
   const last = SLIDES.length - 1
   const slide = SLIDES[index]
+  const swipe = useSwipe({ index, last, onIndex: setIndex })
 
   const finish = useCallback(
     (askForLocation: boolean) => {
@@ -73,14 +81,23 @@ export default function Onboarding({
       </header>
 
       {/*
-        One track translated by index, rather than one card swapped in and out. The cards
-        either side stay mounted, so the movement is a real slide and the glyphs do not
-        re-render mid-transition.
+        One track translated by index, rather than one card swapped in and out. The cards either
+        side stay mounted, so the movement is a real slide and the glyphs do not re-render
+        mid-transition — and so a swipe reveals the next card rather than a gap.
+
+        `--slide-dx` is the finger, added to the index's own translation. It is written straight
+        to the element rather than through state, like the plan sheet's `--sheet-p` and for the
+        same reason: a re-render per frame of six mounted cards is a dropped frame per frame.
       */}
-      <div className="onboarding-viewport">
+      <div className="onboarding-viewport" ref={swipe.viewport}>
         <div
           className="onboarding-track"
-          style={{ width: `${SLIDES.length * 100}%`, transform: `translateX(${-index * (100 / SLIDES.length)}%)` }}
+          ref={swipe.track}
+          {...swipe.handlers}
+          style={{
+            width: `${SLIDES.length * 100}%`,
+            transform: `translateX(calc(${-index * (100 / SLIDES.length)}% + var(--slide-dx, 0px)))`,
+          }}
         >
           {SLIDES.map((card, i) => (
             <section
@@ -189,4 +206,121 @@ function ChevronLeft() {
       <path d="M15 5l-7 7 7 7" />
     </svg>
   )
+}
+
+/**
+ * The finger on the deck.
+ *
+ * Bookkeeping only: subtract two clientXs, ask `swipe.ts` what that means, and either write the
+ * offset to the track or stand aside. `data-dragging` turns the track's transition off for the
+ * length of the gesture — under a finger there is nothing to interpolate towards.
+ *
+ * A press starts *pending*, exactly as the plan sheet's body drag does, so a tap on a bike chip
+ * is still that tap and a scroll down a long card is still that scroll.
+ */
+function useSwipe({
+  index,
+  last,
+  onIndex,
+}: {
+  index: number
+  last: number
+  onIndex: (index: number) => void
+}) {
+  const viewport = useRef<HTMLDivElement | null>(null)
+  const track = useRef<HTMLDivElement | null>(null)
+  const gesture = useRef<{
+    id: number
+    pending: boolean
+    startX: number
+    startY: number
+    dx: number
+    lastX: number
+    lastAt: number
+    velocity: number
+  } | null>(null)
+
+  const offset = (px: number) => track.current?.style.setProperty('--slide-dx', `${px}px`)
+
+  const end = () => {
+    gesture.current = null
+    track.current?.removeAttribute('data-dragging')
+    offset(0)
+  }
+
+  const onPointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    if (gesture.current) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    gesture.current = {
+      id: event.pointerId,
+      pending: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      dx: 0,
+      lastX: event.clientX,
+      lastAt: event.timeStamp,
+      velocity: 0,
+    }
+  }
+
+  const onPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const drag = gesture.current
+    if (!drag || drag.id !== event.pointerId) return
+
+    if (drag.pending) {
+      const verdict = swipeVerdict(event.clientX - drag.startX, event.clientY - drag.startY)
+      if (verdict === 'abandon') {
+        gesture.current = null
+        return
+      }
+      if (verdict === 'wait') return
+      drag.pending = false
+      drag.startX = event.clientX
+      track.current?.setAttribute('data-dragging', 'yes')
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        /* not capturable — moves still arrive while the pointer is over the track */
+      }
+    }
+
+    drag.dx = event.clientX - drag.startX
+    const elapsed = event.timeStamp - drag.lastAt
+    if (elapsed > 0) {
+      drag.velocity = ((event.clientX - drag.lastX) / elapsed) * 1000
+      drag.lastX = event.clientX
+      drag.lastAt = event.timeStamp
+    }
+    offset(swipeOffsetPx(drag.dx, index, last))
+  }
+
+  const onPointerUp = (event: React.PointerEvent<HTMLElement>) => {
+    const drag = gesture.current
+    if (!drag || drag.id !== event.pointerId) return
+    const settled = drag.pending
+      ? index
+      : swipeRelease({
+          index,
+          last,
+          dxPx: drag.dx,
+          // A finger that came to rest before letting go was placing the deck, not throwing it.
+          velocityPxPerS: event.timeStamp - drag.lastAt > 80 ? 0 : drag.velocity,
+          widthPx: viewport.current?.getBoundingClientRect().width ?? 0,
+        })
+    end()
+    if (settled !== index) onIndex(settled)
+  }
+
+  /* Taken away — a system edge swipe, a call arriving. Same trap `HoldButton` has: without
+     this the track is left stranded at whatever offset the finger reached. */
+  const onPointerCancel = (event: React.PointerEvent<HTMLElement>) => {
+    if (gesture.current?.id !== event.pointerId) return
+    end()
+  }
+
+  return {
+    viewport,
+    track,
+    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+  }
 }

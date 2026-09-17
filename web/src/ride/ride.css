@@ -316,39 +316,96 @@
 
 /* ── Riding ─────────────────────────────────────────────────────────────────────────── */
 
+/*
+ * The bar along the foot of the *riding* screen, and the app's clearest statement of mode.
+ *
+ * It used to be a `.panel` — translucent white, exactly like the plan card it replaces — so the
+ * two states of the app differed by their contents and by nothing else, and a rider genuinely
+ * could not tell at a glance whether they were navigating or planning. It is ink-filled now.
+ * That is not decoration: an inverted bar is the one difference a glance catches before it has
+ * read anything, and the planning screen's counterpart is a white card with a search field
+ * above it. Both states now announce themselves.
+ *
+ * Opaque rather than translucent, and therefore no backdrop filter: this is the one surface on
+ * the riding screen that is up for the whole ride, and a blur over a moving map costs frames
+ * every one of those minutes.
+ */
 .ride-status {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.7rem;
-  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.85rem;
   border-radius: 18px;
+  background: var(--mode);
+  box-shadow: var(--lift-panel);
   font-variant-numeric: tabular-nums;
 }
 
 .ride-status-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.35rem;
   flex: 1;
   min-width: 0;
   font-size: 0.82rem;
-  color: var(--muted);
+  color: var(--mode-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* What the ride has amounted to so far: elapsed, ridden, climbed. Ink, because it is the
-   sentence; the fix line under it is the footnote. */
+/* What the ride has amounted to so far: elapsed, ridden, climbed. Full strength, because it is
+   the sentence; the fix line under it is the footnote. */
 .ride-status-text strong {
-  color: var(--ink);
+  color: var(--mode-ink);
   font-weight: 600;
 }
 
 .ride-status-fix {
-  display: block;
+  flex-basis: 100%;
   font-size: 0.72rem;
-  color: var(--faint);
+  color: var(--mode-faint);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/*
+ * The live dot.
+ *
+ * A static badge saying "Riding" is a label; a moving one is a state. It is the same convention
+ * as a recording indicator anywhere else, which is the argument for it — nobody has to be told
+ * what it means. Green rather than red: nothing here is being recorded *against* the rider, and
+ * the same dot appears on the walkthrough's location card.
+ */
+.ride-live {
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  margin-right: 0.15rem;
+  border-radius: 50%;
+  background: var(--good-fill);
+  animation: ride-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes ride-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A dot that breathes once every two and a half seconds is not motion anybody asked to be
+   spared, but the preference is a preference. */
+@media (prefers-reduced-motion: reduce) {
+  .ride-live {
+    animation: none;
+  }
 }
 
 /* ── Hold to end ───────────────────────────────────────────────────────────────────────
@@ -715,6 +772,23 @@
   color: #fff;
 }
 
+/*
+ * Where the rider rejoined the route after a wrong turn.
+ *
+ * The app put it there, not the rider, so it is half the size and carries no number — a marker
+ * that says "the line goes through here" rather than "you asked for this". It stays visible,
+ * because it is also the join between the ride that happened and the road still to come, and a
+ * route that changed shape mid-ride with nothing on the map saying where is a route a rider has
+ * to re-read from scratch.
+ */
+.pin[data-role='rejoin'] {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+  background: #5c6b74;
+  box-shadow: 0 2px 8px rgb(18 33 43 / 35%);
+}
+
 /* Locked pins say so: no pointer, dimmer, and not a tap target. */
 .pin[data-editable='no'] {
   opacity: 0.75;
@@ -771,8 +845,18 @@
   /* How far the card floats in from the sides, and the padding its content carries. */
   --sheet-inset: max(env(safe-area-inset-left), 12px);
   --sheet-pad: 1rem;
-  /* The room above both layers' content that the handle sits in. */
+  /* The room above the *card's* content that the handle sits in. Constant, because this
+     layer's measured height is one of the two stops the sheet interpolates between — a
+     padding that moved with `--sheet-p` would retarget the animation every frame. */
   --sheet-head: 1.1rem;
+  /*
+   * The same room in the open sheet, and deliberately more than twice as much.
+   *
+   * It is the height of the grab target, not decoration. Open, the handle is the full width of
+   * the sheet and this tall, so it can be found without looking; the content starts exactly
+   * below it rather than under it, so nothing in `drawer-head` is covered.
+   */
+  --sheet-head-open: 40px;
   /* Stopping short of the top leaves the map visibly there behind the sheet, so it reads as
      covering the screen rather than replacing it. 60px is also what the status bar occupies. */
   --sheet-cap: calc(var(--app-height) - 60px);
@@ -881,7 +965,7 @@
   max-height: var(--sheet-cap);
   display: flex;
   flex-direction: column;
-  padding-top: var(--sheet-head);
+  padding-top: var(--sheet-head-open);
   /* Arrives after the card has gone rather than crossing it, so the two are never both half
      legible over the same map. */
   opacity: calc(var(--sheet-p) * 2.5 - 0.9);
@@ -895,17 +979,28 @@
 /*
  * The grab handle, and the sheet's only permanent control.
  *
- * It is deliberately a small hit area rather than the 44px a control usually earns: the card's
- * own background drags too, so the target is most of the sheet, and a 44px box here would
- * reach down over the first row — which on the two-point card is a Remove button.
+ * ## It grows with the sheet, because the two stops need opposite things
+ *
+ * Closed, the card's own background drags — the target is already most of the sheet — and a
+ * 44px box here would reach down over the first row, which on the two-point card is a Remove
+ * button. So closed it stays a 60×24 pill.
+ *
+ * Open, the card behind it is `inert` and this *was* the only thing that dragged: 60×24px on
+ * the one surface designed to be used without looking, which is what the first riders hit.
+ * So both dimensions are a `calc()` over `--sheet-p` like everything else about this sheet,
+ * and at the open stop it is the full width of the sheet and `--sheet-head-open` tall — sat
+ * exactly in the room the open layer's padding leaves above its content, never over it.
+ *
+ * The scroller below drags as well; see `pendingVerdict`. This is the target you can hit
+ * without aiming, that one is the gesture you make without thinking.
  */
 .sheet-handle {
   position: absolute;
   top: 0;
   left: 50%;
   z-index: 2;
-  width: 60px;
-  height: 24px;
+  width: calc(60px + (100% - 60px) * var(--sheet-p));
+  height: calc(24px + (var(--sheet-head-open) - 24px) * var(--sheet-p));
   /* The element rule in `App.css` gives every button 2.75rem of height and a hairline ring, so
      a control is a thumb-sized target with an edge. A grab handle is neither. */
   min-height: 0;
@@ -922,10 +1017,12 @@
   cursor: grabbing;
 }
 
+/* The pill itself stays 36px wide and stays put whatever the target around it does: what a
+   rider aims at is unchanged, only what they are allowed to miss by. */
 .sheet-handle::before {
   content: '';
   position: absolute;
-  top: 9px;
+  top: calc(9px + (var(--sheet-head-open) - 24px) * var(--sheet-p) * 0.42);
   left: 50%;
   width: 36px;
   height: 5px;
@@ -1223,6 +1320,10 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Handing back the `pan-y` the sheet's own `touch-action: none` takes away. The comment up
+     there has always claimed this happened and no rule ever did it — which on a phone is a
+     list that will not scroll, and at a desk is a wheel that works perfectly. */
+  touch-action: pan-y;
   padding: 0.6rem 1rem var(--safe-bottom);
   -webkit-overflow-scrolling: touch;
 }
@@ -1876,6 +1977,52 @@
   gap: 0.1rem;
   flex: 1;
   min-width: 0;
+}
+
+/*
+ * What has been ridden, added up.
+ *
+ * Above the list and only on the Ridden filter, because it is the answer to the question that
+ * filter is asking. Two rows in one card rather than a tile grid: there are four figures and
+ * they read as a sentence — 340 km, 4,200 m up, 18 hours, twelve rides — where four boxes would
+ * make each of them look like a separate claim.
+ */
+.totals {
+  display: grid;
+  gap: 1px;
+  padding: 0.2rem 0;
+  border-radius: var(--r-large);
+  background: var(--card);
+  box-shadow: var(--lift-row), inset 0 0 0 1px var(--hairline);
+}
+
+.totals-row {
+  display: grid;
+  gap: 1px;
+  padding: 0.6rem 0.9rem;
+}
+
+.totals-row + .totals-row {
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.totals-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.totals-figures {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.totals-figures strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 650;
 }
 
 .library-list {

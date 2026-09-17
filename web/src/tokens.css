@@ -103,6 +103,36 @@
   --scrim: rgb(18 33 43 / 25%);
 
   /*
+   * A surface that exists to say the app is in a mode.
+   *
+   * Two of them: the bar along the foot of the *riding* screen, and the strip that says the
+   * next tap on the map will place a particular end of the plan. Both used to be `.panel` —
+   * translucent white, indistinguishable from the plan card they replace — and a rider
+   * genuinely could not tell at a glance whether they were navigating or planning.
+   *
+   * It is the one role token that does not invert between the themes, and the reason is that
+   * both of its jobs pull the same way. It must not be mistakable for a card, which on light
+   * rules out anything pale; and it must not glare at a rider on a night road, which on dark
+   * rules out anything pale as well. So it is a deep green in both — a shade lighter on dark,
+   * because the page under it is darker and the surface still has to lift off it. `--ink` was
+   * tried first and is wrong on dark for exactly the torch-in-your-face reason this theme
+   * exists for, and `--slate-700` was tried after that and measured ΔE 6.9 from the card it is
+   * supposed to be distinguishable from. Both figures are asserted in `chrome.test.ts`.
+   *
+   * Green rather than a neutral because it is also the colour of the live dot on it and of the
+   * location dot on the walkthrough: in this app green means the phone is doing something for
+   * you, which is exactly what a mode is.
+   */
+  --mode: #12342a;
+  --mode-ink: #ffffff;
+  /** A second line on that surface: the fix status under the ride's figures. */
+  --mode-muted: rgb(255 255 255 / 72%);
+  /** A footnote on it. */
+  --mode-faint: rgb(255 255 255 / 50%);
+  /** A quiet button *on* it, where `--fill` would be invisible. */
+  --mode-fill: rgb(255 255 255 / 20%);
+
+  /*
    * Four shadows, and no fifth.
    *
    * The dark app had none — a slate panel separates from a slate map by being lighter. On
@@ -171,6 +201,15 @@
   --panel-strong: rgb(17 33 45 / 82%);
   --panel-row: rgb(37 55 69 / 55%);
   --scrim: rgb(6 20 27 / 45%);
+
+  /* A shade lighter than the light theme's, because the page under it is darker and the
+     surface still has to lift off it. See the note in the light block for why this one does
+     not invert. */
+  --mode: #143d2e;
+  --mode-ink: var(--slate-100);
+  --mode-muted: rgb(204 208 207 / 78%);
+  --mode-faint: rgb(204 208 207 / 58%);
+  --mode-fill: rgb(204 208 207 / 16%);
 
   /* Tuned for white, invisible on slate. These are near-black at higher alpha instead. */
   --lift-button: 0 6px 24px rgb(6 20 27 / 45%);

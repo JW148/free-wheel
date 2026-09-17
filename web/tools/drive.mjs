@@ -126,6 +126,23 @@ const releaseHandle = () =>
     return 'ok'
   })()`)
 
+/**
+ * Types into a controlled React input.
+ *
+ * Setting `.value` directly does nothing: React's own value setter on the element shadows the
+ * prototype's, so the synthetic `input` event carries the old value and the component re-renders
+ * back over it. Going through the prototype descriptor is the standard way round that.
+ */
+const type = (selector, text) =>
+  evaluate(`(() => {
+    const field = document.querySelector(${JSON.stringify(selector)})
+    if (!field) return 'missing: ' + ${JSON.stringify(selector)}
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(field, ${JSON.stringify(text)})
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    return 'ok'
+  })()`)
+
 const click = (selector) =>
   evaluate(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)})
@@ -133,6 +150,25 @@ const click = (selector) =>
     el.click()
     return 'ok'
   })()`)
+
+/*
+ * Anything the page threw, printed.
+ *
+ * A React error boundary-less tree renders nothing at all on a throw, and a screenshot of
+ * nothing looks exactly like a screenshot of a map that has not loaded yet — which is a failure
+ * this repo has already lost time to twice. `exceptionThrown` is the one signal that tells them
+ * apart, and it costs one listener.
+ */
+ws.addEventListener('message', (event) => {
+  const msg = JSON.parse(event.data)
+  if (msg.method === 'Runtime.exceptionThrown') {
+    const d = msg.params.exceptionDetails
+    console.error('  ✗ ' + (d.exception?.description ?? d.text))
+  }
+  if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
+    console.error('  ✗ ' + msg.params.args.map((a) => a.description ?? a.value).join(' '))
+  }
+})
 
 await send('Page.enable')
 await send('Runtime.enable')
@@ -202,6 +238,99 @@ console.log('Saved')
 await click('.plan-shortcuts button:nth-child(1)')
 await sleep(700)
 await shot('11-saved')
+await click('.screen-back')
+await sleep(500)
+
+/*
+ * The search, against a real archive.
+ *
+ * `FW_ARCHIVE=/path/to/edinburgh.pmtiles` imports it through the app's own manual-import path,
+ * which is the only way to see the feature actually work: the index is built in the engine
+ * Worker out of OPFS, so a seeded fixture would exercise none of it. Without the variable the
+ * run below still covers the empty states, which are the ones a rider meets first.
+ */
+if (process.env.FW_ARCHIVE) {
+  console.log('importing an archive, and indexing it')
+  await click('.plan-shortcuts button:nth-child(2)')
+  await sleep(600)
+  await click('.setup-menu-row:nth-child(1)')
+  await sleep(900)
+  await click('.maps-manual-toggle')
+  await sleep(700)
+  const { root } = await send('DOM.getDocument')
+  const { nodeId } = await send('DOM.querySelector', {
+    nodeId: root.nodeId,
+    selector: 'input[accept=".pmtiles"]',
+  })
+  if (!nodeId) throw new Error('no .pmtiles file input on screen')
+  await send('DOM.setFileInputFiles', { nodeId, files: [process.env.FW_ARCHIVE] })
+  // The import writes 34 MB into OPFS and the index build then reads all of it back.
+  for (let i = 0; i < 60; i++) {
+    await sleep(1000)
+    const state = await evaluate(`document.querySelector('.maps-manual .meta')?.textContent ?? ''`)
+    if (/imported|^$/i.test(state)) break
+  }
+  await sleep(4000)
+  await shot('12-imported')
+  // Two Dones: the Maps screen's own, then the menu's. Setup is a stack, not a modal.
+  await click('.setup-close')
+  await sleep(900)
+  await click('.setup-close')
+  await sleep(2000)
+
+
+  console.log('search, with something to find')
+  await click('.map-search')
+  await sleep(900)
+  await type('.search-field', 'portobello')
+  await sleep(900)
+  await shot('12c-search-results')
+  await type('.search-field', 'princes st')
+  await sleep(900)
+  await shot('12d-search-street')
+  await evaluate(`document.querySelector('.search-body').scrollTop = 4000`)
+  await sleep(300)
+  await shot('12d2-search-scrolled')
+  await evaluate(`document.querySelector('.search-body').scrollTop = 0`)
+  await type('.search-field', 'Aberystwyth')
+  await sleep(1500)
+  await shot('12e-search-elsewhere')
+  // Keep one, then look at the empty state: a saved place, and the arrow that rides to it.
+  await type('.search-field', 'portobello beach')
+  await sleep(700)
+  await click('.place-item:first-child .place-action:last-child')
+  await sleep(400)
+  await type('.search-field', '')
+  await sleep(600)
+  await shot('12e2-saved-place')
+
+  // Both ends, by name: the start, then the finish the screen stays open for.
+  await type('.search-field', 'portobello')
+  await sleep(700)
+  await click('.place-row')
+  await sleep(900)
+  await shot('12f-start-chosen')
+  await type('.search-field', 'cramond')
+  await sleep(700)
+  await click('.place-row')
+  await sleep(2500)
+  await shot('12g-planned')
+}
+
+/*
+ * The search screen with nothing installed.
+ *
+ * What this exercises is the shape of the screen, the field stack, the rows above the results
+ * and what it says when it has nothing: the states a rider meets on their first launch, which
+ * are the ones most likely to be wrong.
+ */
+console.log('search')
+await click('.map-search')
+await sleep(700)
+await shot('12a-search-empty')
+await type('.search-field', 'Aberystwyth')
+await sleep(1200)
+await shot('12b-search-elsewhere')
 await click('.screen-back')
 await sleep(500)
 
