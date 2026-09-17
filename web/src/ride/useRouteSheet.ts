@@ -4,6 +4,22 @@ import type { Plan } from './useRoute'
 export type SheetView = 'compare' | 'detail'
 
 /**
+ * Which view a reopening sheet lands on: the one it left, unless that view has nothing to say.
+ *
+ * The detail view describes the chosen route, and `plan.chosen` is nullable on purpose — it is
+ * `null` until a card is tapped, and clearing a choice does not close the sheet. So "the view
+ * you were last on" has one exception, and it is the same `null` check every reader of "the
+ * route" has to make.
+ */
+export function viewOnOpen(
+  view: SheetView,
+  plan: { chosen: string | null; routes: Record<string, unknown> },
+): SheetView {
+  if (view !== 'detail') return view
+  return plan.chosen !== null && plan.routes[plan.chosen] ? 'detail' : 'compare'
+}
+
+/**
  * The drawer's open state and which view it is showing.
  *
  * Owned by `RideView` rather than by the sheet, because a tap on a route line on the map has
@@ -20,14 +36,21 @@ export function useRouteSheet(plan: Plan) {
     setOpen,
     setView,
     /**
-     * Opens on whichever view is useful given what the rider has already decided.
+     * Opens on the view it was last put away on.
      *
-     * A chosen route means they want its detail; an open comparison means they still have a
-     * choice to make. This is also what keeps the single-profile case unchanged — one route
-     * is chosen automatically, so the drawer still opens straight onto its elevation profile.
+     * It used to re-derive the view from the plan every time — a chosen route meant the
+     * detail, anything else meant the comparison — which sounds right and is wrong the moment
+     * the rider has already said otherwise. Choosing a route does not leave the comparison, so
+     * a rider weighing three cards with one ticked would minimise the sheet, pull it back up
+     * and land on that route's climbs instead of the list they were reading. The sheet is one
+     * surface with two stops; the view is what is *on* it, and putting it down is not a change
+     * of mind.
+     *
+     * The only thing that overrules it is a view that can no longer be drawn — see
+     * {@link viewOnOpen}.
      */
     openForPlan() {
-      setView(plan.chosen && plan.routes[plan.chosen] ? 'detail' : 'compare')
+      setView(viewOnOpen(view, plan))
       setOpen(true)
     },
     showCompare() {
