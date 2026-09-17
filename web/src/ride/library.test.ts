@@ -9,7 +9,9 @@ import {
   previewOf,
   renamed,
   rideEntry,
+  rideTotals,
   routeEntry,
+  type SavedRide,
 } from './library'
 import { summarise, startRecording } from './recording'
 
@@ -141,5 +143,70 @@ describe('renamed', () => {
     expect(next.id).toBe(entry.id)
     expect(next.gpx).toBe(entry.gpx)
     expect(next.summary).toBe(entry.summary)
+  })
+})
+
+/**
+ * A history is a list of rides; stats are what a rider actually wants out of one. The month
+ * boundary is the part worth testing, because it is the part you otherwise find out about on
+ * the first of the month.
+ */
+describe('rideTotals', () => {
+  const ride = (at: number, distanceM: number, ascentM = 100, movingS = 3600): SavedRide => ({
+    id: String(at),
+    name: 'x',
+    savedAt: at,
+    kind: 'ride',
+    gpx: '',
+    preview: [],
+    summary: {
+      startedAt: at,
+      endedAt: at + movingS * 1000,
+      elapsedS: movingS,
+      movingS,
+      distanceM,
+      ascentM,
+      energyKj: 0,
+      avgSpeedMps: 0,
+      maxSpeedMps: 0,
+      avgPowerW: null,
+    },
+  })
+
+  const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime()
+  const thisMonth = new Date(2026, 8, 2).getTime()
+  const lastMonth = new Date(2026, 7, 28).getTime()
+
+  it('adds up everything, and this month separately', () => {
+    const totals = rideTotals([ride(thisMonth, 20_000), ride(lastMonth, 30_000)], NOW)
+    expect(totals.all.rides).toBe(2)
+    expect(totals.all.distanceM).toBe(50_000)
+    expect(totals.month.rides).toBe(1)
+    expect(totals.month.distanceM).toBe(20_000)
+  })
+
+  it('counts a ride from the first of the month', () => {
+    // The boundary is midnight local, not UTC: a Sunday morning ride on the 1st belongs to the
+    // month it was ridden in.
+    const first = new Date(2026, 8, 1, 0, 30).getTime()
+    expect(rideTotals([ride(first, 1000)], NOW).month.rides).toBe(1)
+  })
+
+  it('excludes a ride from the last minute of the previous month', () => {
+    const before = new Date(2026, 7, 31, 23, 59).getTime()
+    expect(rideTotals([ride(before, 1000)], NOW).month.rides).toBe(0)
+  })
+
+  it('counts a ride by when it was ridden, not when it was filed', () => {
+    // They are the same number today. If a rename or a later save ever moves `savedAt`, a
+    // September ride must not become an October one.
+    const entry = { ...ride(lastMonth, 5000), savedAt: thisMonth }
+    expect(rideTotals([entry], NOW).month.rides).toBe(0)
+  })
+
+  it('reports zeroes rather than nothing for a month with no rides', () => {
+    const totals = rideTotals([], NOW)
+    expect(totals.all).toEqual({ rides: 0, distanceM: 0, ascentM: 0, movingS: 0 })
+    expect(totals.monthLabel.length).toBeGreaterThan(2)
   })
 })

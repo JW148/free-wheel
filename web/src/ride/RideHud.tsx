@@ -188,17 +188,25 @@ export default function RideHud({
         running them together meant "±5 m" sat in the middle of a distance and a climb. Ending
         is a hold — see `HoldButton` — because a tap is a gesture a pothole can make.
       */}
-      <div className="ride-status panel" data-bottom-bar="">
+      <div className="ride-status" data-bottom-bar="">
         <span className="ride-status-text">
+          {/* "As a user I wasn't clear exactly when I was in navigation mode." The bar is now
+              ink-filled rather than a white panel, which is the difference a glance actually
+              catches, and it says the word. The dot pulses because the alternative — a static
+              badge — is indistinguishable from a label. */}
+          <span className="ride-live" aria-hidden="true" />
           {record ? (
             <>
-              <strong>{formatElapsed((Date.now() - record.startedAt) / 1000)}</strong>
+              <strong>Riding · {formatElapsed((Date.now() - record.startedAt) / 1000)}</strong>
               {` · ${(record.distanceM / 1000).toFixed(1)} km`}
               {record.ascentM > 5 && ` · ${Math.round(record.ascentM)} m up`}
               <span className="ride-status-fix">{fixLabel} · recording</span>
             </>
           ) : (
-            <span className="ride-status-fix">{fixLabel}</span>
+            <>
+              <strong>Riding</strong>
+              <span className="ride-status-fix">{fixLabel}</span>
+            </>
           )}
         </span>
         <HoldButton onHold={onEnd} aria-label="Hold to end the ride">

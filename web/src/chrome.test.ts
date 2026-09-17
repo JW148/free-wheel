@@ -142,6 +142,35 @@ describe.each(THEMES)('%s chrome', (theme) => {
     expect(contrast(on('on-ink'), on('ink'))).toBeGreaterThanOrEqual(4.5)
   })
 
+  /*
+   * The riding bar and the aim strip.
+   *
+   * They exist to be *read at a glance while moving*, which is the hardest reading condition
+   * this app has, and they are the one surface whose colours are not the card's. The figures on
+   * them are the ride — elapsed, ridden, climbed — so they take the 4.5 body floor; the fix line
+   * under them is a footnote and takes 3.
+   *
+   * Composited over `--mode` rather than over the card, because that is where they are actually
+   * drawn, and measuring a translucent white against a white card is how a token that is
+   * invisible in practice passes a test.
+   */
+  it('reads what is on a mode surface', () => {
+    const over = (name: string) => hexOf(name, theme, 'mode')
+    expect(contrast(over('mode-ink'), on('mode'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(over('mode-muted'), on('mode'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(over('mode-faint'), on('mode'))).toBeGreaterThanOrEqual(3)
+  })
+
+  /*
+   * And the bar has to separate from the *planning* card, because that difference is the whole
+   * feature: a rider glancing down has to be able to tell navigating from planning before they
+   * have read a word. ΔE rather than contrast — the question is "are these two surfaces the
+   * same colour", not "can text be read on them".
+   */
+  it('keeps the mode surface distinct from the card it replaces', () => {
+    expect(deltaE2000(hexOf('mode', theme), hexOf('card', theme))).toBeGreaterThanOrEqual(20)
+  })
+
   /* Good and bad name a state and are the only hues in the chrome, so they have to survive the
      tinted backgrounds they are paired with. */
   it('reads the two state colours on their own tints', () => {
@@ -213,6 +242,7 @@ describe('the two themes', () => {
     const ROLES = [
       'page', 'card', 'inset', 'fill', 'track',
       'ink', 'muted', 'faint', 'on-ink',
+      'mode', 'mode-ink', 'mode-muted', 'mode-faint', 'mode-fill',
       'hairline', 'edge', 'edge-strong',
       'good', 'good-bg', 'good-fill', 'bad', 'bad-bg',
       'panel', 'panel-strong', 'panel-row', 'scrim',

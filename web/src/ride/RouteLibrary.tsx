@@ -11,6 +11,7 @@ import {
   listRoutes,
   putEntry,
   renamed,
+  rideTotals,
   type LibraryEntry,
   type LibraryFilter,
   type SavedRide,
@@ -141,6 +142,7 @@ export default function RouteLibrary({
   }
 
   const shown = filterEntries(entries, filter)
+  const rides = entries.filter((entry): entry is SavedRide => entry.kind === 'ride')
 
   return (
     <>
@@ -166,6 +168,10 @@ export default function RouteLibrary({
       </div>
 
       {problem && <p className="warn">{problem}</p>}
+
+      {/* Only where it is the answer to the question being asked. On the All list it would be a
+          total that describes half the rows, and on Planned it describes none of them. */}
+      {filter === 'ride' && rides.length > 0 && <Totals rides={rides} />}
 
       {entries.length === 0 && !problem && (
         <p className="warn">
@@ -207,6 +213,45 @@ export default function RouteLibrary({
         ))}
       </ul>
     </>
+  )
+}
+
+/**
+ * Everything ridden, added up.
+ *
+ * Two rows: the month, then all of it. The month first, because it is the one that changes and
+ * therefore the one being looked for — a lifetime total is a fact you check twice a year.
+ *
+ * Time is moving time rather than elapsed, which is the figure a rider means by "I was out for
+ * three hours" minus the café. `RideStats` makes the same choice for one ride, and the two have
+ * to agree or the summary of a ride and the total it lands in describe different things.
+ */
+function Totals({ rides }: { rides: SavedRide[] }) {
+  const { all, month, monthLabel } = rideTotals(rides)
+  return (
+    <div className="totals">
+      <TotalRow label={monthLabel} totals={month} />
+      <TotalRow label="All time" totals={all} />
+    </div>
+  )
+}
+
+function TotalRow({ label, totals }: { label: string; totals: ReturnType<typeof rideTotals>['all'] }) {
+  return (
+    <div className="totals-row">
+      <span className="totals-label">{label}</span>
+      <span className="totals-figures">
+        {totals.rides === 0 ? (
+          'Nothing yet'
+        ) : (
+          <>
+            <strong>{formatDistance(totals.distanceM)}</strong>
+            {` · ${Math.round(totals.ascentM)} m up · ${formatElapsed(totals.movingS)} · `}
+            {totals.rides === 1 ? '1 ride' : `${totals.rides} rides`}
+          </>
+        )}
+      </span>
+    </div>
   )
 }
 

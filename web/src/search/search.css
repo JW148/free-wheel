@@ -111,8 +111,9 @@
   width: 100%;
   padding: 0.6rem 0.6rem 0.6rem 1rem;
   border-radius: var(--r-pill);
-  background: var(--ink);
-  color: var(--on-ink);
+  background: var(--mode);
+  box-shadow: var(--lift-panel);
+  color: var(--mode-ink);
   font-size: 0.9rem;
 }
 
@@ -127,9 +128,9 @@
   padding: 0.35rem 0.85rem;
   border: none;
   border-radius: var(--r-pill);
-  background: rgb(255 255 255 / 18%);
+  background: var(--mode-fill);
   box-shadow: none;
-  color: var(--on-ink);
+  color: var(--mode-ink);
   font: inherit;
   font-weight: 600;
   cursor: pointer;

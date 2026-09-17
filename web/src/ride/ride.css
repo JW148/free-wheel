@@ -316,39 +316,96 @@
 
 /* ── Riding ─────────────────────────────────────────────────────────────────────────── */
 
+/*
+ * The bar along the foot of the *riding* screen, and the app's clearest statement of mode.
+ *
+ * It used to be a `.panel` — translucent white, exactly like the plan card it replaces — so the
+ * two states of the app differed by their contents and by nothing else, and a rider genuinely
+ * could not tell at a glance whether they were navigating or planning. It is ink-filled now.
+ * That is not decoration: an inverted bar is the one difference a glance catches before it has
+ * read anything, and the planning screen's counterpart is a white card with a search field
+ * above it. Both states now announce themselves.
+ *
+ * Opaque rather than translucent, and therefore no backdrop filter: this is the one surface on
+ * the riding screen that is up for the whole ride, and a blur over a moving map costs frames
+ * every one of those minutes.
+ */
 .ride-status {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.7rem;
-  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.85rem;
   border-radius: 18px;
+  background: var(--mode);
+  box-shadow: var(--lift-panel);
   font-variant-numeric: tabular-nums;
 }
 
 .ride-status-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.35rem;
   flex: 1;
   min-width: 0;
   font-size: 0.82rem;
-  color: var(--muted);
+  color: var(--mode-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* What the ride has amounted to so far: elapsed, ridden, climbed. Ink, because it is the
-   sentence; the fix line under it is the footnote. */
+/* What the ride has amounted to so far: elapsed, ridden, climbed. Full strength, because it is
+   the sentence; the fix line under it is the footnote. */
 .ride-status-text strong {
-  color: var(--ink);
+  color: var(--mode-ink);
   font-weight: 600;
 }
 
 .ride-status-fix {
-  display: block;
+  flex-basis: 100%;
   font-size: 0.72rem;
-  color: var(--faint);
+  color: var(--mode-faint);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/*
+ * The live dot.
+ *
+ * A static badge saying "Riding" is a label; a moving one is a state. It is the same convention
+ * as a recording indicator anywhere else, which is the argument for it — nobody has to be told
+ * what it means. Green rather than red: nothing here is being recorded *against* the rider, and
+ * the same dot appears on the walkthrough's location card.
+ */
+.ride-live {
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  margin-right: 0.15rem;
+  border-radius: 50%;
+  background: var(--good-fill);
+  animation: ride-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes ride-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A dot that breathes once every two and a half seconds is not motion anybody asked to be
+   spared, but the preference is a preference. */
+@media (prefers-reduced-motion: reduce) {
+  .ride-live {
+    animation: none;
+  }
 }
 
 /* ── Hold to end ───────────────────────────────────────────────────────────────────────
@@ -1920,6 +1977,52 @@
   gap: 0.1rem;
   flex: 1;
   min-width: 0;
+}
+
+/*
+ * What has been ridden, added up.
+ *
+ * Above the list and only on the Ridden filter, because it is the answer to the question that
+ * filter is asking. Two rows in one card rather than a tile grid: there are four figures and
+ * they read as a sentence — 340 km, 4,200 m up, 18 hours, twelve rides — where four boxes would
+ * make each of them look like a separate claim.
+ */
+.totals {
+  display: grid;
+  gap: 1px;
+  padding: 0.2rem 0;
+  border-radius: var(--r-large);
+  background: var(--card);
+  box-shadow: var(--lift-row), inset 0 0 0 1px var(--hairline);
+}
+
+.totals-row {
+  display: grid;
+  gap: 1px;
+  padding: 0.6rem 0.9rem;
+}
+
+.totals-row + .totals-row {
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.totals-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.totals-figures {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.totals-figures strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 650;
 }
 
 .library-list {

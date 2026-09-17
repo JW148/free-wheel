@@ -169,6 +169,66 @@ export function renamed<T extends LibraryEntry>(entry: T, name: string): T {
   return { ...entry, name: name.trim() || entry.name }
 }
 
+/**
+ * What a rider has actually done, added up.
+ *
+ * "As a user I wish I can see a history of my rides and their stats." The history was already
+ * here — every finished ride saves itself and the list has shown them since phase 7 — but the
+ * *stats* stopped at one ride each. A list of thirty rows each saying 34.2 km is a history you
+ * have to do arithmetic on to answer the only question anybody asks of one.
+ *
+ * Two windows rather than one, and the second is the interesting half: a lifetime total only
+ * moves in a direction, while "this month" is the figure a rider compares against last month
+ * without being shown a graph. Both are computed from `summary`, which is denormalised onto the
+ * entry at save time precisely so a list can be drawn without parsing thirty GPX documents.
+ *
+ * Pure, and taking `now`, so the month boundary is testable rather than something you find out
+ * about on the first of the month.
+ */
+export interface RideTotals {
+  rides: number
+  distanceM: number
+  ascentM: number
+  movingS: number
+}
+
+export function rideTotals(rides: SavedRide[], now = Date.now()): {
+  all: RideTotals
+  month: RideTotals
+  /** The month being counted, for a label that does not have to guess. */
+  monthLabel: string
+} {
+  const since = startOfMonth(now)
+  const add = (into: RideTotals, ride: SavedRide): RideTotals => ({
+    rides: into.rides + 1,
+    distanceM: into.distanceM + ride.summary.distanceM,
+    ascentM: into.ascentM + ride.summary.ascentM,
+    movingS: into.movingS + ride.summary.movingS,
+  })
+  const empty = (): RideTotals => ({ rides: 0, distanceM: 0, ascentM: 0, movingS: 0 })
+
+  let all = empty()
+  let month = empty()
+  for (const ride of rides) {
+    all = add(all, ride)
+    // `startedAt`, not `savedAt`: they are the same number today, and the one that describes
+    // the ride is the one it started at. A ride saved after midnight belongs to the day it was
+    // ridden on.
+    if (ride.summary.startedAt >= since) month = add(month, ride)
+  }
+
+  return {
+    all,
+    month,
+    monthLabel: new Date(now).toLocaleDateString(undefined, { month: 'long' }),
+  }
+}
+
+function startOfMonth(at: number): number {
+  const date = new Date(at)
+  return new Date(date.getFullYear(), date.getMonth(), 1).getTime()
+}
+
 /** Newest first. What a rider wants: the thing they saved last is the thing they want back. */
 export function byNewest<T extends { savedAt: number }>(entries: T[]): T[] {
   return [...entries].sort((a, b) => b.savedAt - a.savedAt)

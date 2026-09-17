@@ -366,13 +366,18 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    * comparing three styles on the way out, you want the same three on the way back.
    */
   const reverse = useCallback(() => {
-    setWaypoints((current) => [...current].reverse())
+    setWaypoints([...waypoints].reverse())
     setRoutes({})
     setGpx({})
     setChosen(null)
     setDeferred([])
     setError(null)
-  }, [])
+    // It routes itself, which is what the doc comment above has always said and what the code
+    // did not do: Reverse cleared the line and left the rider on a plan card inviting them to
+    // tap the map, with a Find routes button two gestures away inside the sheet. The swap
+    // button on the search screen has no such button at all, so from there it was a dead end.
+    setRunWanted(waypoints.length >= 2)
+  }, [waypoints])
 
   /**
    * Puts a saved route back on the map, exactly as it was computed.
