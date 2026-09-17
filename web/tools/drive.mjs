@@ -151,6 +151,25 @@ const click = (selector) =>
     return 'ok'
   })()`)
 
+/*
+ * Anything the page threw, printed.
+ *
+ * A React error boundary-less tree renders nothing at all on a throw, and a screenshot of
+ * nothing looks exactly like a screenshot of a map that has not loaded yet — which is a failure
+ * this repo has already lost time to twice. `exceptionThrown` is the one signal that tells them
+ * apart, and it costs one listener.
+ */
+ws.addEventListener('message', (event) => {
+  const msg = JSON.parse(event.data)
+  if (msg.method === 'Runtime.exceptionThrown') {
+    const d = msg.params.exceptionDetails
+    console.error('  ✗ ' + (d.exception?.description ?? d.text))
+  }
+  if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
+    console.error('  ✗ ' + msg.params.args.map((a) => a.description ?? a.value).join(' '))
+  }
+})
+
 await send('Page.enable')
 await send('Runtime.enable')
 await send('Emulation.setDeviceMetricsOverride', {
