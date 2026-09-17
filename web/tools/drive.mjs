@@ -276,14 +276,17 @@ if (process.env.FW_ARCHIVE) {
   await type('.search-field', 'Aberystwyth')
   await sleep(1500)
   await shot('12e-search-elsewhere')
-  await type('.search-field', '')
-  await sleep(500)
-  await click('.place-row')
-  await sleep(1200)
-  await shot('12f-search-start-chosen')
-  await click('.screen-back')
+  // Both ends, by name: the start, then the finish the screen stays open for.
+  await type('.search-field', 'portobello')
   await sleep(700)
-  await shot('12g-aiming')
+  await click('.place-row')
+  await sleep(900)
+  await shot('12f-start-chosen')
+  await type('.search-field', 'cramond')
+  await sleep(700)
+  await click('.place-row')
+  await sleep(2500)
+  await shot('12g-planned')
 }
 
 /*

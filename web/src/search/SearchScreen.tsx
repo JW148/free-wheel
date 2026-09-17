@@ -57,6 +57,7 @@ export default function SearchScreen({
   slot: initialSlot,
   near,
   onClose,
+  onPicked,
   onChooseOnMap,
   onLocate,
   onOpenMaps,
@@ -67,6 +68,8 @@ export default function SearchScreen({
   /** Where distances are measured from: the rider, or failing that the middle of the map. */
   near: { lon: number; lat: number } | null
   onClose: () => void
+  /** Moves the map to what was just chosen. The screen has no map of its own to move. */
+  onPicked: (slot: PlanSlot, point: { lon: number; lat: number }) => void
   onChooseOnMap: (slot: PlanSlot) => void
   onLocate: () => Promise<{ lon: number; lat: number; accuracy: number } | null>
   onOpenMaps: () => void
@@ -146,13 +149,14 @@ export default function SearchScreen({
    */
   const pick = useCallback(
     (point: { lon: number; lat: number }, name: string, detail: string) => {
+      onPicked(slot, point)
       plan.placeAt(slot, { ...point, label: name })
       remember(name, detail, point.lon, point.lat)
       setQuery('')
       if (slot === 'start' && plan.waypoints.length < 2) setSlot('finish')
       else onClose()
     },
-    [plan, slot, remember, onClose],
+    [plan, slot, remember, onClose, onPicked],
   )
 
   const locateMe = useCallback(async () => {

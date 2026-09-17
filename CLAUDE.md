@@ -46,6 +46,12 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
   src/onboarding/ The six-card first run. Pixel glyphs on the icon's own 20x14 grid, written
                  as character maps rather than images — no licensing, no bytes, nothing to 404
                  on a cold cache. Its bike question writes to the rider, not to the plan.
+                 It swipes as well as pressing Next; `swipe.ts` holds the decisions.
+  src/search/    The offline place search. `buildIndex.ts` runs in the engine Worker and reads
+                 every name out of a basemap archive; `placeIndex.ts` packs, folds and ranks;
+                 `searchStore.ts` owns it as a module singleton like `downloadStore`.
+                 Saved places and recents are `places.ts`, and `gazetteer.ts` is the 48 kB of
+                 British towns that lets the app name the region a place you typed is in.
   src/library/   The Saved screen. An overlay over the map like Setup, never a replacement.
   src/setup/     Overlay, and the settings list that pushes to Maps and Rider: the maps
                  library, the region browser,
@@ -72,7 +78,8 @@ cd engine
 cd web
 npm run build-catalogue                      # refresh the tile catalogue from brouter.de
 npm run fetch-map-assets                     # refresh glyphs + sprites into public/
-npx vitest run                               # unit tests (currently just gpx.ts)
+node tools/build-gazetteer.mjs <gb.pmtiles>  # refresh public/gazetteer.json (committed)
+npx vitest run                               # unit tests
 ```
 
 Basemap extracts come from Protomaps' **dated daily builds**, not the demo bucket the plan
@@ -223,9 +230,41 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   or a system edge gesture leaves the hold running with nothing pressing it.
 - **The finish sheet must never grow a text field**, whatever a design shows. iOS shake-to-undo
   cannot be refused. The ride saves itself under a generated name; renaming is in Saved.
-- **There is no geocoder and there is not going to be one.** Reverse geocoding is a network
-  service and the whole app is built on not needing one. Where a design shows a place name, the
-  app shows coordinates to four decimal places — about 11 m, enough to tell two taps apart.
+- **There is no geocoder and there is not going to be one.** Turning a *position* into a name
+  is a network service and the whole app is built on not needing one. A point the rider tapped
+  on the map shows coordinates to four decimal places — about 11 m, enough to tell two taps
+  apart. A point they chose **by name** off the search keeps that name in `Waypoint.label`,
+  which is the other direction and costs nothing. The place index makes offline reverse
+  geocoding genuinely possible now; doing it anyway is a decision for the user, not a thing to
+  slip in — see §4 of `docs/phase-12-progress.md`.
+- **The search reads the names already on the phone; nothing is fetched.** Each basemap archive
+  carries them on its places, POIs, roads and water, and the index is built once per archive by
+  scanning the archive's **deepest zoom only** — Protomaps repeats every feature upwards from
+  its own `min_zoom`, so z14 carries everything and anything shallower silently loses the
+  streets. It runs in the **engine Worker**, because that is where the OPFS handles are and
+  because one handle per file is the rule; it blocks that Worker for seconds, so
+  `searchStore.hold(true)` stops it for the length of a ride. Edinburgh: 2,760 tiles, 21.6 MB,
+  285 ms, 34,927 entries, ~0.9 MB packed. Freshness is by archive **byte count**, never a hash.
+- **A reroute adds to the ride; it does not replace it.** The engine is asked only about the road
+  ahead, and `stitch.ts` joins the answer onto the part already ridden — so the trip length, the
+  progress bar, the climbing done and the original start all survive a wrong turn. The plan keeps
+  every via already passed and gains the rider's position as a `kind: 'reroute'` point, drawn as
+  a quiet dot that does not renumber the pins they placed. **`stitchRoute` must set `resumeAtM`**
+  and the telemetry must seed its snap hint with it: a stitched route's first half is road the
+  rider has already been down, and a hintless global scan on an out-and-back puts them back
+  where they were an hour ago. `splitWaypoints` returns both halves from one function so they
+  cannot disagree.
+- **`--mode` is the one role token that does not invert.** It fills the riding bar and the
+  "tap the map" strip — the app's two statements that it is in a mode. `--ink` is right on light
+  and is a torch in the face on a night road; `--slate-700`, the obvious dark answer, measured
+  ΔE 6.9 from the card it has to be distinguishable from. It is a deep green in both themes and
+  `chrome.test.ts` holds the contrast and the ΔE.
+- **`overflow: hidden` on a grid item makes it squeezable.** It is what rounds a list's first and
+  last rows against its card, and it also makes the list a scroll container — whose automatic
+  minimum size is 0. The grid row then compresses it: 21 search results laid out 692 px tall over
+  1,417 px of rows, clipped the rest, and told the scroller everything fitted. `.place-list`
+  carries `min-height: min-content` and `.search-body` carries `grid-auto-rows: max-content`;
+  without the second, the footer under the list gets no height and is drawn across it.
 - **`column-reverse` over `<dd>` then `<dt>` puts the *label* on top, not the value.** That is
   the opposite of what the comment beside it claimed, and it was wrong from phase 4 until phase
   11. Every figure block is now `<dt>` then `<dd>`: the correct order for a description list,
@@ -478,6 +517,16 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   edge the sheet is moving. Their measured heights are the two stops the sheet interpolates
   between, and the sheet is 24px narrower closed than open — so a layer whose width followed it
   would re-wrap its text and retarget, mid-flight, the animation it was halfway through.
+- **The open sheet drags from its body, not only its handle.** Open, the card behind it is
+  `inert`, so the handle was the only target — 60×24 px on the surface most used without looking.
+  The handle now grows to the sheet's full width at the open stop, and a press in `.drawer-body`
+  starts *pending*: nothing captured, nothing written, and `pendingVerdict` decides on the first
+  dozen pixels between a drag, a scroll and a tap on the card under the thumb. Only from
+  `scrollTop === 0`. The same shape is what makes the first run swipe (`swipe.ts`).
+- **`.drawer-body` needs its own `touch-action: pan-y`.** `.plan-sheet` sets `touch-action: none`
+  because it is dragged, and the comment beside it claimed the scroller handed `pan-y` back —
+  no rule ever did. Invisible at a desk, where a wheel scrolls regardless; on a phone it is a
+  route list that will not move.
 - **The sheet's handle is a real button with a real `onClick`, and the pointer path stands aside
   for it.** A press arrives as a click from a keyboard, from VoiceOver and from any synthetic
   press. Handling the tap in the pointer release *as well* toggles twice and lands the sheet

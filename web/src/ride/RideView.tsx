@@ -31,7 +31,7 @@ import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 import SearchScreen from '../search/SearchScreen'
 import { places } from '../search/searchStore'
-import type { PlanSlot } from './plan'
+import { withEndpoint, type PlanSlot } from './plan'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -335,28 +335,23 @@ export default function RideView({
   }, [map, styleReady, suspended])
 
   /**
-   * The second tap routes, without being asked.
+   * The second point opens the sheet onto the cards.
    *
-   * This is the redesign's central move: two taps and three routes, rather than two taps, a
-   * profile decision and a button. The guard is a *transition* from one waypoint to two rather
-   * than a count, so a plan restored from storage — which arrives with two points already on
-   * it and possibly a route — does not re-route itself on every launch.
-   *
-   * `plan.run` decides how many profiles to actually compute; past `COMPARE_CEILING_M` it does
-   * one and offers the rest. The drawer opens onto the cards either way, because a result the
-   * rider has to go looking for is a result they will not know arrived.
+   * The *routing* is `useRoute`'s now — see `addWaypoint` and `placeAt` — because two different
+   * gestures put a second point on a plan and a transition guard here cannot tell a tap from a
+   * search result, so both fired and the Worker searched the same route twice. What is left is
+   * the half that is genuinely the screen's: a result the rider has to go looking for is a
+   * result they will not know arrived.
    */
   const lastPointCount = useRef(plan.waypoints.length)
   useEffect(() => {
     const was = lastPointCount.current
     lastPointCount.current = plan.waypoints.length
     if (was !== 1 || plan.waypoints.length !== 2) return
-    if (riding || suspended || plan.routing !== null) return
-    if (Object.keys(plan.routes).length > 0) return
-    void plan.run()
+    if (riding || suspended) return
     sheet.showCompare()
-    // `plan` and `sheet` are rebuilt on every render; the transition guard above is what makes
-    // this fire once rather than continuously.
+    // `sheet` is rebuilt on every render; the transition guard above is what makes this fire
+    // once rather than continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan.waypoints.length])
 
@@ -772,6 +767,46 @@ export default function RideView({
   /** How many routes are on the map. More than one, with none chosen, is the decision state. */
   const routeCount = Object.keys(plan.routes).length
 
+  /**
+   * Frames the plan after a place is chosen by name.
+   *
+   * Without it the rider picks Portobello from a list and the map stays wherever it was — which
+   * on a first run is the middle of whichever region opened. The route's own `fitBounds` cannot
+   * do this: it only runs once there is a line, and the two most interesting moments are before
+   * that (one end chosen) and instead of it (routing failed for want of road data).
+   *
+   * It is deliberately **not** in the waypoint effect. A tap on the map must never move the
+   * camera — that is a rider placing a pin and having the ground slide out from under the next
+   * one — so this is only ever called from the search screen, which is the one place a point
+   * arrives from somewhere the rider is not already looking.
+   */
+  const framePicked = useCallback(
+    (slot: PlanSlot, point: { lon: number; lat: number }) => {
+      const instance = map.current
+      if (!instance || suspended) return
+      // `live` is the plan as it is *now*; the pick has not committed yet, so the plan this is
+      // framing is the one `withEndpoint` is about to produce.
+      const next = withEndpoint(live.current.plan.waypoints, slot, point)
+      const coords = next.map((w) => [w.lon, w.lat] as [number, number])
+      if (coords.length === 1) {
+        instance.easeTo({
+          center: coords[0],
+          zoom: Math.max(instance.getZoom(), 14),
+          duration: 600,
+        })
+        return
+      }
+      const bounds = boundsOf(coords)
+      if (bounds) {
+        instance.fitBounds(bounds, {
+          padding: { top: 110, bottom: sheetClearance(instance.getContainer()), left: 45, right: 45 },
+          duration: 700,
+        })
+      }
+    },
+    [map, suspended],
+  )
+
   const bar = useBottomBarHeight(riding)
 
   /**
@@ -1037,6 +1072,7 @@ export default function RideView({
           slot={searching}
           near={searchNear}
           onClose={() => setSearching(null)}
+          onPicked={framePicked}
           onChooseOnMap={(slot) => {
             setSearching(null)
             setAiming(slot)
@@ -1051,6 +1087,28 @@ export default function RideView({
       {summary}
     </div>
   )
+}
+
+/**
+ * How much of the bottom of the map the sheet is about to cover.
+ *
+ * A second point completes the plan, which opens the sheet onto the route cards — so framing
+ * the two ends against the *whole* viewport puts both of them behind it. Measured: the pins
+ * landed at y 342 and 392 on an 844-high screen whose sheet starts at 345.
+ *
+ * `--sheet-open` is the open layer's own measured height, published by `useSheetDrag` for the
+ * `calc()`s that draw the sheet. Reading it here is a small coupling and the honest one: it is
+ * the number, and the alternative is a constant that is wrong for every state of the card. It
+ * is clamped so a tall sheet cannot leave `fitBounds` with no room to fit anything into, and it
+ * falls back to the closed card's clearance if the layer has not been measured yet.
+ */
+function sheetClearance(container: HTMLElement): number {
+  const layer = container.ownerDocument.querySelector('.sheet-layer')
+  const measured = layer
+    ? Number.parseFloat(getComputedStyle(layer).getPropertyValue('--sheet-open'))
+    : NaN
+  if (!Number.isFinite(measured) || measured <= 0) return 190
+  return Math.min(measured + 16, Math.max(190, container.clientHeight - 260))
 }
 
 /**

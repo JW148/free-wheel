@@ -122,6 +122,19 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    * that has just replaced them is holding the previous one. See {@link placeAt}.
    */
   const [runWanted, setRunWanted] = useState(false)
+  /**
+   * Which run's results are still wanted.
+   *
+   * A run is a sequence of Worker calls with an `await` between each — seconds long — and three
+   * things can happen during one: the rider picks a new destination from the search, reverses
+   * the plan, or clears it. All three replace the waypoints the run was computed for, so a
+   * result landing afterwards would draw a line between two places that are no longer the plan.
+   * Every one of them bumps this, and a run that finds it has been superseded commits nothing.
+   *
+   * A ref rather than state: it has to be readable inside a closure that started several
+   * renders ago, which is exactly what state cannot do.
+   */
+  const runSeq = useRef(0)
 
   // Persist on change. The alternative — persisting on unload — does not fire reliably when
   // iOS kills a backgrounded web app.
@@ -129,9 +142,28 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     savePlan({ waypoints, selection, chosen, gpx })
   }, [waypoints, selection, chosen, gpx])
 
-  const addWaypoint = useCallback((lon: number, lat: number) => {
-    setWaypoints((current) => [...current, { id: crypto.randomUUID(), lon, lat }])
-  }, [])
+  /**
+   * A tap on the map, which is also the app's central gesture: the **second** one routes.
+   *
+   * The run is asked for here rather than by the ride screen, which is where it used to live.
+   * Two callers now put a second point on a plan — a tap and a search result — and having each
+   * of them arrange its own run meant a plan built from the search fired *both*, since the ride
+   * screen's one-to-two transition guard cannot tell where the second point came from. Two
+   * simultaneous searches for the same route is the Worker doing everything twice at the one
+   * moment the rider is watching a spinner.
+   *
+   * So the plan owns "this needs routing" and the screen owns "and here is the sheet showing
+   * it". Only the transition from one point to two, exactly as before: a third point is a via
+   * the rider is still placing, and a plan restored from storage arrives with two already on it
+   * and must not re-route itself on every launch.
+   */
+  const addWaypoint = useCallback(
+    (lon: number, lat: number) => {
+      setWaypoints([...waypoints, { id: crypto.randomUUID(), lon, lat }])
+      setRunWanted(waypoints.length === 1)
+    },
+    [waypoints],
+  )
 
   const moveWaypoint = useCallback((id: string, lon: number, lat: number) => {
     setWaypoints((current) => current.map((w) => (w.id === id ? { ...w, lon, lat } : w)))
@@ -142,6 +174,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   }, [])
 
   const clear = useCallback(() => {
+    runSeq.current++
     setWaypoints([])
     setRoutes({})
     setGpx({})
@@ -212,6 +245,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
         return
       }
       setError(null)
+      const seq = ++runSeq.current
       const lonLats = waypoints.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
       const { run: ids, deferred } = only
@@ -233,6 +267,9 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
         for (const id of ids) {
           setRouting(id)
           const outcome = await sharedEngine().route(id, lonLats)
+          // The plan changed under us while the Worker was busy. Everything below writes to
+          // state, and all of it would describe the previous destination.
+          if (runSeq.current !== seq) return
           if (!outcome.ok || !outcome.gpx) {
             failures.push(explainRoutingFailure(outcome.error ?? 'routing failed', waypoints))
             continue
@@ -256,7 +293,9 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
         // "Routing…" until the app is reloaded.
         failures.push(e instanceof Error ? e.message : String(e))
       } finally {
-        setRouting(null)
+        // Only if we are still the current run: a superseded one must not take the spinner off
+        // the newer one that replaced it.
+        if (runSeq.current === seq) setRouting(null)
       }
 
       // A lone result is not a choice, so it commits itself. Deferred profiles do not count as
@@ -366,6 +405,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    * comparing three styles on the way out, you want the same three on the way back.
    */
   const reverse = useCallback(() => {
+    runSeq.current++
     setWaypoints([...waypoints].reverse())
     setRoutes({})
     setGpx({})
@@ -457,6 +497,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    */
   const placeAt = useCallback(
     (slot: PlanSlot, point: { lon: number; lat: number; label?: string }) => {
+      runSeq.current++
       const next = withEndpoint(waypoints, slot, point)
       setWaypoints(next)
       setRoutes({})
