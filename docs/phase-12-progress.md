@@ -217,7 +217,12 @@ shipped broken.
 - **Saved places and recents** live in `localStorage`, which is the route library's argument run
   the other way: forty bytes each, and the search screen's first paint is a list of them — a list
   that arrives a frame late is a list that jumps. `iconFor` guesses the two names every rider
-  saves (Home, Work) and stars the rest.
+  saves (Home, Work) and stars the rest. On the **empty plan, in the start slot**, each one
+  carries a filled arrow: *from where I am, to here*, as one tap. It appears only in that state,
+  because that is the only one in which "Home" can mean exactly one thing — anywhere else it
+  would be guessing which end of an existing plan the rider meant. `plan.routeBetween` exists for
+  it, because two `placeAt` calls cannot do it: the second would close over the waypoints the
+  first has not committed.
 - **Clearing a route** was the first complaint: *Clear route* lived at the foot of the comparison
   view, inside a sheet you had to know dragged open. The field at the top of the map now carries
   the plan — `Charing Cross → Brighton Pier` — and a × beside it. It is still in the sheet too,

@@ -31,7 +31,7 @@ import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 import SearchScreen from '../search/SearchScreen'
 import { places } from '../search/searchStore'
-import { withEndpoint, type PlanSlot } from './plan'
+import type { PlanSlot } from './plan'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -768,12 +768,16 @@ export default function RideView({
   const routeCount = Object.keys(plan.routes).length
 
   /**
-   * Frames the plan after a place is chosen by name.
+   * Frames the plan the search screen is about to commit.
    *
    * Without it the rider picks Portobello from a list and the map stays wherever it was — which
    * on a first run is the middle of whichever region opened. The route's own `fitBounds` cannot
    * do this: it only runs once there is a line, and the two most interesting moments are before
    * that (one end chosen) and instead of it (routing failed for want of road data).
+   *
+   * It takes coordinates rather than a slot and a point, because the search screen already knows
+   * what the plan is about to be — one place, both ends, or a saved place plus the rider — and
+   * three ways of saying that here would be three ways to get it wrong.
    *
    * It is deliberately **not** in the waypoint effect. A tap on the map must never move the
    * camera — that is a rider placing a pin and having the ground slide out from under the next
@@ -781,13 +785,9 @@ export default function RideView({
    * arrives from somewhere the rider is not already looking.
    */
   const framePicked = useCallback(
-    (slot: PlanSlot, point: { lon: number; lat: number }) => {
+    (coords: [number, number][]) => {
       const instance = map.current
-      if (!instance || suspended) return
-      // `live` is the plan as it is *now*; the pick has not committed yet, so the plan this is
-      // framing is the one `withEndpoint` is about to produce.
-      const next = withEndpoint(live.current.plan.waypoints, slot, point)
-      const coords = next.map((w) => [w.lon, w.lat] as [number, number])
+      if (!instance || suspended || coords.length === 0) return
       if (coords.length === 1) {
         instance.easeTo({
           center: coords[0],

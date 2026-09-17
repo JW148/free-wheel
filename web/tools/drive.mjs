@@ -276,6 +276,15 @@ if (process.env.FW_ARCHIVE) {
   await type('.search-field', 'Aberystwyth')
   await sleep(1500)
   await shot('12e-search-elsewhere')
+  // Keep one, then look at the empty state: a saved place, and the arrow that rides to it.
+  await type('.search-field', 'portobello beach')
+  await sleep(700)
+  await click('.place-item:first-child .place-action:last-child')
+  await sleep(400)
+  await type('.search-field', '')
+  await sleep(600)
+  await shot('12e2-saved-place')
+
   // Both ends, by name: the start, then the finish the screen stays open for.
   await type('.search-field', 'portobello')
   await sleep(700)

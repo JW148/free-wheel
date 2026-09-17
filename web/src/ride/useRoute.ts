@@ -510,6 +510,34 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     [waypoints],
   )
 
+  /**
+   * Replaces the plan with two ends and routes them.
+   *
+   * For the one gesture that names a whole journey at once: tapping a saved place from the
+   * search screen's empty state, which means "from where I am to there". Two calls to
+   * {@link placeAt} cannot do it — the second would close over the waypoints the first has not
+   * committed yet — and this is also the honest shape, because it is genuinely one decision.
+   */
+  const routeBetween = useCallback(
+    (
+      from: { lon: number; lat: number; label?: string },
+      to: { lon: number; lat: number; label?: string },
+    ) => {
+      runSeq.current++
+      setWaypoints([
+        { id: crypto.randomUUID(), lon: from.lon, lat: from.lat, ...(from.label ? { label: from.label } : {}) },
+        { id: crypto.randomUUID(), lon: to.lon, lat: to.lat, ...(to.label ? { label: to.label } : {}) },
+      ])
+      setRoutes({})
+      setGpx({})
+      setChosen(null)
+      setDeferred([])
+      setError(null)
+      setRunWanted(true)
+    },
+    [],
+  )
+
   /** Kills the worker mid-route. See `engineClient.cancel` for why it has to be this blunt. */
   const cancel = useCallback(() => {
     sharedEngine().cancel()
@@ -548,6 +576,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     toggleProfile,
     addWaypoint,
     placeAt,
+    routeBetween,
     moveWaypoint,
     removeWaypoint,
     clear,

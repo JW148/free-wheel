@@ -441,6 +441,18 @@
   fill: currentColor;
 }
 
+/*
+ * "From where I am, to here", in one tap.
+ *
+ * Filled rather than quiet, because unlike the star beside it this is not housekeeping — it is
+ * the whole journey, and on the empty plan it is the fastest thing on the screen. It only ever
+ * appears where "Home" can mean exactly one thing; see `fresh` in `SearchScreen`.
+ */
+.place-go {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
 .place-action svg {
   width: 19px;
   height: 19px;

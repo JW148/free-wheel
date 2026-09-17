@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadManifest, type DataManifest } from '../data/manifest'
 import { sharedEngine } from '../engine/engineClient'
 import { downloadPlan } from '../data/regions'
-import type { PlanSlot } from '../ride/plan'
+import { withEndpoint, type PlanSlot } from '../ride/plan'
 import type { Plan } from '../ride/useRoute'
 import { downloads } from '../setup/downloadStore'
 import { regionAt } from '../setup/regionShapes'
@@ -68,8 +68,10 @@ export default function SearchScreen({
   /** Where distances are measured from: the rider, or failing that the middle of the map. */
   near: { lon: number; lat: number } | null
   onClose: () => void
-  /** Moves the map to what was just chosen. The screen has no map of its own to move. */
-  onPicked: (slot: PlanSlot, point: { lon: number; lat: number }) => void
+  /**
+   * Moves the map to frame the plan this is about to become. The screen has no map of its own.
+   */
+  onPicked: (coords: [number, number][]) => void
   onChooseOnMap: (slot: PlanSlot) => void
   onLocate: () => Promise<{ lon: number; lat: number; accuracy: number } | null>
   onOpenMaps: () => void
@@ -149,7 +151,7 @@ export default function SearchScreen({
    */
   const pick = useCallback(
     (point: { lon: number; lat: number }, name: string, detail: string) => {
-      onPicked(slot, point)
+      onPicked(withEndpoint(plan.waypoints, slot, point).map((w) => [w.lon, w.lat]))
       plan.placeAt(slot, { ...point, label: name })
       remember(name, detail, point.lon, point.lat)
       setQuery('')
@@ -176,6 +178,43 @@ export default function SearchScreen({
     }
   }, [onLocate, pick])
 
+  /**
+   * The whole journey, in one tap: from where the rider is, to the place they keep.
+   *
+   * Offered only on the empty plan, and only in the start slot, because that is the only state
+   * in which "Home" can mean one unambiguous thing. Anywhere else it would be guessing which
+   * end of an existing plan the rider meant.
+   *
+   * `routeBetween` rather than two `placeAt` calls: the second would close over the waypoints
+   * the first has not committed yet, and it is genuinely one decision rather than two.
+   */
+  const rideTo = useCallback(
+    async (place: { name: string; lon: number; lat: number }, detail: string) => {
+      setLocating(true)
+      setProblem(null)
+      try {
+        const here = await onLocate()
+        if (!here) {
+          setProblem('No location fix yet, so there is no "here" to ride from. Pick a start.')
+          return
+        }
+        onPicked([
+          [here.lon, here.lat],
+          [place.lon, place.lat],
+        ])
+        plan.routeBetween(
+          { lon: here.lon, lat: here.lat, label: 'My location' },
+          { lon: place.lon, lat: place.lat, label: place.name },
+        )
+        remember(place.name, detail, place.lon, place.lat)
+        onClose()
+      } finally {
+        setLocating(false)
+      }
+    },
+    [onLocate, onPicked, plan, remember, onClose],
+  )
+
   const togglePlace = useCallback((name: string, lon: number, lat: number) => {
     setSaved((current) => {
       const existing = current.find(
@@ -193,6 +232,13 @@ export default function SearchScreen({
     saved.some((place) => Math.abs(place.lon - lon) < 1e-4 && Math.abs(place.lat - lat) < 1e-4)
 
   const searching = query.trim().length > 0
+  /**
+   * Nothing planned yet, and the start is what is being chosen.
+   *
+   * The one state in which a saved place is unambiguously a *destination* — so it is the one
+   * state that offers to ride there from wherever the rider is.
+   */
+  const fresh = slot === 'start' && plan.waypoints.length === 0
 
   return (
     <div className="screen search-screen">
@@ -281,6 +327,7 @@ export default function SearchScreen({
                       away={awayFrom(near, recent)}
                       saved={isSaved(recent.lon, recent.lat)}
                       onSave={() => togglePlace(recent.name, recent.lon, recent.lat)}
+                      rideTo={fresh ? () => void rideTo(recent, recent.detail) : undefined}
                       onPick={() => pick(recent, recent.name, recent.detail)}
                     />
                   ))}
@@ -323,6 +370,9 @@ export default function SearchScreen({
                       editing
                         ? () => setNaming({ lon: place.lon, lat: place.lat, name: place.name })
                         : undefined
+                    }
+                    rideTo={
+                      fresh && !editing ? () => void rideTo(place, 'Saved place') : undefined
                     }
                     onPick={() => pick(place, place.name, 'Saved place')}
                   />
@@ -608,6 +658,7 @@ function PlaceRow({
   onPick,
   remove,
   rename,
+  rideTo,
 }: {
   glyph: RowGlyph
   title: string
@@ -621,6 +672,8 @@ function PlaceRow({
   onPick: () => void
   remove?: () => void
   rename?: () => void
+  /** "From where I am to here", as one tap. Only where that can mean one thing. */
+  rideTo?: () => void
 }) {
   return (
     <li className="place-item">
@@ -649,6 +702,16 @@ function PlaceRow({
           aria-label={`Remove ${title}`}
         >
           ×
+        </button>
+      )}
+      {rideTo && (
+        <button
+          type="button"
+          className="place-action place-go"
+          onClick={rideTo}
+          aria-label={`Ride to ${title} from where I am`}
+        >
+          <ArrowIcon />
         </button>
       )}
       {onSave && (
@@ -886,4 +949,14 @@ function useCatalogue(wanted: boolean): { manifest: DataManifest; installed: str
   }, [wanted, catalogue])
 
   return catalogue
+}
+
+/** A route, drawn as an arrow leaving a dot: "from here, to there". */
+function ArrowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="5.5" cy="12" r="2.2" />
+      <path d="M9 12h9M14.5 8l4 4-4 4" />
+    </svg>
+  )
 }
