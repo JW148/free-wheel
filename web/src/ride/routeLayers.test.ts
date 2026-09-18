@@ -45,6 +45,24 @@ describe('drawnRoutes', () => {
     })
   })
 
+  /*
+   * The shaping run's one frame of honesty. Everything else on screen says "working out your
+   * routes"; this is the line itself saying it is about to be replaced.
+   */
+  it('dims the line a running search is about to replace', () => {
+    const drawn = drawnRoutes({ gravel: { coords: line(1) } }, 'gravel', true)
+    expect(drawn[0].state).toBe('stale')
+  })
+
+  it('drops a whole open comparison to stale, not two thirds of it', () => {
+    const drawn = drawnRoutes(
+      { trekking: { coords: line(1) }, gravel: { coords: line(2) }, mtb: { coords: line(3) } },
+      'gravel',
+      true,
+    )
+    expect(drawn.map((r) => r.state)).toEqual(['stale', 'stale', 'stale'])
+  })
+
   it('treats a choice with no route as no choice at all', () => {
     const drawn = drawnRoutes(
       { trekking: { coords: line(1) }, gravel: { coords: line(2) } },
@@ -90,6 +108,7 @@ describe('mapTapAction', () => {
       profileUnderTap: null,
       choosing: true,
       clearableChoice: false,
+      chosen: null,
       placing: true,
       ...over,
     })
@@ -99,12 +118,27 @@ describe('mapTapAction', () => {
   })
 
   /*
-   * Reverting a decision beats editing the route. The pin toggle is on by default, so the
-   * other order would leave the map gesture unreachable exactly when it is wanted; and a via
-   * point that really was intended costs one more tap, which is cheap and obvious.
+   * The precedence this file used to have, inverted — and the reason is in `mapTapAction`'s own
+   * comment. A tap anywhere used to revert the choice, which was defensible while a third point
+   * did nothing. Now a third point is a stop the route runs through, so under the old order a
+   * rider who had chosen a route could not place one: the first tap un-chose it, and the second
+   * shaped in a style they had not picked.
    */
-  it('clears a revertible choice before it places a point', () => {
-    expect(tap({ clearableChoice: true })).toEqual({ do: 'clear' })
+  it('places a stop on empty map rather than reverting the choice', () => {
+    expect(tap({ clearableChoice: true, chosen: 'gravel' })).toEqual({ do: 'place' })
+  })
+
+  it('reverts the choice when the tap is on the chosen line itself', () => {
+    expect(tap({ profileUnderTap: 'gravel', chosen: 'gravel', clearableChoice: true })).toEqual({
+      do: 'clear',
+    })
+  })
+
+  it('switches to the other route when the tap is on a line that is not the chosen one', () => {
+    expect(tap({ profileUnderTap: 'mtb', chosen: 'gravel', clearableChoice: true })).toEqual({
+      do: 'choose',
+      profile: 'mtb',
+    })
   })
 
   it('places a point once there is nothing left to clear', () => {
@@ -114,10 +148,15 @@ describe('mapTapAction', () => {
   /*
    * A lone route is not a comparison — there is no all-colours state to go back to, and
    * clearing would only strip the stats rail and disable Start. The caller reports that as
-   * `clearableChoice: false`.
+   * `clearableChoice: false`, and a tap on the line is then a no-op choice rather than a
+   * revert, which is what lets a rider shaping a single route tap their own line without
+   * losing it.
    */
-  it('places a point when the only choice is a lone route', () => {
-    expect(tap({ clearableChoice: false, placing: true })).toEqual({ do: 'place' })
+  it('re-chooses rather than reverting when the only choice is a lone route', () => {
+    expect(tap({ profileUnderTap: 'gravel', chosen: 'gravel', clearableChoice: false })).toEqual({
+      do: 'choose',
+      profile: 'gravel',
+    })
   })
 
   it('does nothing on empty map with editing off', () => {
@@ -144,5 +183,13 @@ describe('mapTapAction', () => {
     expect(tap({ choosing: false, clearableChoice: true, placing: false })).toEqual({
       do: 'nothing',
     })
+  })
+
+  /*
+   * The guarantee worth keeping from the old rule, and the only one: riding refuses the map
+   * entirely. A bump in the road must not add a stop to the route being followed.
+   */
+  it('refuses to place a stop while riding, whatever is under the tap', () => {
+    expect(tap({ choosing: false, placing: false, chosen: 'gravel' })).toEqual({ do: 'nothing' })
   })
 })

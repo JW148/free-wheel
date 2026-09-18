@@ -1231,6 +1231,22 @@
   color: transparent;
 }
 
+/* A stop is smaller than the two ends, in the card as on the map: it is a point on the way,
+   not a point of the journey, and the size says so before the number is read. */
+.plan-point-badge[data-role='via'] {
+  width: 18px;
+  height: 18px;
+  font-size: 0.6rem;
+}
+
+/* A point the *app* added, rejoining the route after a wrong turn. A quiet dot, because the
+   rider did not put it there and a numbered badge would claim they did. */
+.plan-point-badge[data-role='rejoin'] {
+  width: 10px;
+  height: 10px;
+  background: var(--edge-strong);
+}
+
 .plan-point-label {
   padding: 0.6rem 0;
   font-size: 0.94rem;
@@ -1720,31 +1736,17 @@
   color: var(--muted);
 }
 
-.waypoints {
-  display: grid;
-  gap: 0.3rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.waypoints li {
-  display: grid;
-  grid-template-columns: 4.5rem 1fr auto;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.45rem 0.7rem;
-  border-radius: var(--r-small);
-  background: var(--inset);
-  font-size: 0.83rem;
-}
-
-.waypoint-role {
-  font-weight: 600;
-}
-
-.waypoint-coords {
-  color: var(--muted);
+/*
+ * The plan's own points, in the sheet's default view rather than inside one route's detail:
+ * they describe the journey, not the route that was computed for it.
+ *
+ * Drawn by `.plan-points` — the same rows as the card — rather than by a list of its own. The
+ * `Start | coordinates | Remove` table that used to live here was a second vocabulary for one
+ * thing, and it was the heavier of the two on the surface a rider shaping a route looks at
+ * most. Its rules are gone; do not bring them back.
+ */
+.sheet-full .plan-points {
+  margin-top: 0.2rem;
 }
 
 .sheet-actions {
@@ -1791,8 +1793,19 @@
   cursor: default;
 }
 
+/*
+ * Three of these fit across 390px only because the padding gives, not the words.
+ *
+ * A label allowed to wrap makes the row two lines tall, and the sheet interpolates between two
+ * *measured* heights — so a row that changes height on one phone and not another retargets an
+ * animation halfway through it. `Clear route` lost its second word for the same reason when
+ * `Make a loop` arrived; the icon row in the detail view still spells it out.
+ */
 .sheet-actions button {
   flex: 1;
+  min-width: 0;
+  padding: 0 0.5rem;
+  white-space: nowrap;
 }
 
 /* ── Route detail furniture ─────────────────────────────────────────────────────────── */

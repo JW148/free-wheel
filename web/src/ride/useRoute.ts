@@ -5,6 +5,8 @@ import { haversineM } from './geo'
 import { parseBrouterGpx, parseTrackGpx, type ParsedRoute } from './gpx'
 import {
   chosenAfterRun,
+  insertionIndex,
+  isLoop,
   loadPlan,
   savePlan,
   withEndpoint,
@@ -55,15 +57,24 @@ export function airDistanceM(points: { lon: number; lat: number }[]): number {
  * Pure so the ceiling can be tested at either side of itself without a Worker. `preferred`
  * leads the list either way: it is the rider's own style, so it is the one whose result is
  * worth having first even when all three are coming.
+ *
+ * `pointCount` defaults to two because two ends is the shape the comparison exists for; above
+ * it, the plan is being shaped rather than compared and exactly one profile runs.
  */
 export function profilesToRun(
   selection: string[],
   preferred: string,
   airM: number,
+  pointCount = 2,
 ): { run: string[]; deferred: string[] } {
   const ordered = [preferred, ...selection.filter((id) => id !== preferred)].filter((id) =>
     selection.includes(id),
   )
+  // You cannot shape a comparison. Three routes are three answers to "which way between these
+  // two ends", so a stop changes the question and voids all three — and re-running them on
+  // every tap would put three blocking searches between the rider and the line they are
+  // drawing. Above two points there is one route, and `run` leads with the one already chosen.
+  if (pointCount > 2) return { run: ordered.slice(0, 1), deferred: [] }
   if (ordered.length <= 1 || airM < COMPARE_CEILING_M) return { run: ordered, deferred: [] }
   return { run: ordered.slice(0, 1), deferred: ordered.slice(1) }
 }
@@ -90,6 +101,11 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   const [selection, setSelection] = useState<string[]>(restored.current.selection)
   /** The profile the rider committed to, or `null` while a comparison is still open. */
   const [chosen, setChosen] = useState<string | null>(restored.current.chosen)
+  // Read inside `run`, which is built from `waypoints` and `selection` only. A shaping run has
+  // to lead with the profile the rider committed to, and rebuilding `run` whenever the choice
+  // changes would re-fire every effect that holds it — mid-ride included.
+  const chosenRef = useRef(chosen)
+  chosenRef.current = chosen
   const [gpx, setGpx] = useState<Record<string, string>>(restored.current.gpx ?? {})
   const [routes, setRoutes] = useState<Record<string, ParsedRoute>>(() => {
     const parsed: Record<string, ParsedRoute> = {}
@@ -123,6 +139,27 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
    */
   const [runWanted, setRunWanted] = useState(false)
   /**
+   * Bumped when the line on the map becomes a *different journey* without first being cleared.
+   *
+   * The ride screen frames the route when this or the set of profiles changes, and deliberately
+   * not when only the geometry does. Shaping is a sequence of taps on a map the rider is
+   * looking at, and re-fitting the camera after each one moves the ground out from under the
+   * next tap — the rider zooms back in, taps, and is pulled out again. Every other path that
+   * replaces the route (a new run, Reverse, a new end from the search) blanks it first and so
+   * frames itself; loading something out of Saved does not, which is what this is for.
+   */
+  const [framing, setFraming] = useState(0)
+
+  /**
+   * Whether this plan is being *shaped* rather than compared.
+   *
+   * Read in five places — which profiles run, whether the old line goes stale rather than
+   * blank, how the sheet lists the results, how the long-route warning counts the searches it
+   * is warning about, and what the ride screen dims. Derived once, here, because the last time
+   * one rule lived in several components only one of them ever got fixed.
+   */
+  const shaping = waypoints.length > 2
+  /**
    * Which run's results are still wanted.
    *
    * A run is a sequence of Worker calls with an `await` between each — seconds long — and three
@@ -143,34 +180,51 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   }, [waypoints, selection, chosen, gpx])
 
   /**
-   * A tap on the map, which is also the app's central gesture: the **second** one routes.
+   * A tap on the map, which is also the app's central gesture — and now the only one that
+   * shapes a route.
    *
-   * The run is asked for here rather than by the ride screen, which is where it used to live.
-   * Two callers now put a second point on a plan — a tap and a search result — and having each
-   * of them arrange its own run meant a plan built from the search fired *both*, since the ride
-   * screen's one-to-two transition guard cannot tell where the second point came from. Two
-   * simultaneous searches for the same route is the Worker doing everything twice at the one
-   * moment the rider is watching a spinner.
+   * The point goes wherever it costs least: beside the line it becomes a stop, past the finish
+   * it extends the route. `insertionIndex` is the whole of that decision and is pure. There is
+   * no stop mode to arm and no button to find, which is the same argument that removed the pin
+   * toggle — a mode you can be in without knowing is how a rider ends up tapping a map that has
+   * stopped responding.
    *
-   * So the plan owns "this needs routing" and the screen owns "and here is the sheet showing
-   * it". Only the transition from one point to two, exactly as before: a third point is a via
-   * the rider is still placing, and a plan restored from storage arrives with two already on it
-   * and must not re-route itself on every launch.
+   * **Every** edit routes now, not just the first-to-second transition. That transition used to
+   * be the guard because a third point was a stop nobody could use; leaving it in place is what made
+   * extra pins decorative — the rider placed them and the line went on describing the two-point
+   * journey underneath. The run is asked for here rather than by the ride screen because two
+   * callers put points on a plan, and having each arrange its own run fired both.
    */
   const addWaypoint = useCallback(
     (lon: number, lat: number) => {
-      setWaypoints([...waypoints, { id: crypto.randomUUID(), lon, lat }])
-      setRunWanted(waypoints.length === 1)
+      const next = [...waypoints]
+      next.splice(insertionIndex(waypoints, { lon, lat }), 0, {
+        id: crypto.randomUUID(),
+        lon,
+        lat,
+      })
+      setWaypoints(next)
+      setRunWanted(true)
     },
     [waypoints],
   )
 
+  /**
+   * Dropping a dragged pin somewhere else, which routes on release and not before.
+   *
+   * MapLibre reports `dragend` only, so this is one search per drag rather than one per frame
+   * — which is why there is no debounce anywhere in here. A pin that moved and a line that did
+   * not is the same broken promise as a stop that was ignored.
+   */
   const moveWaypoint = useCallback((id: string, lon: number, lat: number) => {
     setWaypoints((current) => current.map((w) => (w.id === id ? { ...w, lon, lat } : w)))
+    setRunWanted(true)
   }, [])
 
+  /** Taking a point back out, from its × in the card or a tap on its pin. Also routes. */
   const removeWaypoint = useCallback((id: string) => {
     setWaypoints((current) => current.filter((w) => w.id !== id))
+    setRunWanted(true)
   }, [])
 
   const clear = useCallback(() => {
@@ -248,12 +302,25 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
       const seq = ++runSeq.current
       const lonLats = waypoints.map((w) => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|')
 
+      /*
+       * Shaping means three things here. One profile runs — see `profilesToRun`. It is the one
+       * the rider already committed to, falling back to their own style, exactly as
+       * `rerouteProfile` does and for the same reason: `chosen` can name the `recorded`
+       * pseudo-profile, which routes nothing. And the line already on the map stays there,
+       * dimmed, instead of the map going blank for the second or two the Worker blocks in Wasm.
+       */
+      const lead =
+        shaping && isRoutableProfile(chosenRef.current)
+          ? chosenRef.current!
+          : preferredRef.current
+
       const { run: ids, deferred } = only
         ? { run: [only], deferred: [] }
-        : profilesToRun(selection, preferredRef.current, airDistanceM(waypoints))
+        : profilesToRun(selection, lead, airDistanceM(waypoints), waypoints.length)
 
-      // A fresh run replaces what was on the map; a single deferred profile joins it.
-      if (!only) {
+      // A fresh comparison replaces what was on the map; a single deferred profile joins it;
+      // a shaping run leaves it alone until the answer lands.
+      if (!only && !shaping) {
         setChosen(null)
         setRoutes({})
         setGpx({})
@@ -276,8 +343,13 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
           }
           try {
             const parsed = parseBrouterGpx(outcome.gpx)
-            setRoutes((current) => ({ ...current, [id]: parsed }))
-            setGpx((current) => ({ ...current, [id]: outcome.gpx! }))
+            // A shaping run *replaces* the set rather than merging into it. It computes exactly
+            // one route, and merging would leave the two rejected lines of an open comparison
+            // on the map still claiming to answer a question the stop has already changed.
+            setRoutes((current) => (shaping ? { [id]: parsed } : { ...current, [id]: parsed }))
+            setGpx((current) =>
+              shaping ? { [id]: outcome.gpx! } : { ...current, [id]: outcome.gpx! },
+            )
             // A profile computed on demand joins the comparison. It is on the map now, so a
             // selection that did not contain it would let "More riding styles" collapse over a
             // line the rider can still see — and would drop it on the next reroute.
@@ -300,12 +372,19 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
 
       // A lone result is not a choice, so it commits itself. Deferred profiles do not count as
       // alternatives for this: they are not on the map, and there is nothing to weigh.
-      if (!only) setChosen(chosenAfterRun(computed))
+      //
+      // A shaping run commits its one result whether or not it was asked for by name — that is
+      // how switching style mid-shape works — but commits *nothing* when it failed. Clearing
+      // the choice there would take the rider's route off the map because a stop could not be
+      // reached, which is the same worst-possible-response `rerouteFrom` already guards
+      // against. The old line simply comes back at full strength under the error.
+      if (!only && !shaping) setChosen(chosenAfterRun(computed))
+      else if (shaping && computed.length > 0) setChosen(computed[0])
 
       // A partial comparison is still useful — say what failed rather than discarding the rest.
       if (failures.length) setError([...new Set(failures)].join(' '))
     },
-    [waypoints, selection],
+    [waypoints, selection, shaping],
   )
 
   /**
@@ -420,6 +499,43 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   }, [waypoints])
 
   /**
+   * Closes the plan back onto its own start.
+   *
+   * The one shape a tap on the map cannot make, because there is no tapping exactly on your own
+   * front door — so it is the only part of this that needs a button, and it lives beside Reverse
+   * and Clear route, the two other things that act on the whole plan rather than on a point.
+   *
+   * What it appends is an out-and-back, which is the honest starting shape rather than a
+   * disappointing one: BRouter is being asked to go there and come back, and it is free to
+   * return a different way. The circular ride comes from the two taps after this one, and that
+   * is the flow the whole feature exists for.
+   *
+   * The line is cleared rather than left to go stale. A loop is roughly twice the journey it
+   * was, so it is not the same route about to be refined — and clearing is also what makes the
+   * ride screen frame the new one, which a route that just doubled in length needs.
+   */
+  const makeLoop = useCallback(() => {
+    const start = waypoints[0]
+    if (!start || waypoints.length < 2 || isLoop(waypoints)) return
+    runSeq.current++
+    setWaypoints([
+      ...waypoints,
+      {
+        id: crypto.randomUUID(),
+        lon: start.lon,
+        lat: start.lat,
+        ...(start.label ? { label: start.label } : {}),
+      },
+    ])
+    setRoutes({})
+    setGpx({})
+    setChosen(null)
+    setDeferred([])
+    setError(null)
+    setRunWanted(true)
+  }, [waypoints])
+
+  /**
    * Puts a saved route back on the map, exactly as it was computed.
    *
    * The stored GPX is re-parsed rather than a stored geometry being trusted, so a saved route
@@ -435,6 +551,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
       try {
         const parsed = parseBrouterGpx(entry.gpx)
         setWaypoints(entry.waypoints)
+        setFraming((n) => n + 1)
         setSelection([entry.profile])
         setRoutes({ [entry.profile]: parsed })
         setGpx({ [entry.profile]: entry.gpx })
@@ -466,6 +583,7 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   const loadTrack = useCallback((entry: { gpx: string }): boolean => {
     try {
       const parsed = parseTrackGpx(entry.gpx)
+      setFraming((n) => n + 1)
       const start = parsed.coords[0]
       const finish = parsed.coords[parsed.coords.length - 1]
       setWaypoints([
@@ -500,9 +618,14 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
       runSeq.current++
       const next = withEndpoint(waypoints, slot, point)
       setWaypoints(next)
-      setRoutes({})
-      setGpx({})
-      setChosen(null)
+      // A stop leaves both ends where they were, so the line on the map is still the right
+      // shape and can go stale rather than blank — the same treatment a tapped stop gets. A new
+      // start or finish makes it not stale but *wrong*, and a wrong line is worse than none.
+      if (slot !== 'stop') {
+        setRoutes({})
+        setGpx({})
+        setChosen(null)
+      }
       setDeferred([])
       setError(null)
       setRunWanted(next.length >= 2)
@@ -548,7 +671,19 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
   useEffect(() => {
     if (!runWanted) return
     setRunWanted(false)
-    if (waypoints.length >= 2) void run()
+    if (waypoints.length >= 2) {
+      void run()
+      return
+    }
+    /*
+     * Fewer than two points is not a journey. Removing the finish — or the start — has to take
+     * the line with it, or the map goes on drawing a route between points one of which is no
+     * longer there. Written as identity-preserving updates so the ordinary case of editing a
+     * plan that has no route yet does not re-render the ride screen for nothing.
+     */
+    setRoutes((current) => (Object.keys(current).length === 0 ? current : {}))
+    setGpx((current) => (Object.keys(current).length === 0 ? current : {}))
+    setChosen(null)
   }, [runWanted, waypoints, run])
 
   return {
@@ -562,10 +697,23 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     route: chosen ? routes[chosen] ?? null : null,
     chosenGpx: chosen ? gpx[chosen] ?? null : null,
     routing,
+    shaping,
+    /**
+     * A search is running that will replace the line currently drawn.
+     *
+     * Only ever true while shaping, because that is the only run that keeps the old line: every
+     * other one blanks the source first, and there is nothing to call stale.
+     */
+    stale: routing !== null && shaping && Object.keys(routes).length > 0,
+    /** Bumped when the line becomes a different journey without being cleared first. */
+    framing,
     /** Profiles the run deferred. Their cards offer to compute themselves. */
     deferred,
     error,
-    warning: longRouteWarning(waypoints, selection.length),
+    // The count is what will actually be searched, not what is ticked: a shaped plan runs one
+    // profile however many are selected, and warning about three searches that are not going
+    // to happen is the kind of small dishonesty that teaches a rider to ignore warnings.
+    warning: longRouteWarning(waypoints, shaping ? 1 : selection.length),
     chooseProfile,
     clearChoice,
     /**
@@ -583,6 +731,9 @@ export function useRoute(preferred: ProfileId = DEFAULT_PROFILES[0]) {
     run,
     rerouteFrom,
     reverse,
+    makeLoop,
+    /** Whether there is a journey to close, and it is not closed already. */
+    canLoop: waypoints.length >= 2 && !isLoop(waypoints),
     loadSaved,
     loadTrack,
     /**
@@ -623,7 +774,7 @@ function explainRoutingFailure(message: string, waypoints: Waypoint[]): string {
     )
   }
   if (/timeout|maxRunningTime/i.test(message)) {
-    return 'The search ran out of time. Try a shorter route, or add a via point to guide it.'
+    return 'The search ran out of time. Try a shorter route, or add a stop to guide it.'
   }
   return message
 }

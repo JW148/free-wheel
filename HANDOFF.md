@@ -25,6 +25,7 @@ this for where the work actually stands.
 | **Phase 12** — what the riders found | 🟡 Offline place search over the names already in each basemap archive; saved places; a reroute that keeps the ride rather than replacing it; a sheet you can actually grab; a first run that swipes; ride totals; an unmistakable riding mode. 707 tests green, driven at 390 px in both themes against a real imported archive. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 13** — three quirks off the ride screen | 🟡 The riding HUD is dragged between its two sizes like the plan sheet (`--hud-p`, a centred chevron on the bottom edge); the sheet reopens on the view it was put away on; Saved's detail lost its second back arrow. 718 tests green, driven at 390 px. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 14** — the first run shows the app | 🟡 The walkthrough's six pixel glyphs are replaced by six rectangles clipped out of the running app — a real route over a real basemap, planned and ridden by a headless browser, at roughly life size. New tool `web/tools/onboarding-shots.mjs`; pictures committed to `web/public/onboarding/`. 715 tests green, driven at 390 x 844 and at 375 x 667. **Not yet ridden, not yet on a physical iPhone** |
+| **Phase 15** — stops along the way | 🟡 A plan is an ordered list of points that routes on every edit. A tap goes where it costs least — beside the line it is a stop, past the finish it extends — so there is no via mode; above two points one profile runs, because a stop changes the question three cards were answering. Make a loop, a named stop off the search, and a tap precedence that no longer eats the gesture. 743 tests, driven at 390 x 844 in both themes against a real basemap and a real `.rd5`. **Not yet ridden, not yet on a physical iPhone** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
@@ -32,7 +33,7 @@ Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
 `docs/phase-8-progress.md`, `docs/phase-9-progress.md`, `docs/phase-10-progress.md`,
 `docs/phase-11-progress.md`, `docs/phase-12-progress.md`, `docs/phase-13-progress.md`,
-`docs/phase-14-progress.md`. Each
+`docs/phase-14-progress.md`, `docs/phase-15-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -47,8 +48,19 @@ wrong.
 
 ## Where to pick up
 
-**The next action is a ride, and it is now overdue in three directions.** Phases 7 through 14
-have all been built and none of them has been on a road. Phase 11 reversed the app's oldest
+**The next action is a ride, and it is now overdue in four directions.** Phases 7 through 15
+have all been built and none of them has been on a road.
+
+Phase 15 is the newest and the one with the sharpest desk-versus-road question. A plan can now
+hold stops, and the way you add one is to tap the map beside the line — which means tapping
+*near* a route line on purpose, where a tap on a line is the gesture that chooses one. With a
+mouse at 390 px that never once misfired; a thumb is not a mouse. If it does misfire, the fix is
+a tighter `routeAt` tolerance while a route is already chosen, **not** a return to modes. Phase
+15 also changed the ride screen's tap precedence — reverting a choice is now a tap on the chosen
+*line* rather than a tap anywhere — and that rule's unit tests all passed while it was wrong,
+because they asserted the old one. See §"Not done" in `docs/phase-15-progress.md`.
+
+Phase 11 reversed the app's oldest
 visual decision — the chrome is light now — and that is a decision only sunlight can settle;
 `docs/phase-11-progress.md` §"Not done" lists the five questions a desk cannot answer, the first
 being whether the light chrome was right at all, with the fallback if it was not.

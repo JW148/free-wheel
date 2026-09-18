@@ -193,6 +193,53 @@
   box-shadow: inset 0 0 0 2px var(--ink);
 }
 
+/* A stop is smaller than either end, because it is one: a point on the way rather than a point
+   of the journey. Same filled circle as the start, at the size the map draws a via pin. */
+.search-badge[data-role='stop'] {
+  width: 18px;
+  height: 18px;
+  margin: 0 2px;
+  font-size: 0.82rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+/*
+ * The way to add a stop, and the only place in the app a stop can be given a *name*.
+ *
+ * Deliberately quieter than the two fields it sits between — no card, no ring, muted text. It
+ * is an action rather than a value, and a third row wearing the same clothes as the start and
+ * the finish would read as a stop the plan already has.
+ */
+.search-add {
+  display: flex;
+  align-items: center;
+  /* A button centres its own contents in the UA sheet, which put the badge an inch in from the
+     edge the two fields start at — three rows, three different left margins. */
+  justify-content: flex-start;
+  gap: 0.6rem;
+  min-height: 2.4rem;
+  padding: 0 0.4rem 0 0.7rem;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Hollow, like the finish badge: the same "this is a slot, not a thing" the plan card's
+   unplaced finish uses. A filled circle here would read as a stop the plan already has. */
+.search-add .search-badge {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--edge-strong);
+  color: var(--muted);
+}
+
 .search-field {
   flex: 1;
   min-width: 0;

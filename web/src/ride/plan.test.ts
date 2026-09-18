@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { chosenAfterRun, migratePlan, PLAN_VERSION, withEndpoint } from './plan'
+import {
+  chosenAfterRun,
+  insertionIndex,
+  isLoop,
+  migratePlan,
+  PLAN_VERSION,
+  waypointRows,
+  withEndpoint,
+} from './plan'
 import { DEFAULT_PROFILES } from './profiles'
 
 describe('migratePlan', () => {
@@ -160,5 +168,120 @@ describe('withEndpoint', () => {
   it('gives every new point its own identity', () => {
     const one = withEndpoint([], 'start', p(1))
     expect(withEndpoint(one, 'start', p(1))[0].id).not.toBe(one[0].id)
+  })
+})
+
+/*
+ * Where a tapped point lands.
+ *
+ * The rule is one formula — the detour it would add — measured over the *waypoints* rather than
+ * the drawn route, so it still answers when the route is stale, failed or absent. Every case
+ * below is a shape the rider can put the plan into with two taps.
+ */
+describe('insertionIndex', () => {
+  const at = (lon: number, lat: number) => ({ lon, lat })
+  /** Points on one east-west line, so detours are readable as "out and back". */
+  const A = at(-3.2, 55.95)
+  const B = at(-3.1, 55.95)
+  const C = at(-3.0, 55.95)
+
+  it('appends when there is nothing to insert between', () => {
+    expect(insertionIndex([], at(-3.2, 55.95))).toBe(0)
+    expect(insertionIndex([A], at(-3.1, 55.95))).toBe(1)
+  })
+
+  it('extends the route when the tap is past the finish', () => {
+    expect(insertionIndex([A, B], at(-3.0, 55.95))).toBe(2)
+  })
+
+  it('makes a via of a tap beside the line', () => {
+    expect(insertionIndex([A, B], at(-3.15, 55.97))).toBe(1)
+  })
+
+  it('picks the leg the tap is actually beside', () => {
+    expect(insertionIndex([A, B, C], at(-3.15, 55.97))).toBe(1)
+    expect(insertionIndex([A, B, C], at(-3.05, 55.97))).toBe(2)
+  })
+
+  /*
+   * Prepending is deliberately not a candidate. A tap behind the start becoming a *new start*
+   * is surprising — the start is the one point the rider is surest about — and both the
+   * search's start slot and dragging the start pin already move it properly. So a tap behind
+   * the start becomes the first via, which is visible in the card and one × away.
+   */
+  it('never turns a tap behind the start into a new start', () => {
+    expect(insertionIndex([A, B], at(-3.25, 55.95))).toBe(1)
+  })
+
+  /*
+   * A closed loop is two coincident legs, so the detour cost is identical on both and the
+   * rider's intent is genuinely ambiguous. The tie goes to the earlier leg, which puts the via
+   * on the way out. Deterministic beats arbitrary: the alternative is the same tap landing
+   * differently on two runs.
+   */
+  it('puts a via on the outbound leg of a loop, not the return', () => {
+    expect(insertionIndex([A, C, A], at(-3.1, 55.97))).toBe(1)
+  })
+})
+
+describe('waypointRows', () => {
+  const w = (id: string, kind?: 'reroute') => ({
+    id,
+    lon: -3.2,
+    lat: 55.95,
+    ...(kind ? { kind } : {}),
+  })
+
+  it('names the two ends and numbers what is between them', () => {
+    const rows = waypointRows([w('a'), w('b'), w('c'), w('d')])
+    expect(rows.map((r) => r.badge)).toEqual(['S', '1', '2', 'F'])
+    expect(rows.map((r) => r.word)).toEqual(['Start', 'Stop 1', 'Stop 2', 'Finish'])
+  })
+
+  it('leaves a lone start unnumbered as the start', () => {
+    expect(waypointRows([w('a')]).map((r) => r.role)).toEqual(['start'])
+  })
+
+  /*
+   * The numbering rule that matters mid-ride: a rejoin is a point the app added, so it is named
+   * for what it is and does not shift the number of the stop after it. Renumbering the rider's
+   * own pins because they took a wrong turn is the failure this prevents.
+   */
+  it('does not let a rejoin renumber the stops the rider placed', () => {
+    const rows = waypointRows([w('a'), w('r', 'reroute'), w('b'), w('c')])
+    expect(rows.map((r) => r.word)).toEqual(['Start', 'Rejoined', 'Stop 1', 'Finish'])
+    expect(rows.map((r) => r.badge)).toEqual(['S', '', '1', 'F'])
+  })
+
+  it('treats a rejoin that ended up last as the finish, because it is one', () => {
+    const rows = waypointRows([w('a'), w('r', 'reroute')])
+    expect(rows.map((r) => r.role)).toEqual(['start', 'finish'])
+  })
+})
+
+describe('isLoop', () => {
+  const at = (lon: number, lat: number) => ({ lon, lat })
+
+  it('is false for a journey between two places', () => {
+    expect(isLoop([at(-3.2, 55.95), at(-3.1, 55.95)])).toBe(false)
+  })
+
+  it('is true once the finish is back on the start', () => {
+    expect(isLoop([at(-3.2, 55.95), at(-3.1, 55.95), at(-3.2, 55.95)])).toBe(true)
+  })
+
+  /*
+   * Generous on purpose. The ends coincide exactly when "Make a loop" put them there, but a
+   * rider who dragged their finish back onto their own front door has described the same ride,
+   * and offering to close a loop that is already closed is a button with nothing to do.
+   */
+  it('counts a finish dragged back to within a few metres as closed', () => {
+    expect(isLoop([at(-3.2, 55.95), at(-3.1, 55.95), at(-3.2, 55.9502)])).toBe(true)
+    expect(isLoop([at(-3.2, 55.95), at(-3.1, 55.95), at(-3.2, 55.955)])).toBe(false)
+  })
+
+  it('is false for a plan that is not yet a journey', () => {
+    expect(isLoop([at(-3.2, 55.95)])).toBe(false)
+    expect(isLoop([])).toBe(false)
   })
 })
