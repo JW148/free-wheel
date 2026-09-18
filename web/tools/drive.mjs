@@ -292,6 +292,53 @@ await sleep(300)
 await shot('10-rider-scrolled')
 await click('.screen-back')
 await sleep(400)
+
+/*
+ * The walkthrough, reached the second way.
+ *
+ * Its own row in Setup, because once it was finished there was no way back into the only six
+ * screens that explain the app. Two things are worth looking at and neither is visible from a
+ * unit test: that it draws *over* Setup rather than replacing it — Setup has to still be there
+ * to come back to — and that the bike card reports the rider's setup rather than starting on
+ * the default, which is what stops a rider who came back to read about downloads from leaving
+ * with their tyres reset.
+ */
+console.log('the walkthrough, again')
+/*
+ * First, break the match: a tyre chosen in *You and the bike* that no bike answer produces.
+ * That is the state the revisit has to handle — four chips and none of them true — and it is
+ * the one a rider reaches by using the settings screen the walkthrough points them at.
+ */
+await click('.setup-menu-row:nth-child(2)')
+await sleep(600)
+await click('[aria-label="Tyres"] .chip:last-child')
+await sleep(400)
+await click('.screen-back')
+await sleep(500)
+
+const riderBefore = await evaluate(`localStorage.getItem('free-wheel.rider.v1')`)
+await click('.setup-menu-row:nth-child(3)')
+await sleep(900)
+await shot('10b-walkthrough-again')
+// Straight to the bike card by its pip, and then to the last one, whose button is now Done.
+await click('.onboarding-dots button:nth-child(4)')
+await sleep(700)
+console.log(
+  '  chips lit: ' +
+    (await evaluate(`document.querySelectorAll('.onboarding-chips .chip[data-selected="yes"]').length`)),
+)
+await shot('10c-walkthrough-bike')
+await click('.onboarding-dots button:nth-child(6)')
+await sleep(700)
+console.log('  last button: ' + (await evaluate(`document.querySelector('.onboarding-foot .primary')?.textContent`)))
+await click('.onboarding-foot .primary')
+await sleep(700)
+/* The invariant the whole revisit turns on: reading the cards writes nothing. A rider who came
+   back to remind themselves how downloads work must not leave with their tyres reset. */
+const riderAfter = await evaluate(`localStorage.getItem('free-wheel.rider.v1')`)
+console.log('  rider untouched: ' + (riderBefore === riderAfter))
+await shot('10d-back-in-setup')
+
 await click('.setup-close')
 await sleep(500)
 

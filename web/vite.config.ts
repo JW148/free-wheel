@@ -50,12 +50,16 @@ export default defineConfig({
         // neither, and MapLibre fetches them over the network on its own — miss them here and
         // the map goes offline with no labels and no icons, which looks like a styling bug.
         //
+        // `webp` is the six pictures the walkthrough is built out of. They are the first
+        // thing a rider ever sees and the walkthrough runs before anything is downloaded, so a
+        // second launch in a tunnel must not show six broken images.
+        //
         // `brf` and `dat` are the routing profiles. These normally reach the phone via
         // `provisionOpfs` on first init, which fetches them — fine, because the first launch
         // is online. The failure mode they close is the second one: WebKit evicts OPFS under
         // storage pressure, and without a precached copy the profiles cannot be restored
         // offline, so routing dies mid-ride with no way back. 144 kB is cheap for that.
-        globPatterns: ['**/*.{js,css,html,svg,json,wasm,pbf,png,brf,dat}'],
+        globPatterns: ['**/*.{js,css,html,svg,json,wasm,pbf,png,webp,brf,dat}'],
         // Without these, a new build sits in "waiting" until every tab of the app is
         // closed — and an iOS home-screen app is almost never truly closed, so a pull to
         // refresh keeps serving the previous bundle. This cost real debugging time three

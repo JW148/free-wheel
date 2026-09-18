@@ -43,10 +43,10 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
   src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
                  The navigation kernel — progress, climbs, power, ascent, recording, library,
                  hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
-  src/onboarding/ The six-card first run. Pixel glyphs on the icon's own 20x14 grid, written
-                 as character maps rather than images — no licensing, no bytes, nothing to 404
-                 on a cold cache. Its bike question writes to the rider, not to the plan.
-                 It swipes as well as pressing Next; `swipe.ts` holds the decisions.
+  src/onboarding/ The six-card first run. Each card shows the screen it is about, clipped out
+                 of the running app by `tools/onboarding-shots.mjs`. Its bike question writes
+                 to the rider, not to the plan. It swipes as well as pressing Next; `swipe.ts`
+                 holds the decisions.
   src/search/    The offline place search. `buildIndex.ts` runs in the engine Worker and reads
                  every name out of a basemap archive; `placeIndex.ts` packs, folds and ranks;
                  `searchStore.ts` owns it as a module singleton like `downloadStore`.
@@ -79,6 +79,7 @@ cd web
 npm run build-catalogue                      # refresh the tile catalogue from brouter.de
 npm run fetch-map-assets                     # refresh glyphs + sprites into public/
 node tools/build-gazetteer.mjs <gb.pmtiles>  # refresh public/gazetteer.json (committed)
+npm run build && npm run shots               # refresh public/onboarding/*.webp (committed)
 npx vitest run                               # unit tests
 ```
 
@@ -222,9 +223,47 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   answers "has this rider met the app"; the gate answers "does this phone have anything to ride
   on". A rider who deletes every region to free space must get the second and never the first.
   Skipping counts as having seen it.
-- **The onboarding glyphs are character maps, not images.** Twenty cells across is the whole
-  budget: a glyph is a silhouette with one accent, and anything more detailed dissolves. Two
-  whole bikes side by side read as a pair of spectacles, which is why that card is two wheels.
+- **The walkthrough is shown once by itself and reachable for ever from Setup**, as the third
+  row — *How this app works*. It used to retire the moment it was finished, which is a strange
+  fate for the only six screens that explain the app, and the premise a rider forgets between
+  seasons (download the map before you leave) is on card two. Shown again it *reports* rather
+  than *asks*, and all three differences guard the same thing: the bike chips start on
+  `bikeFor(rider)` and on **nothing at all** when no chip describes the rider's setup;
+  **finishing writes the rider only if a chip was tapped**, so reading the cards cannot reset
+  someone's tyres; and the last card stops asking for location, because a browser that was
+  refused once will not prompt again however the button is worded. `bikeFor` matches on all
+  three fields — `style` alone would confuse gravel with mountain, which share a profile and
+  differ on tyres by nearly 2× in rolling resistance. `App` owns which of the two lives it is
+  in, because the first run covers the maps gate while a revisit is drawn *over* Setup, which
+  has to still be there to come back to.
+- **The onboarding pictures are clipped out of the running app, and are never drawn.**
+  `web/tools/onboarding-shots.mjs` drives the built app in headless Chrome against a real
+  basemap and a real BRouter segment, plans a real route, rides it, and clips six rectangles at
+  roughly life size into `web/public/onboarding/*.webp` — committed, for the same reason
+  `public/engine/` is. They replaced pixel glyphs on the icon's own 20x14 grid, which cost
+  nothing and said nothing: twenty cells cannot draw "three routes you compare", and two bikes
+  side by side read as a pair of spectacles. **A mock would be worse than the glyph it
+  replaced**, because the whole point is that a rider meets the ride screen already knowing
+  what they are looking at — so regenerate rather than retouch, and never hand-draw one.
+  The script needs `FW_BASEMAP`, `FW_RD5` and `FW_PICKER` (all under `data/`, none committed),
+  `--full` writes whole screens to `web/shots/` for choosing a crop, and `--keep` reuses the
+  browser profile so the 86 MB import does not happen twice. The region shot stands the mirror
+  in with a fixture manifest and is **clipped above the bar that states a size**: the bucket's
+  first upload has never happened, so the only megabyte count available is invented, and a
+  screenshot makes an invented figure permanent.
+- **A clipped rectangle, not a shrunken screen.** A whole 390x844 screen scaled into the card's
+  tile lands at about a third — a silhouette, legible nowhere. The pictures are clipped to the
+  part that matters and drawn at around 86%, which is what makes a rider recognise the plan
+  card, the route cards and the riding panel when they meet them a minute later. The tile takes
+  a fraction of `--app-height` between two bounds rather than a fixed aspect ratio: a fixed one
+  pushes the text off a short phone, and `flex: 1` would absorb the slack and float the text
+  away from the top. `Slide.focus` says which part of a picture survives the crop.
+- **Two of the six shots are framed by measuring, not by a constant.** The app fits a route to
+  a 390x844 screen and the card is nowhere near that shape, so at the app's own zoom the two
+  pins — the literal subject of "tap your start, tap your finish" — fall outside the crop. The
+  script reads the markers' rects, pulls the map back until they fit the band the card will
+  show, and centres the window on them. The region browser gets the same treatment for the same
+  reason, or England falls off the card about picking an area of Britain.
 - **Saved and the Setup screens are overlays over the ride screen, never replacements** — the
   rule Setup has always had, for the reason it has always had it: unmounting the map drops its
   OPFS handles and its whole tile cache, and loading a route from Saved puts one straight back
@@ -300,7 +339,9 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   and MapLibre fetches them separately; skipping this yields an offline map with no labels,
   which looks like a styling bug. They live in `web/public/{fonts,sprites}`, are **committed**
   rather than generated, and are refreshed with `npm run fetch-map-assets`. `globPatterns`
-  must keep `pbf` and `png`. Glyph URLs must be **absolute** — they are fetched from
+  must keep `pbf` and `png` — and `webp`, which is the walkthrough's six pictures: it runs
+  before anything is downloaded, so a second launch in a tunnel must not be six broken images.
+  Glyph URLs must be **absolute** — they are fetched from
   MapLibre's worker, where a relative URL resolves against `/assets/`.
 - **`zoom` must be the input to a top-level `interpolate` or `step`.** Nesting it inside a
   `match` is a style validation error, and MapLibre reports that as an `error` *event* rather

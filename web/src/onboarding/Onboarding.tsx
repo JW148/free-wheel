@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { GLYPHS, type Glyph } from './glyphs'
-import { BIKES, DEFAULT_BIKE, SLIDES, markOnboarded, type BikeChoice } from './slides'
+import { BIKES, SLIDES, bikeById, markOnboarded, type BikeChoice } from './slides'
 import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
 
 /**
@@ -15,15 +14,34 @@ import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
  * permission prompt, which has to be last because it is the only card that asks for
  * something.
  *
+ * ## Each card shows the screen it is about
+ *
+ * It used to draw a pixel glyph on the app icon's own 20 x 14 grid — cheap, no bytes, nothing
+ * to 404 on a cold cache, and unreadable. Twenty cells cannot say "three routes you compare"
+ * or "a panel that tells you about the hill ahead"; two bikes side by side read as a pair of
+ * spectacles. So each card carries a picture of the thing it is describing, clipped out of the
+ * running app by `tools/onboarding-shots.mjs`. The walkthrough now teaches the screen rather
+ * than describing it, which is the only reason to spend 730 kB on it.
+ *
  * ## It is a carousel, so it swipes
  *
  * The pips under it say how many cards there are and which one you are on, which is a promise;
  * until now the only way to keep it was the Next button. Both work now, and the buttons are
  * still the path a keyboard and VoiceOver take. The gesture logic is in `swipe.ts`.
  *
- * ## It is shown once, and skipping counts
+ * ## It is shown once by itself, and is reachable for ever from Setup
  *
- * Its own storage key rather than the maps gate's. See `hasOnboarded`.
+ * Its own storage key rather than the maps gate's. See `hasOnboarded`. Six cards explaining
+ * how the app works are worth more than once, though — the region a rider needs is downloaded
+ * on day one and then not thought about again for a month — so Setup carries a row that brings
+ * them back, and `again` is what that row sets.
+ *
+ * Shown again, three things change, and each of them is the same correction: the card is now
+ * *reporting* rather than *asking*. The bike chips start on whatever the rider's setup actually
+ * is and on **nothing at all** if no chip describes it; finishing writes the rider only if a
+ * chip was tapped, so reading the cards cannot quietly overwrite a setting; and the last card
+ * stops asking for location, because it has been asked for once already and a browser that was
+ * refused will not prompt a second time however the button is worded.
  *
  * ## The location card is the reason the button label changes
  *
@@ -34,13 +52,28 @@ import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
  * for "no location permission".
  */
 export default function Onboarding({
+  bike: startOn,
+  again,
   onDone,
 }: {
-  /** Called with the chosen bike once the walkthrough is finished or skipped. */
-  onDone: (bike: BikeChoice) => void
+  /**
+   * Which bike chip starts selected, or `null` for none.
+   *
+   * The first run passes the default, because a first guess is better than no guess and every
+   * part of it stays editable. A revisit passes `bikeFor(rider)`, which is `null` when the
+   * rider's setup is not one of the four.
+   */
+  bike: string | null
+  /** Opened from Setup rather than shown on the first launch. */
+  again?: boolean
+  /**
+   * Called once the walkthrough is finished or skipped, with the bike the rider settled on —
+   * or `null` if they never touched the chips on a revisit, which means "change nothing".
+   */
+  onDone: (bike: BikeChoice | null) => void
 }) {
   const [index, setIndex] = useState(0)
-  const [bike, setBike] = useState(DEFAULT_BIKE.id)
+  const [bike, setBike] = useState(startOn)
   const last = SLIDES.length - 1
   const slide = SLIDES[index]
   const swipe = useSwipe({ index, last, onIndex: setIndex })
@@ -48,8 +81,8 @@ export default function Onboarding({
   const finish = useCallback(
     (askForLocation: boolean) => {
       markOnboarded()
-      const chosen = BIKES.find((b) => b.id === bike) ?? DEFAULT_BIKE
-      if (askForLocation && 'geolocation' in navigator) {
+      const chosen = bike === null ? null : bikeById(bike)
+      if (askForLocation && !again && 'geolocation' in navigator) {
         // Inside the tap, and deliberately not awaited: the walkthrough closes either way, and
         // the permission sheet is the system's to manage from here. A denial lands in the ride
         // screen's `denied` state, which already says what to do about it.
@@ -61,7 +94,7 @@ export default function Onboarding({
       }
       onDone(chosen)
     },
-    [bike, onDone],
+    [again, bike, onDone],
   )
 
   const next = () => (index === last ? finish(true) : setIndex(index + 1))
@@ -73,10 +106,15 @@ export default function Onboarding({
           <img src="/icons/icon-192.png" alt="" width={26} height={26} />
           Free Wheel
         </span>
-        {/* Skips to the end rather than closing: the last card is the permission ask, and a
-            rider who skips the explanation still needs to be offered location once. */}
-        <button type="button" className="onboarding-skip" onClick={() => setIndex(last)}>
-          Skip
+        {/* Skips to the end rather than closing, because the last card is the permission ask
+            and a rider who skips the explanation still needs to be offered location once.
+            Shown again there is nothing left to offer, so it is simply the way out. */}
+        <button
+          type="button"
+          className="onboarding-skip"
+          onClick={() => (again ? finish(false) : setIndex(last))}
+        >
+          {again ? 'Done' : 'Skip'}
         </button>
       </header>
 
@@ -101,7 +139,7 @@ export default function Onboarding({
         >
           {SLIDES.map((card, i) => (
             <section
-              key={card.glyph}
+              key={card.shot}
               className="onboarding-card"
               style={{ width: `${100 / SLIDES.length}%` }}
               // `inert` rather than `aria-hidden` alone: every card stays mounted so the
@@ -109,8 +147,20 @@ export default function Onboarding({
               // focusable is a tab order that walks off the side of the screen.
               inert={i === index ? undefined : true}
             >
-              <div className="onboarding-tile">
-                <PixelGlyph glyph={GLYPHS[card.glyph]} />
+              {/*
+                Eager, and every one of them. They are six precached files read off the disk,
+                and `loading="lazy"` on a deck whose cards are all mounted so that a swipe
+                reveals the next one would hand back a blank tile at exactly the moment the
+                swipe is meant to be showing it something.
+              */}
+              <div className="onboarding-shot" data-focus={card.focus}>
+                <img
+                  src={`/onboarding/${card.shot}.webp`}
+                  alt={card.alt}
+                  width={780}
+                  height={1200}
+                  decoding="async"
+                />
               </div>
               <h1>{card.title}</h1>
               <p>{card.body}</p>
@@ -148,7 +198,7 @@ export default function Onboarding({
         <div className="onboarding-dots">
           {SLIDES.map((card, i) => (
             <button
-              key={card.glyph}
+              key={card.shot}
               type="button"
               className="onboarding-dot-button"
               data-current={i === index ? 'yes' : 'no'}
@@ -170,31 +220,10 @@ export default function Onboarding({
             </button>
           )}
           <button type="button" className="primary" onClick={next}>
-            {slide.location ? 'Allow location & start' : 'Next'}
+            {!slide.location ? 'Next' : again ? 'Done' : 'Allow location & start'}
           </button>
         </div>
       </footer>
-    </div>
-  )
-}
-
-/**
- * A glyph as a CSS grid of spans.
- *
- * `aria-hidden` because it is decoration: the title beside it says what the card is about, and
- * a screen reader announcing 280 empty cells would be worse than useless. The cell size is a
- * custom property so the same component serves the 12px tile here and anything smaller later.
- */
-function PixelGlyph({ glyph }: { glyph: Glyph }) {
-  return (
-    <div className="pixel-glyph" aria-hidden="true">
-      {glyph.map((row, y) => (
-        <div key={y} className="pixel-row">
-          {row.map((colour, x) => (
-            <span key={x} style={colour ? { background: colour } : undefined} />
-          ))}
-        </div>
-      ))}
     </div>
   )
 }

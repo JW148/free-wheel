@@ -20,11 +20,15 @@ import type { Rider } from '../ride/useRider'
  *
  * The split itself is by *when you open it*. **Maps** is what a rider needs before a ride and
  * will open on the day. **Rider** is set once and then almost never — a weight, a bike, a riding
- * position — and it is the input to every physical estimate the ride screen makes.
- * **Diagnostics** is the spike harness, which is invaluable when something is wrong and pure
- * noise when it is not, so it is a line of text at the foot rather than a third of the width.
- * Keeping the parity check reachable in the shipping app is deliberate: it is the project's
- * regression net, and a net you have to rebuild to use does not get used.
+ * position — and it is the input to every physical estimate the ride screen makes. **How this
+ * app works** is the first-run walkthrough, which used to become unreachable the moment it was
+ * finished: six cards explaining the app, retired after one viewing, in an app whose whole
+ * premise — that the map has to be downloaded before you leave — is the thing a rider forgets
+ * between one season and the next. **Diagnostics** is the spike harness, which is invaluable
+ * when something is wrong and pure noise when it is not, so it is a line of text at the foot
+ * rather than a quarter of the width. Keeping the parity check reachable in the shipping app is
+ * deliberate: it is the project's regression net, and a net you have to rebuild to use does not
+ * get used.
  *
  * ## It is also the first-run gate
  *
@@ -44,6 +48,7 @@ export default function SetupView({
   rider,
   gate,
   openOn,
+  onShowWalkthrough,
   onClose,
 }: {
   basemap: ReturnType<typeof useMapLibre>
@@ -58,6 +63,8 @@ export default function SetupView({
    * Unlike `gate` it changes nothing else — the menu is still behind it, and back goes there.
    */
   openOn?: Page
+  /** Shows the first-run walkthrough again. Owned by `App`, because it draws over this screen. */
+  onShowWalkthrough: () => void
   onClose: () => void
 }) {
   /** `null` is the menu; anything else is a screen pushed on top of it. */
@@ -139,6 +146,26 @@ export default function SetupView({
               {rider.setup.riderKg + rider.setup.bikeKg} kg all in · the power estimate reads
               from here
             </span>
+          </span>
+          <ChevronRightIcon />
+        </button>
+
+        {/*
+          The walkthrough, which used to be unreachable the moment it was finished.
+          
+          It is a row rather than a line of text beside Diagnostics because it is the only thing
+          in the app that explains the app, and the two riders who want it — the one on their
+          first week and the one coming back after a winter — are exactly the two least likely
+          to go looking in the small print. It is third rather than first: a rider opens Setup
+          to download a region, not to read.
+        */}
+        <button type="button" className="setup-menu-row" onClick={onShowWalkthrough}>
+          <span className="setup-menu-icon" aria-hidden="true">
+            <WalkthroughIcon />
+          </span>
+          <span className="setup-menu-text">
+            <strong>How this app works</strong>
+            <span>The six cards you saw the first time</span>
           </span>
           <ChevronRightIcon />
         </button>
@@ -226,6 +253,22 @@ function RiderIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="7" r="3" />
       <path d="M5 21v-1.5A5.5 5.5 0 0 1 10.5 14h3a5.5 5.5 0 0 1 5.5 5.5V21" />
+    </svg>
+  )
+}
+
+/**
+ * A card with a pager under it — the walkthrough's own signature rather than a generic circled
+ * `i`. The three marks are its pips, wide one first, which is what the row opens onto.
+ *
+ * The two dots are zero-length subpaths: with `stroke-linecap: round` they draw as circles a
+ * stroke-width across, so they need no second shape and no fill.
+ */
+function WalkthroughIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="17" height="11.5" rx="2.5" />
+      <path d="M6 19.5h4.5M14 19.5h0.01M17.5 19.5h0.01" />
     </svg>
   )
 }

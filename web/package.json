@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "shots": "node tools/onboarding-shots.mjs",
     "preview": "vite preview",
     "spike-server": "node tools/report-server.mjs",
     "spike-server-https": "node tools/report-server.mjs --https",
