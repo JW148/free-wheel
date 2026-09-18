@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { GradientAhead } from './climbs'
 import { formatAway, formatClock, formatElapsed, formatPower, formatSpeed } from './format'
 import { formatDistance } from './gpx'
@@ -7,6 +7,7 @@ import { calloutMatters, compactFigures, figuresFor, type FigureKey } from './hu
 import type { RideTelemetry } from './useRideTelemetry'
 import RideProfile, { RouteOverview } from './RideProfile'
 import HoldButton from './HoldButton'
+import { useHudDrag } from './useHudDrag'
 
 /**
  * The riding screen's chrome: four figures, the road ahead, and one thing to do about it.
@@ -28,20 +29,28 @@ import HoldButton from './HoldButton'
  * than a gauge because the three numbers are only meaningful together: 62 m is nothing at 2%
  * and a lot at 12%, and neither matters if it starts in 20 km.
  *
- * ## Two sizes, and why the transition is a measured height
+ * ## Two sizes, and one surface between them
  *
  * The panel covers the top quarter of the screen, which is a lot of map at a junction, so it
  * folds down to a strip: the same figures minus power, the whole-route progress bar, and the
- * climb line *only when there is a climb to name* (see `hud.ts`). Expanding and collapsing is
- * a plain `height` transition on the panel with the two contents cross-fading inside it,
- * absolutely positioned so neither reflows during the animation.
+ * climb line *only when there is a climb to name* (see `hud.ts`).
+ *
+ * It is **dragged** between the two, the way the plan sheet at the other end of the screen is
+ * — pull down for the graph, push up for the strip — because nothing inside it is interactive,
+ * so the whole surface can be the target. That is the difference between a 2.4rem chevron a
+ * rider has to aim at while moving and a gesture they can make with the heel of a hand.
+ * `useHudDrag` writes `--hud-p`, 0 on the strip and 1 on the graph, and the height, both
+ * layers' opacity and the chevron's rotation are `calc()`s over it, so a half-finished drag is
+ * a half-finished fold rather than a state nothing can draw. The chevron stays, centred on the
+ * bottom edge where a handle belongs: it is what *says* the panel moves, and it is still the
+ * way in from a keyboard or VoiceOver.
  *
  * Height, not `max-height`, and measured in pixels by a `ResizeObserver` rather than guessed:
  * the strip's height is not constant — the climb line appears and disappears inside it — so a
  * fixed collapsed height would either clip the line or leave a gap where it is not. Animating
  * a `backdrop-filter`ed box's height is the thing `ride.css` warns about for the control rail,
- * and the warning holds: it is affordable here because it happens on a deliberate tap rather
- * than once a second, and because only the panel animates rather than a stack of seven
+ * and the warning holds: it is affordable here because it happens under a deliberate finger
+ * rather than once a second, and because only the panel animates rather than a stack of seven
  * blurred buttons.
  */
 export default function RideHud({
@@ -102,25 +111,22 @@ export default function RideHud({
    * says what it is waiting for.
    */
   const tracking = hasRoute && progress !== null
-  const shown = expanded ? 'full' : 'mini'
-  const full = useMeasuredHeight()
-  const strip = useMeasuredHeight()
-  const height = (expanded ? full.height : strip.height) ?? undefined
+  const hud = useHudDrag({ expanded, onExpandedChange })
 
   return (
     <>
       <div
         className="hud panel"
-        data-mode={shown}
-        // Until both layers have been measured there is no honest height to animate to, and
-        // transitioning from the CSS fallback to the first measurement would animate on
-        // arrival. `no` disables the transition for exactly that first frame.
-        data-measured={full.height !== null && strip.height !== null ? 'yes' : 'no'}
-        style={{ height }}
+        ref={hud.panel}
+        // This and `data-dragging` are the hook's from here: it measures both layers and
+        // publishes their heights, and until it has there is no honest height to fold through.
+        data-measured="no"
+        {...hud.drag}
       >
         <div
           className="hud-layer"
-          ref={full.ref}
+          data-layer="full"
+          ref={hud.full}
           data-shown={expanded ? 'yes' : 'no'}
           aria-hidden={!expanded}
         >
@@ -145,7 +151,8 @@ export default function RideHud({
 
         <div
           className="hud-layer"
-          ref={strip.ref}
+          data-layer="mini"
+          ref={hud.mini}
           data-shown={expanded ? 'no' : 'yes'}
           aria-hidden={expanded}
         >
@@ -156,10 +163,13 @@ export default function RideHud({
           )}
         </div>
 
+        {/* The handle, and the only thing on the panel a press means something by. A tap
+            toggles; a drag from it is a drag like any other, because it sits in the strip of
+            room both layers leave along the bottom edge rather than over either of them. */}
         <button
           type="button"
           className="hud-collapse"
-          onClick={() => onExpandedChange(!expanded)}
+          onClick={hud.onToggle}
           aria-expanded={expanded}
           aria-label={expanded ? 'Hide the elevation graph' : 'Show the elevation graph'}
         >
@@ -359,35 +369,6 @@ function Callout({
       Nothing steep left on this route.
     </p>
   )
-}
-
-/**
- * The rendered height of an element, tracked as it changes.
- *
- * A `ResizeObserver` rather than one `getBoundingClientRect` on mount, because both layers of
- * the HUD change height while the ride runs: the callout line grows to two lines on a narrow
- * phone, and on the strip it appears and vanishes with the climb. A stale measurement is a
- * clipped sentence.
- *
- * `useLayoutEffect` for the first read so the panel is laid out before the browser paints it,
- * which is what keeps the collapse transition from running once on arrival.
- */
-function useMeasuredHeight() {
-  const ref = useRef<HTMLDivElement | null>(null)
-  const [height, setHeight] = useState<number | null>(null)
-
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (!element) return
-    const measure = () => setHeight(element.getBoundingClientRect().height)
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-
-  return { ref, height }
 }
 
 /** Re-renders once a second while `active`, purely so a running clock runs. */

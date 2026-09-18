@@ -127,6 +127,67 @@ const releaseHandle = () =>
   })()`)
 
 /**
+ * Drags the riding HUD by `dy` pixels, downwards positive, and leaves the finger down.
+ *
+ * The panel is the sheet's mechanism upside down — one surface, `--hud-p`, and a `calc()` for
+ * every difference between the strip and the graph — so the frame worth looking at is again a
+ * half-finished one. Released after a pause, so the hook reads it as a placement rather than a
+ * flick: two synthetic events dispatched back to back are, by the clock, infinitely fast.
+ */
+const dragHud = (dy) =>
+  evaluate(`(() => {
+    const hud = document.querySelector('.hud')
+    if (!hud) return 'missing hud'
+    const box = hud.getBoundingClientRect()
+    const y = box.top + box.height - 6
+    const at = (clientY, type) =>
+      hud.dispatchEvent(
+        new PointerEvent(type, { pointerId: 2, clientY, clientX: 195, bubbles: true }),
+      )
+    at(y, 'pointerdown')
+    at(y + ${JSON.stringify(dy)}, 'pointermove')
+    return 'p=' + getComputedStyle(hud).getPropertyValue('--hud-p')
+  })()`)
+
+const releaseHud = () =>
+  evaluate(`(() => {
+    document
+      .querySelector('.hud')
+      ?.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2, bubbles: true }))
+    return 'ok'
+  })()`)
+
+/**
+ * Taps the HUD's chevron the way a finger does — pointerdown, pointerup, and then the click the
+ * browser synthesises from them.
+ *
+ * Exactly one toggle has to come out of those three. The pointer path stands aside for the
+ * click, and the press captures the pointer to the *chevron* rather than to the panel for the
+ * same reason: a capture retargets the compatibility mouse events with it, so capturing to the
+ * panel would swallow the button's own click and leave it doing nothing when pressed. A plain
+ * `.click()` cannot catch that — it is the pointer events that set the trap.
+ */
+const hudExpanded = () =>
+  evaluate(`document.querySelector('.hud-collapse')?.getAttribute('aria-expanded') ?? 'gone'`)
+
+const tapChevron = () =>
+  evaluate(`(() => {
+    const button = document.querySelector('.hud-collapse')
+    if (!button) return 'missing chevron'
+    const box = button.getBoundingClientRect()
+    const where = {
+      pointerId: 3,
+      clientX: box.left + box.width / 2,
+      clientY: box.top + box.height / 2,
+      bubbles: true,
+    }
+    button.dispatchEvent(new PointerEvent('pointerdown', where))
+    button.dispatchEvent(new PointerEvent('pointerup', where))
+    button.dispatchEvent(new MouseEvent('click', where))
+    return 'tapped'
+  })()`)
+
+/**
  * Types into a controlled React input.
  *
  * Setting `.value` directly does nothing: React's own value setter on the element shadows the
@@ -389,6 +450,26 @@ if (process.env.FW_SEED) {
   await sleep(300)
   await shot('17-route-detail-scrolled')
 
+  // Put the sheet away and pull it back up: it has to come back on the view it left, not on
+  // whichever one the plan implies. Reading the detail is a place, and minimising is not a
+  // change of mind about it.
+  await click('.sheet-handle')
+  await sleep(800)
+  await click('.sheet-handle')
+  await sleep(900)
+  await shot('17b-reopened-on-detail')
+  // Back to the list, away and up again: the comparison has to survive the same round trip.
+  await click('.drawer-back')
+  await sleep(500)
+  await click('.sheet-handle')
+  await sleep(800)
+  await click('.sheet-handle')
+  await sleep(900)
+  await shot('17c-reopened-on-cards')
+  // Back into the detail, which is where the shots below carry on from.
+  await click('.route-card-details')
+  await sleep(700)
+
   /*
    * The library, which needs something in it.
    *
@@ -403,6 +484,14 @@ if (process.env.FW_SEED) {
   await click('.plan-shortcuts button:nth-child(1)')
   await sleep(900)
   await shot('11b-saved-list')
+  // One entry, and the one way back out of it: the screen's own arrow, which goes to the list
+  // while a detail is open and to the map when it is not.
+  await click('.library-row')
+  await sleep(600)
+  await shot('11c-saved-detail')
+  await click('.screen-back')
+  await sleep(500)
+  await shot('11d-saved-back-to-list')
   await click('.screen-back')
   await sleep(400)
 
@@ -437,6 +526,28 @@ if (process.env.FW_SEED) {
   await click('.hud-collapse')
   await sleep(700)
   await shot('19-riding-folded')
+
+  // The panel pulled half way down and still under the finger: the frame that says whether the
+  // strip is becoming the graph or being swapped for it.
+  console.log('  ' + (await dragHud(70)))
+  await sleep(200)
+  await shot('19b-hud-half-dragged')
+  await releaseHud()
+  await sleep(700)
+  await shot('19c-hud-settled')
+  // And back: a push up from the graph folds it away again.
+  console.log('  ' + (await dragHud(-90)))
+  await sleep(200)
+  await releaseHud()
+  await sleep(700)
+  await shot('19d-hud-folded-again')
+
+  // And the chevron still toggles, once, from a real press rather than a synthetic click.
+  const before = await hudExpanded()
+  await tapChevron()
+  await sleep(700)
+  console.log(`  chevron: aria-expanded ${before} -> ${await hudExpanded()}`)
+  await shot('19e-hud-chevron-tapped')
 
   console.log('dark chrome')
   await evaluate(`localStorage.setItem('free-wheel.theme.v1', 'dark')`)

@@ -188,6 +188,11 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   lightness — the standard cycling convention — so `flat` sitting between `rising` and `steep`
   by luminance is correct, and a monotonic lightness ramp across all six is an invention neither
   the design nor the original ever made.
+- **The plan sheet reopens on the view it was put away on.** `openForPlan` used to re-derive it
+  from the plan — a chosen route meant the detail — which overruled the rider: choosing does not
+  leave the comparison, so minimising while weighing three cards and pulling back up landed on
+  one route's climbs. `viewOnOpen` keeps the last view and has exactly one exception, the
+  detail with no chosen route to describe.
 - **Two taps produce three routes, and `plan.chosen` is still `null` until one is tapped.**
   Placing the second waypoint routes automatically; there is no Compare button and no tick-list.
   `profiles.ts` carries both a `label` (the engine's name) and a `plain` name (the rider's), and
@@ -643,6 +648,11 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   is neutral grey — it has stopped being a route — and "climb ahead" is a blurred halo in black
   or white by theme, which is a *lightness* effect and so needs no clearance rule and works
   over a line of any colour. Do not give either one a hue.
+- **One level, one way back.** Saved's detail used to draw a `‹ Saved` button of its own an inch
+  under the header's `‹`, and the two did different things — the inner one to the list, the
+  outer one straight to the map. `SavedScreen` owns `openId` now, and its one arrow goes to
+  whichever is behind. A screen's header is where the way out lives; a view inside it does not
+  get a second.
 - **A list row's card belongs to the button, not to the `<li>`.** Saved's rows became one
   `.library-row` button when the library was promoted to a screen, and the `52px 1fr` grid left
   on the `<li>` went on placing that whole button in a 52px column — figures wrapped to three
@@ -709,13 +719,27 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   asks the engine for a profile must use `plan.rerouteProfile`, which falls back to the ticked
   selection — otherwise a reroute fails at the exact moment a lost rider needs it. `style.test.ts`
   iterates `ROUTE_PALETTE`, not `PROFILES`, so the extra colour is still held to the ΔE floor.
+- **The riding HUD is dragged between its two sizes, and it is the plan sheet upside down.**
+  `--hud-p` is 0 on the strip and 1 on the graph; `useHudDrag` writes it and the height, both
+  layers' opacity and the chevron's rotation are `calc()`s over it. Pull down to open, push up
+  to fold — the whole surface is the target, because nothing on it is interactive. **A tap
+  anywhere but the chevron deliberately does nothing** (`hudDrag.ts`): unlike the sheet's
+  handle, this surface is where a hand lands coming back to the bars, and a toggle on contact
+  would resize the figures being read. The chevron is centred on the bottom edge, is a real
+  button, and is the way in from a keyboard or VoiceOver.
+- **The HUD's two layers hand over; they do not blend.** A straight cross-fade was tried and is
+  wrong here: the strip is three figure columns and the graph is four, so at half opacity each
+  "93 km" is printed twice an inch apart. Each layer is scaled and offset to be gone by the
+  half-way point and to start from it.
 - **The riding HUD's height is measured, not guessed.** Both sizes are absolutely positioned
-  layers that cross-fade, and a `ResizeObserver` on each drives a `height` transition on the
-  panel. A hard-coded collapsed height does not work: the climb line appears and disappears
-  inside the strip, so the strip's own height is not constant. `data-measured="no"` suppresses
-  the transition until both layers have been measured, or the panel animates once on arrival.
-  This is the one place the "don't animate a backdrop-filtered box's height" rule is knowingly
-  broken — one panel on a deliberate tap, not seven blurred buttons once a second.
+  layers, and a `ResizeObserver` on each publishes `--hud-mini` and `--hud-full`. A hard-coded
+  collapsed height does not work: the climb line appears and disappears inside the strip, so the
+  strip's own height is not constant. `data-measured="no"` suppresses every transition until a
+  frame *after* the first measurement — a transition's properties are read from the
+  after-change style, so setting the real heights and the flag in one recalculation animates
+  the panel from the stylesheet's guess on arrival. This is the one place the "don't animate a
+  backdrop-filtered box's height" rule is knowingly broken — one panel under a deliberate
+  finger, not seven blurred buttons once a second.
 - **The rider's marker has two sizes and is switched by `setPositionEmphasis`.** One size served
   both screens and measured 20 logical pixels on the road, which is a street label. Riding is
   45 px of arrow over a 34 px halo; the arrow is drawn at 64 device pixels and scaled *down*,

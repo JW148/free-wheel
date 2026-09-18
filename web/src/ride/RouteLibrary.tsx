@@ -23,8 +23,9 @@ import { gpxFilename, shareGpx } from './share'
 /**
  * Saved routes and finished rides.
  *
- * Rendered inside `SavedScreen`, which owns the title and the way back to the map. This owns
- * the list, the filter, and the detail each row opens into.
+ * Rendered inside `SavedScreen`, which owns the title and the way back — to the list while an
+ * entry is open, and to the map when it is not. This owns the list, the filter, and the detail
+ * each row opens into.
  *
  * ## One list, with a filter over it
  *
@@ -61,6 +62,8 @@ export default function RouteLibrary({
   onLoad,
   onLoadTrack,
   reloadKey,
+  openId,
+  onOpen,
 }: {
   /** Puts a saved route back on the map, ready to ride. */
   onLoad: (entry: SavedRoute) => void
@@ -68,12 +71,20 @@ export default function RouteLibrary({
   onLoadTrack: (entry: SavedRide) => void
   /** Changing this reloads the list — after a save, the new entry has to appear. */
   reloadKey: number
+  /**
+   * The entry whose detail is open, by id — not by object, so a refresh keeps it fresh.
+   *
+   * Owned by `SavedScreen` rather than here, because the screen's own back arrow is the way
+   * out of the detail. It used to draw a second one: a `‹ Saved` button inside the list, an
+   * inch below the `‹` in the header, and the two did different things. One level, one way
+   * back.
+   */
+  openId: string | null
+  onOpen: (id: string | null) => void
 }) {
   const [entries, setEntries] = useState<LibraryEntry[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [filter, setFilter] = useState<LibraryFilter>('all')
-  /** The entry whose detail is open, by id — not by object, so a refresh keeps it fresh. */
-  const [openId, setOpenId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (!libraryAvailable()) {
@@ -105,7 +116,7 @@ export default function RouteLibrary({
     } catch (e) {
       failure = e instanceof Error ? e.message : String(e)
     }
-    if (openId === entry.id) setOpenId(null)
+    if (openId === entry.id) onOpen(null)
     await refresh()
     if (failure) setProblem(failure)
   }
@@ -132,7 +143,6 @@ export default function RouteLibrary({
       <EntryDetail
         key={open.id}
         entry={open}
-        onBack={() => setOpenId(null)}
         onRide={() => (open.kind === 'route' ? onLoad(open) : onLoadTrack(open))}
         onRename={(name) => void rename(open, name)}
         onDelete={() => void remove(open)}
@@ -194,7 +204,7 @@ export default function RouteLibrary({
             <button
               type="button"
               className="library-row"
-              onClick={() => setOpenId(entry.id)}
+              onClick={() => onOpen(entry.id)}
               aria-label={`Open ${entry.name}`}
             >
               <Thumbnail coords={entry.preview} colour={colourOf(entry)} />
@@ -264,14 +274,12 @@ function TotalRow({ label, totals }: { label: string; totals: ReturnType<typeof 
  */
 function EntryDetail({
   entry,
-  onBack,
   onRide,
   onRename,
   onDelete,
   problem,
 }: {
   entry: LibraryEntry
-  onBack: () => void
   onRide: () => void
   onRename: (name: string) => void
   onDelete: () => void
@@ -282,18 +290,6 @@ function EntryDetail({
 
   return (
     <>
-      <div className="drawer-head">
-        <button
-          type="button"
-          className="drawer-back"
-          onClick={onBack}
-          aria-label="Back to the saved list"
-        >
-          <ChevronLeftIcon />
-          Saved
-        </button>
-      </div>
-
       <div className="library-detail-title">
         <h2>{entry.name}</h2>
         <p>
@@ -459,14 +455,6 @@ function Thumbnail({ coords, colour }: { coords: [number, number][]; colour: str
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-    </svg>
-  )
-}
-
-function ChevronLeftIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M15 5l-7 7 7 7" />
     </svg>
   )
 }

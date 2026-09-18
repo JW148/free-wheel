@@ -480,25 +480,77 @@
    read together anyway. */
 
 /*
+ * One number, and everything the two sizes disagree about is a `calc()` over it.
+ *
+ * `--hud-p` is 0 on the strip and 1 on the graph, and `useHudDrag` writes it — from a finger
+ * pulling the panel down, or as a transition between the ends when the chevron is pressed.
+ * The height, both layers' opacity and the chevron's rotation all read it, so a drag stopped
+ * half way is a panel drawn half way rather than a state nothing has a rule for. It is the
+ * plan sheet's mechanism upside down; see the block below `.sheet-layer` for the argument.
+ *
+ * Registering the properties is what makes them animatable: an unregistered custom property
+ * has no type to interpolate through, so every transition here would be a step and each
+ * `calc()` would jump.
+ */
+@property --hud-p {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/*
+ * The two stops, in pixels, published by `useHudDrag` from a `ResizeObserver` on each layer.
+ *
+ * Neither is a constant — the strip grows a climb line when there is a climb to name, and the
+ * graph's callout wraps to two lines on a narrow phone — which is why they are measured rather
+ * than named, and why they are transitioned: a line appearing mid-ride should push the panel
+ * open rather than snap it. The values here are only what the first frame draws with.
+ */
+@property --hud-mini {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 92px;
+}
+
+@property --hud-full {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 236px;
+}
+
+/*
  * The panel itself carries no padding, because it carries no content in flow: both sizes of
- * the HUD are absolutely positioned layers inside it and the panel's height is set from
- * JavaScript, measured. See the comment in `RideHud.tsx` for why a measured pixel height
- * rather than `max-height` or a `0fr` grid row — the collapsed strip's own height changes as
- * the climb line comes and goes, so there is no constant to animate to.
+ * the HUD are absolutely positioned layers inside it. See the comment in `RideHud.tsx` for why
+ * a measured pixel height rather than `max-height` or a `0fr` grid row — the collapsed strip's
+ * own height changes as the climb line comes and goes, so there is no constant to animate to.
  */
 .hud {
   position: relative;
   overflow: hidden;
   padding: 0;
-  /* Never shrunk by the chrome column. Its height is set from JavaScript and both layers are
-     absolutely positioned inside it, so a flex shrink would clip the content rather than
-     reflow it. */
+  /* Never shrunk by the chrome column. Both layers are absolutely positioned inside it, so a
+     flex shrink would clip the content rather than reflow it. */
   flex: none;
-  transition: height 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  height: calc(var(--hud-mini) + (var(--hud-full) - var(--hud-mini)) * var(--hud-p));
+  /* The whole surface is dragged, so the browser must not claim the gesture first. Nothing
+     inside scrolls, so there is nothing to hand `pan-y` back to. */
+  touch-action: none;
+  cursor: grab;
+  transition:
+    --hud-p 300ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    --hud-mini 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    --hud-full 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* The first paint has no measurement yet, and animating from nothing to the first measured
-   height would play the collapse animation on arrival. */
+/* Under a finger there is nothing to interpolate towards: the number *is* the finger. */
+.hud[data-dragging='yes'] {
+  transition: none;
+  cursor: grabbing;
+}
+
+/* The first paint has no measurement yet, and animating from the fallbacks above to the first
+   measured pair would play the whole fold on arrival. `useHudDrag` flips this a frame after
+   it has measured. */
 .hud[data-measured='no'] {
   transition: none;
 }
@@ -514,63 +566,95 @@
   top: 0;
   left: 0;
   right: 0;
-  padding: 0.5rem 0.7rem 0.45rem;
-  /* Cross-faded rather than swapped, so the figures that appear in both sizes do not blink.
-     `visibility` is the part that matters for anything other than looks: it flips at the end
+  /* The bottom is the handle's strip, left clear by both layers so the chevron sits under the
+     content rather than over it. */
+  padding: 0.5rem 0.7rem 1.2rem;
+  /* `visibility` is the part that matters for anything other than looks: it flips at the end
      of the fade out, which takes the hidden layer out of the tab order and off the
-     accessibility tree instead of leaving an invisible copy of the panel behind it. */
-  transition:
-    opacity 200ms ease,
-    visibility 200ms ease;
+     accessibility tree instead of leaving an invisible copy of the panel behind it. Discrete,
+     so the transition is what holds it visible until the fade has finished. */
+  transition: visibility 300ms ease;
+}
+
+/*
+ * The cross-fade, handed over rather than blended — the plan sheet's arrangement, for a reason
+ * the HUD turns out to share.
+ *
+ * A straight cross-fade was tried first, on the theory that the two layers carry the same
+ * figures so the ink should be conserved. They do not sit in the same places: the strip is
+ * three columns and the graph is four, so "93 km" is in the third of three and the third of
+ * four, and half of each at once is that number printed twice, an inch apart, with "23:38"
+ * doubled beside it. Unreadable exactly when it is being read.
+ *
+ * So each layer is scaled and offset to be gone by the half-way point and to start from it —
+ * one is legible or the other is, never both.
+ */
+.hud-layer[data-layer='mini'] {
+  opacity: calc(1.05 - var(--hud-p) * 2.1);
+}
+
+.hud-layer[data-layer='full'] {
+  opacity: calc(var(--hud-p) * 2.1 - 1.05);
 }
 
 .hud-layer[data-shown='no'] {
-  opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
 
-/* Expanded, bottom-right over the callout row, which is the only row with space to spare —
-   the figures are hard against both edges by design. Deliberately quiet: it is reached once a
-   ride, and a loud chevron beside four large numbers would read as one of them. */
-.hud-collapse {
-  position: absolute;
-  right: 0.15rem;
-  bottom: 0.05rem;
-  display: grid;
-  place-items: center;
-  width: 2.4rem;
-  height: 2rem;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
+/* Mid-drag both layers are in play: React's state does not move until the finger lets go, so
+   neither of them may be `hidden` — without this the incoming one would fade in invisible. */
+.hud[data-dragging='yes'] .hud-layer {
+  visibility: visible;
 }
 
+/*
+ * The chevron, on the bottom edge and centred.
+ *
+ * It used to sit in the bottom-right corner, which is where a *control* goes — and it was the
+ * only way to change the panel's size, so that is what it was. Now the whole surface drags and
+ * this is the thing that says so, which makes it a handle: centred, spanning the width, in the
+ * strip of room both layers leave along the bottom. The plan sheet's handle does the same job
+ * on the edge *it* grows from, at the other end of the screen.
+ *
+ * Quiet, because it is read once and then known, and a loud chevron under four large figures
+ * would read as one of them. It is a real button, so a tap toggles and a keyboard or VoiceOver
+ * has a way in — see `hudDrag.ts` for why a tap *anywhere else* deliberately does nothing.
+ */
+.hud-collapse {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  height: 1.2rem;
+  /* The element rule in `App.css` gives every button 2.75rem of height, a fill and a radius.
+     A handle is none of those, and `min-height` would otherwise win over the height above. */
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  /* The panel below it owns the gesture; this must not have the browser claim it first. */
+  touch-action: none;
+  cursor: inherit;
+}
+
+/* The glyph points the way the panel will move: down to open it onto the graph, up to fold it
+   back to the strip — and it turns with the finger, because it reads `--hud-p` like everything
+   else here rather than a settled state. */
 .hud-collapse svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-  transition: transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-
-/* The glyph points the way the panel will move: down to fold it away, up to bring it back. */
-.hud[data-mode='mini'] .hud-collapse svg {
-  transform: rotate(180deg);
-}
-
-/* Collapsed there is no callout row to sit on — the strip is figures, a progress bar, and
-   sometimes a climb line — so bottom-right drops the chevron onto the progress bar with an
-   empty quarter of the row above it. On the strip it belongs beside the figures instead,
-   level with them, in the gutter `.hud-figures[data-compact='yes']` leaves for it. */
-.hud[data-mode='mini'] .hud-collapse {
-  top: 0.4rem;
-  bottom: auto;
+  transform: rotate(calc(180deg * (1 - var(--hud-p))));
 }
 
 .hud-figures {
@@ -585,15 +669,12 @@
    the rider who folded the graph away has said they want the map instead. */
 .hud-figures[data-compact='yes'] {
   margin-bottom: 0.3rem;
-  /* Room for the chevron, which is level with this row on the strip. Reserved rather than
-     overlapped: the figures own the width they are given, and the button owns the rest. */
-  padding-right: 2.4rem;
 }
 
-/* The last figure hugs the gutter rather than the left edge of a cell wider than it needs.
+/* The last figure hugs the right edge rather than the left edge of a cell wider than it needs.
    Three equal columns of a phone's width are each half again as wide as "23:01", so a
-   left-aligned last figure ended a quarter of the row short of the chevron and left it
-   sitting alone in the gap. */
+   left-aligned last figure ends a quarter of the row short of the panel's edge — which reads
+   as the row being off centre rather than as the column it is. */
 .hud-figures[data-compact='yes'] div:last-child {
   align-items: flex-end;
   text-align: right;
@@ -668,8 +749,9 @@
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  /* Room on the right for the collapse chevron, which floats over this row. */
-  margin: 0.35rem 2.3rem 0 0;
+  /* The full width: the chevron moved to the bottom edge, so this row no longer has a corner
+     button floating over its last few words. */
+  margin: 0.35rem 0 0;
   font-size: 0.82rem;
   line-height: 1.35;
   color: var(--muted);

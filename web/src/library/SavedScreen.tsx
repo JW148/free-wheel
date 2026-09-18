@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import RouteLibrary from '../ride/RouteLibrary'
 import type { SavedRide, SavedRoute } from '../ride/library'
 
@@ -34,17 +35,38 @@ export default function SavedScreen({
   /** Changing this reloads the list — after a save, the new entry has to appear. */
   reloadKey: number
 }) {
+  /**
+   * The list, or one entry — and the screen's own back arrow is how you leave either.
+   *
+   * The state is here rather than in `RouteLibrary` because the header is here. The detail
+   * used to draw a second `‹ Saved` of its own, an inch under the one in the header, and they
+   * did different things: the inner one went back to the list, the outer one straight back to
+   * the map. Two ways back at one level is two guesses about which is which.
+   */
+  const [openId, setOpenId] = useState<string | null>(null)
+
   return (
     <div className="screen">
       <header className="screen-head">
-        <button type="button" className="screen-back" onClick={onClose} aria-label="Back to the map">
+        <button
+          type="button"
+          className="screen-back"
+          onClick={() => (openId === null ? onClose() : setOpenId(null))}
+          aria-label={openId === null ? 'Back to the map' : 'Back to the saved list'}
+        >
           <ChevronLeftIcon />
         </button>
         <h1>Saved</h1>
       </header>
 
       <div className="screen-body">
-        <RouteLibrary onLoad={onLoad} onLoadTrack={onLoadTrack} reloadKey={reloadKey} />
+        <RouteLibrary
+          onLoad={onLoad}
+          onLoadTrack={onLoadTrack}
+          reloadKey={reloadKey}
+          openId={openId}
+          onOpen={setOpenId}
+        />
       </div>
 
       <p className="screen-foot">Everything here lives on this phone only.</p>

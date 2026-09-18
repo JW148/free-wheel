@@ -23,13 +23,14 @@ this for where the work actually stands.
 | **Phase 10** — choosing a region | 🟡 The regions are **painted into the map** rather than boxed over it: fourteen overlapping bboxes become a partition clipped to the coastline by the basemap's own water, named in place. The top bar is gone and the list is the ride screen's dismissible drawer. Driven end to end in headless Chrome at 390 px, both themes, against the live mirror. Not yet ridden, not yet on a physical iPhone |
 | **Phase 11** — the redesign | 🟡 Light chrome with a dark variant from one token set; two taps → three plain-language routes; a six-card pixel first run; the rail cut from seven buttons to two; Saved and Setup promoted to screens; hold-to-end. Driven end to end in headless Chrome at 390 px in **both themes**, 615 tests green. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 12** — what the riders found | 🟡 Offline place search over the names already in each basemap archive; saved places; a reroute that keeps the ride rather than replacing it; a sheet you can actually grab; a first run that swipes; ride totals; an unmistakable riding mode. 707 tests green, driven at 390 px in both themes against a real imported archive. **Not yet ridden, not yet on a physical iPhone** |
+| **Phase 13** — three quirks off the ride screen | 🟡 The riding HUD is dragged between its two sizes like the plan sheet (`--hud-p`, a centred chevron on the bottom edge); the sheet reopens on the view it was put away on; Saved's detail lost its second back arrow. 718 tests green, driven at 390 px. **Not yet ridden, not yet on a physical iPhone** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
 `docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
 `docs/phase-8-progress.md`, `docs/phase-9-progress.md`, `docs/phase-10-progress.md`,
-`docs/phase-11-progress.md`, `docs/phase-12-progress.md`. Each
+`docs/phase-11-progress.md`, `docs/phase-12-progress.md`, `docs/phase-13-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -44,11 +45,17 @@ wrong.
 
 ## Where to pick up
 
-**The next action is a ride, and it is now overdue in three directions.** Phases 7 through 12
+**The next action is a ride, and it is now overdue in three directions.** Phases 7 through 13
 have all been built and none of them has been on a road. Phase 11 reversed the app's oldest
 visual decision — the chrome is light now — and that is a decision only sunlight can settle;
 `docs/phase-11-progress.md` §"Not done" lists the five questions a desk cannot answer, the first
 being whether the light chrome was right at all, with the fallback if it was not.
+
+Phase 13 is three more corrections off the same screenshots, and one of them — the riding panel
+is now dragged between its two sizes rather than tapped — changes a gesture made *while moving*.
+That is the hardest kind of thing to judge at a desk: see §"Not done" in
+`docs/phase-13-progress.md` for the one question a road answers and a desk cannot, which is
+whether the panel is easy to open by accident while steadying the phone.
 
 Phase 12 is the first ride's own feedback, built. Its §"Not done" adds five more, and two are
 worth doing deliberately on the next ride: **take a wrong turn on purpose** and watch whether the
