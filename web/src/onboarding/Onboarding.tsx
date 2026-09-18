@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { BIKES, DEFAULT_BIKE, SLIDES, markOnboarded, type BikeChoice } from './slides'
+import { BIKES, SLIDES, bikeById, markOnboarded, type BikeChoice } from './slides'
 import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
 
 /**
@@ -29,9 +29,19 @@ import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
  * until now the only way to keep it was the Next button. Both work now, and the buttons are
  * still the path a keyboard and VoiceOver take. The gesture logic is in `swipe.ts`.
  *
- * ## It is shown once, and skipping counts
+ * ## It is shown once by itself, and is reachable for ever from Setup
  *
- * Its own storage key rather than the maps gate's. See `hasOnboarded`.
+ * Its own storage key rather than the maps gate's. See `hasOnboarded`. Six cards explaining
+ * how the app works are worth more than once, though — the region a rider needs is downloaded
+ * on day one and then not thought about again for a month — so Setup carries a row that brings
+ * them back, and `again` is what that row sets.
+ *
+ * Shown again, three things change, and each of them is the same correction: the card is now
+ * *reporting* rather than *asking*. The bike chips start on whatever the rider's setup actually
+ * is and on **nothing at all** if no chip describes it; finishing writes the rider only if a
+ * chip was tapped, so reading the cards cannot quietly overwrite a setting; and the last card
+ * stops asking for location, because it has been asked for once already and a browser that was
+ * refused will not prompt a second time however the button is worded.
  *
  * ## The location card is the reason the button label changes
  *
@@ -42,13 +52,28 @@ import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
  * for "no location permission".
  */
 export default function Onboarding({
+  bike: startOn,
+  again,
   onDone,
 }: {
-  /** Called with the chosen bike once the walkthrough is finished or skipped. */
-  onDone: (bike: BikeChoice) => void
+  /**
+   * Which bike chip starts selected, or `null` for none.
+   *
+   * The first run passes the default, because a first guess is better than no guess and every
+   * part of it stays editable. A revisit passes `bikeFor(rider)`, which is `null` when the
+   * rider's setup is not one of the four.
+   */
+  bike: string | null
+  /** Opened from Setup rather than shown on the first launch. */
+  again?: boolean
+  /**
+   * Called once the walkthrough is finished or skipped, with the bike the rider settled on —
+   * or `null` if they never touched the chips on a revisit, which means "change nothing".
+   */
+  onDone: (bike: BikeChoice | null) => void
 }) {
   const [index, setIndex] = useState(0)
-  const [bike, setBike] = useState(DEFAULT_BIKE.id)
+  const [bike, setBike] = useState(startOn)
   const last = SLIDES.length - 1
   const slide = SLIDES[index]
   const swipe = useSwipe({ index, last, onIndex: setIndex })
@@ -56,8 +81,8 @@ export default function Onboarding({
   const finish = useCallback(
     (askForLocation: boolean) => {
       markOnboarded()
-      const chosen = BIKES.find((b) => b.id === bike) ?? DEFAULT_BIKE
-      if (askForLocation && 'geolocation' in navigator) {
+      const chosen = bike === null ? null : bikeById(bike)
+      if (askForLocation && !again && 'geolocation' in navigator) {
         // Inside the tap, and deliberately not awaited: the walkthrough closes either way, and
         // the permission sheet is the system's to manage from here. A denial lands in the ride
         // screen's `denied` state, which already says what to do about it.
@@ -69,7 +94,7 @@ export default function Onboarding({
       }
       onDone(chosen)
     },
-    [bike, onDone],
+    [again, bike, onDone],
   )
 
   const next = () => (index === last ? finish(true) : setIndex(index + 1))
@@ -81,10 +106,15 @@ export default function Onboarding({
           <img src="/icons/icon-192.png" alt="" width={26} height={26} />
           Free Wheel
         </span>
-        {/* Skips to the end rather than closing: the last card is the permission ask, and a
-            rider who skips the explanation still needs to be offered location once. */}
-        <button type="button" className="onboarding-skip" onClick={() => setIndex(last)}>
-          Skip
+        {/* Skips to the end rather than closing, because the last card is the permission ask
+            and a rider who skips the explanation still needs to be offered location once.
+            Shown again there is nothing left to offer, so it is simply the way out. */}
+        <button
+          type="button"
+          className="onboarding-skip"
+          onClick={() => (again ? finish(false) : setIndex(last))}
+        >
+          {again ? 'Done' : 'Skip'}
         </button>
       </header>
 
@@ -190,7 +220,7 @@ export default function Onboarding({
             </button>
           )}
           <button type="button" className="primary" onClick={next}>
-            {slide.location ? 'Allow location & start' : 'Next'}
+            {!slide.location ? 'Next' : again ? 'Done' : 'Allow location & start'}
           </button>
         </div>
       </footer>

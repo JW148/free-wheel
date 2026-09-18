@@ -223,6 +223,19 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   answers "has this rider met the app"; the gate answers "does this phone have anything to ride
   on". A rider who deletes every region to free space must get the second and never the first.
   Skipping counts as having seen it.
+- **The walkthrough is shown once by itself and reachable for ever from Setup**, as the third
+  row — *How this app works*. It used to retire the moment it was finished, which is a strange
+  fate for the only six screens that explain the app, and the premise a rider forgets between
+  seasons (download the map before you leave) is on card two. Shown again it *reports* rather
+  than *asks*, and all three differences guard the same thing: the bike chips start on
+  `bikeFor(rider)` and on **nothing at all** when no chip describes the rider's setup;
+  **finishing writes the rider only if a chip was tapped**, so reading the cards cannot reset
+  someone's tyres; and the last card stops asking for location, because a browser that was
+  refused once will not prompt again however the button is worded. `bikeFor` matches on all
+  three fields — `style` alone would confuse gravel with mountain, which share a profile and
+  differ on tyres by nearly 2× in rolling resistance. `App` owns which of the two lives it is
+  in, because the first run covers the maps gate while a revisit is drawn *over* Setup, which
+  has to still be there to come back to.
 - **The onboarding pictures are clipped out of the running app, and are never drawn.**
   `web/tools/onboarding-shots.mjs` drives the built app in headless Chrome against a real
   basemap and a real BRouter segment, plans a real route, rides it, and clips six rectangles at

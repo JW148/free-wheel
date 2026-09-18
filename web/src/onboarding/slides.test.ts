@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { BIKES, SHOTS, SLIDES, bikeById } from './slides'
+import { BIKES, SHOTS, SLIDES, bikeById, bikeFor } from './slides'
 import { PROFILES } from '../ride/profiles'
 import { POSITIONS, TYRES } from '../ride/rider'
 
@@ -48,6 +48,38 @@ describe('the bike question', () => {
 
   it('falls back rather than throwing on an id that is no longer offered', () => {
     expect(bikeById('penny-farthing')).toBe(BIKES[0])
+  })
+
+  /*
+   * The walkthrough is reachable for ever from Setup now, so the card has a second job: on a
+   * revisit it reports the rider's setup rather than guessing at it. These two are what stops
+   * reading the cards from quietly rewriting settings.
+   */
+  describe('reading a bike back off the rider', () => {
+    it('recognises every chip from the setup it writes', () => {
+      for (const bike of BIKES) {
+        expect(bikeFor({ style: bike.profile, position: bike.position, tyres: bike.tyres })).toBe(bike)
+      }
+    })
+
+    /*
+     * `gravel` and `mtb` share a profile and differ on tyres, so matching on `style` alone
+     * would light the wrong chip — and answering the card would then write that chip's tyres,
+     * which are nearly twice the rolling resistance of the other's.
+     */
+    it('does not confuse the two answers that share a profile', () => {
+      const gravel = bikeById('gravel')
+      const mtb = bikeById('mtb')
+      expect(gravel.profile).toBe(mtb.profile)
+      expect(bikeFor({ style: mtb.profile, position: mtb.position, tyres: mtb.tyres })).toBe(mtb)
+    })
+
+    /* A rider who changed one row in *You and the bike* has a setup no chip describes. Saying
+       so is the point: `null` is what keeps the revisit from writing anything back. */
+    it('answers null for a setup no chip produces', () => {
+      const road = bikeById('road')
+      expect(bikeFor({ style: road.profile, position: road.position, tyres: 'mtb' })).toBeNull()
+    })
   })
 })
 

@@ -146,6 +146,32 @@ export const DEFAULT_BIKE = BIKES[0]
 export const bikeById = (id: string): BikeChoice =>
   BIKES.find((b) => b.id === id) ?? DEFAULT_BIKE
 
+/**
+ * Which chip, if any, describes a rider's current setup — and `null` is a real answer.
+ *
+ * Only for the walkthrough shown *again* from Setup, where the card is reporting a setting
+ * rather than making a first guess at one.
+ *
+ * All three fields have to agree. A chip is a shortcut for three settings that stay
+ * individually editable in *You and the bike*, so a rider who changed their tyres there has a
+ * combination no chip produces — and lighting one up would claim their setup is that chip's,
+ * which is worse than saying nothing, because answering the card then writes the chip's other
+ * two values over theirs. `style` alone would not do either: `gravel` is the profile behind
+ * both the gravel and the mountain answers, and they differ on tyres by a factor of nearly two
+ * in rolling resistance.
+ */
+export function bikeFor(setup: {
+  style: ProfileId
+  position: PositionId
+  tyres: TyreId
+}): BikeChoice | null {
+  return (
+    BIKES.find(
+      (b) => b.profile === setup.style && b.position === setup.position && b.tyres === setup.tyres,
+    ) ?? null
+  )
+}
+
 const STORAGE_KEY = 'free-wheel.onboarded.v1'
 
 /**

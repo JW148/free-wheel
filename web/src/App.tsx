@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
 import Onboarding from './onboarding/Onboarding'
-import { hasOnboarded, type BikeChoice } from './onboarding/slides'
+import { DEFAULT_BIKE, bikeFor, hasOnboarded, type BikeChoice } from './onboarding/slides'
 import { useMapLibre } from './ride/useMapLibre'
 import { useRider } from './ride/useRider'
 import { sharedEngine } from './engine/engineClient'
@@ -47,8 +47,16 @@ export default function App() {
   const rider = useRider()
   /** `null` is closed; a string is open on that page, and `''` is open on the menu. */
   const [setupOpen, setSetupOpen] = useState<'maps' | 'rider' | '' | null>(null)
-  /** Read once, at mount: it must not re-show because a render happened. */
-  const [onboarding, setOnboarding] = useState(() => !hasOnboarded())
+  /**
+   * The walkthrough, and which of its two lives it is in.
+   *
+   * `first-run` is read once at mount — it must not re-show because a render happened — and is
+   * the only one that covers the maps gate. `again` is Setup's row, and Setup stays mounted
+   * behind it, so finishing puts the rider back where they asked from.
+   */
+  const [walkthrough, setWalkthrough] = useState<'first-run' | 'again' | null>(() =>
+    hasOnboarded() ? null : 'first-run',
+  )
   /**
    * `null` until we know whether there is anything installed, so the first-run screen does not
    * flash up for a moment on every launch before OPFS reports what is already there.
@@ -129,18 +137,25 @@ export default function App() {
    * The bike answer lands in the rider's setup rather than in the plan, because it is a
    * property of the rider: which style to suggest, and the two inputs to the power model that
    * a rider would otherwise never touch. All three stay editable in *You and the bike*.
+   *
+   * `null` means the rider read the cards again without answering that one, and it must write
+   * nothing: the walkthrough is reachable for ever from Setup now, and a rider going back to
+   * remind themselves how downloads work would otherwise come out the other end with their
+   * tyres reset.
    */
   const finishOnboarding = useCallback(
-    (bike: BikeChoice) => {
-      rider.update({ style: bike.profile, position: bike.position, tyres: bike.tyres })
-      setOnboarding(false)
+    (bike: BikeChoice | null) => {
+      if (bike) rider.update({ style: bike.profile, position: bike.position, tyres: bike.tyres })
+      setWalkthrough(null)
     },
     [rider],
   )
 
-  // The walkthrough covers the gate, so the gate does not also render underneath it. Both are
+  // The *first run* covers the gate, so the gate does not also render underneath it. Both are
   // full-screen and opaque; stacking them would mean a flash of Setup on every first launch.
-  const showSetup = !onboarding && (setupOpen !== null || needsSetup === true)
+  // Shown again it is the other way round — it was opened from Setup, which has to still be
+  // there to come back to.
+  const showSetup = walkthrough !== 'first-run' && (setupOpen !== null || needsSetup === true)
 
   return (
     <>
@@ -158,9 +173,19 @@ export default function App() {
           gate={needsSetup === true}
           openOn={setupOpen || undefined}
           onClose={closeSetup}
+          onShowWalkthrough={() => setWalkthrough('again')}
         />
       )}
-      {onboarding && <Onboarding onDone={finishOnboarding} />}
+      {walkthrough && (
+        <Onboarding
+          // On a revisit the chips report the rider's setup, and report nothing when no chip
+          // describes it. On the first run there is nothing to report and the default is a
+          // better opening guess than an empty row.
+          bike={walkthrough === 'again' ? (bikeFor(rider.setup)?.id ?? null) : DEFAULT_BIKE.id}
+          again={walkthrough === 'again'}
+          onDone={finishOnboarding}
+        />
+      )}
     </>
   )
 }

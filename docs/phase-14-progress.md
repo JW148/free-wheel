@@ -1,7 +1,8 @@
 # Phase 14 — the first run shows the app
 
-Implemented 2026-09-18, from one observation: the six pixel glyphs the walkthrough drew were
-unreadable. Nobody could tell what they were supposed to be.
+Implemented 2026-09-18, from one observation and one request: the six pixel glyphs the
+walkthrough drew were unreadable — nobody could tell what they were supposed to be — and once
+the walkthrough was finished there was no way back into it.
 
 The fix is not better glyphs. It is that each card now shows **the screen it is about**, clipped
 out of the running app — so a rider arrives at the ride screen already knowing what they are
@@ -115,18 +116,57 @@ One `@media (max-height: 740px)` block takes the picture to 32% and the gaps fro
 0.9 rem, which is 107 px. The card stays a scroller — a long enough translation will always beat
 any budget — but it no longer needs to be one on a phone anybody has.
 
+## 6 · And a way back into it
+
+Finished, the walkthrough was unreachable. Six cards explaining the app, retired after one
+viewing — in an app whose whole premise is on card two, and whose riders meet that premise again
+every time they go somewhere new.
+
+It is the third row in Setup, *How this app works*, under Maps and the rider: a rider opens
+Setup to download a region, not to read. A line of text beside Diagnostics would have been
+cheaper and wrong — the two riders who want this are the one in their first week and the one
+coming back after a winter, and they are exactly the two least likely to go looking in the small
+print.
+
+### Shown again, it reports rather than asks
+
+The bike card is the whole problem. It writes three settings — `style`, `position`, `tyres` —
+that stay individually editable in *You and the bike*, so a walkthrough reopened to read about
+downloads and closed again would have written the default hybrid over whatever the rider had
+set. Three changes, all guarding that:
+
+- The chips start on `bikeFor(rider.setup)`, which matches on **all three fields** and returns
+  `null` when none of the four describes the rider. `style` alone would not do: gravel and
+  mountain share a profile and differ on tyres by nearly 2x in rolling resistance.
+- `onDone` takes `BikeChoice | null`, and `null` writes nothing. Reading the cards is read-only.
+- The last card stops asking for location and its button says *Done*. Location has been offered
+  once already, and a browser that was refused will not prompt a second time however the button
+  is worded — so *Allow location & start* would have been a button that does nothing.
+
+`App` owns which of the two lives the walkthrough is in, because they stack the opposite way
+round: the first run **covers** the maps gate (both are full-screen and opaque, and stacking
+them flashes Setup on every first launch), while a revisit is drawn **over** Setup, which has to
+still be there to come back to.
+
 ## Verified
 
-`npx vitest run` — 715 green, unchanged: three glyph tests went with `glyphs.ts` and three
-picture tests replaced them. The useful one asserts **every name a card asks for has a file on
-disk**, which is the one failure a screenshot has that a drawing does not, and which nothing
-else in the build would have said a word about. `tsc -b`, `npm run build` and `npm run lint`
-clean (the four lint warnings are pre-existing and in other files).
+`npx vitest run` — **718 green**, from 715. Three glyph tests went with `glyphs.ts`, three
+picture tests replaced them, and three more cover `bikeFor`. The useful picture test asserts
+**every name a card asks for has a file on disk**, which is the one failure a screenshot has
+that a drawing does not, and which nothing else in the build would have said a word about.
+`tsc -b` and `npm run build` clean; `npm run lint` reports the same 46 warnings with the change
+as without it, all of them in files this phase did not touch.
 
 `tools/drive.mjs` at a true 390 x 844, all six cards. Separately at **375 x 667**, where the
 measured overflow on the bike card went from 89 px to 0, and on the dark theme, which is
 unreachable in practice — a rider with dark set has already onboarded — but does not look
 broken.
+
+`drive.mjs` also walks the Setup row, and through the state that matters: it first picks a tyre
+in *You and the bike* that no bike answer produces, opens the walkthrough and prints
+`chips lit: 0`, then finishes and compares `free-wheel.rider.v1` before and after —
+`rider untouched: true`. That last line is the invariant the whole revisit turns on, and it
+costs one `evaluate` call.
 
 Two traps cost a pass each and are worth recording:
 
@@ -152,3 +192,7 @@ Two traps cost a pass each and are worth recording:
    the map is a *control*.
 5. **Whether the 375 x 667 layout is comfortable rather than merely fitting.** The picture is
    213 px there and cuts through the third route card.
+6. **Whether a rider ever finds the Setup row.** It is discoverable by anyone who opens Setup,
+   which is everyone at least once, but nothing points at it from the ride screen. If the
+   walkthrough turns out to be worth *suggesting* rather than merely offering, the place for
+   that is the Layers sheet's Setup row, not a banner.
