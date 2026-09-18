@@ -1,17 +1,42 @@
-import type { GlyphName } from './glyphs'
 import type { PositionId, TyreId } from '../ride/rider'
 import type { ProfileId } from '../ride/profiles'
 
 /**
- * What the first run says, and what one of its answers changes.
+ * What the first run says, what it shows, and what one of its answers changes.
  *
  * Pure, and separate from the screen that draws it, because the one card that *does* something
  * — the bike question — has consequences three modules away and those are worth testing
  * without a DOM.
  */
 
+/**
+ * The six pictures, by name.
+ *
+ * Each is `public/onboarding/<name>.webp`, and each is a rectangle clipped out of the running
+ * app by `tools/onboarding-shots.mjs` — a real route over a real basemap, planned and ridden by
+ * a headless browser. They are **not** drawings of the app and must never become drawings of
+ * it: the whole reason the walkthrough shows pictures at all is so that a rider arrives at the
+ * ride screen already knowing what they are looking at, and a picture of a screen that does not
+ * exist teaches the opposite. Regenerate rather than retouch.
+ */
+export type ShotName = 'plan' | 'regions' | 'routes' | 'compare' | 'ride' | 'follow'
+
+export const SHOTS: ShotName[] = ['plan', 'regions', 'routes', 'compare', 'ride', 'follow']
+
 export interface Slide {
-  glyph: GlyphName
+  shot: ShotName
+  /** What the picture shows, for a rider who is not looking at it. */
+  alt: string
+  /**
+   * Which part of the picture survives when the tile is shorter than it.
+   *
+   * The pictures are all one shape and the tile is not — it is a fraction of the screen, so a
+   * short phone gets a shorter one and crops. `center` is right for the two that are a map with
+   * something in the middle of it; the others have their subject against an edge, and losing
+   * the riding panel off the top of the card about the riding panel would be the one crop that
+   * costs the card its point.
+   */
+  focus: 'top' | 'center' | 'bottom'
   title: string
   body: string
   /** Shows the bike chips. Exactly one card does. */
@@ -22,41 +47,53 @@ export interface Slide {
 
 export const SLIDES: Slide[] = [
   {
-    glyph: 'bike',
+    shot: 'plan',
+    alt: 'The ride screen: a map of the country west of Edinburgh, and a card offering to plan a ride.',
+    focus: 'bottom',
     title: 'Routes, with the network off',
     body:
       'Free Wheel plans and follows cycle routes entirely on your phone. No account, no ' +
       'server — nothing leaves the device.',
   },
   {
-    glyph: 'britain',
+    shot: 'regions',
+    alt: 'A map of Britain divided into fourteen named areas, with Central Scotland picked out.',
+    focus: 'center',
     title: 'Download where you ride',
     body:
       'Pick an area of Britain once. The map and the road data live on the phone, so it ' +
       'works in the hills and in the tunnel.',
   },
   {
-    glyph: 'taps',
+    shot: 'routes',
+    alt: 'Three differently coloured routes between the same two points, drawn across a map.',
+    focus: 'center',
     title: 'Two taps, three routes',
     body:
       'Tap your start, tap your finish. You get a relaxed, a fast and an off-road option to ' +
       'pick from — no settings first.',
   },
   {
-    glyph: 'bikes',
+    shot: 'compare',
+    alt: 'Three route cards — Relaxed, Fast and Off-road — each with its time, distance and climbing.',
+    focus: 'center',
     title: 'What are you riding?',
     body: 'This sets which route we suggest first. You can change it any time.',
     bikes: true,
   },
   {
-    glyph: 'climb',
+    shot: 'ride',
+    alt: 'The riding panel: speed, power, distance to go, arrival time, and the next climb.',
+    focus: 'top',
     title: 'Follow it on the road',
     body:
       'Speed, the next climb, how far to go and when you arrive — and a voice that tells ' +
       'you about the hill before you see it.',
   },
   {
-    glyph: 'locate',
+    shot: 'follow',
+    alt: 'The map following a rider along their route, with the road ahead drawn in front of them.',
+    focus: 'top',
     title: 'Where are you?',
     body:
       'Allow location so the map can find you, follow you on the ride and route again if ' +

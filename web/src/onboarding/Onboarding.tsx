@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from 'react'
-import { GLYPHS, type Glyph } from './glyphs'
 import { BIKES, DEFAULT_BIKE, SLIDES, markOnboarded, type BikeChoice } from './slides'
 import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
 
@@ -14,6 +13,15 @@ import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
  * being confused. Six cards is the smallest number that covers them and still ends on the
  * permission prompt, which has to be last because it is the only card that asks for
  * something.
+ *
+ * ## Each card shows the screen it is about
+ *
+ * It used to draw a pixel glyph on the app icon's own 20 x 14 grid — cheap, no bytes, nothing
+ * to 404 on a cold cache, and unreadable. Twenty cells cannot say "three routes you compare"
+ * or "a panel that tells you about the hill ahead"; two bikes side by side read as a pair of
+ * spectacles. So each card carries a picture of the thing it is describing, clipped out of the
+ * running app by `tools/onboarding-shots.mjs`. The walkthrough now teaches the screen rather
+ * than describing it, which is the only reason to spend 730 kB on it.
  *
  * ## It is a carousel, so it swipes
  *
@@ -101,7 +109,7 @@ export default function Onboarding({
         >
           {SLIDES.map((card, i) => (
             <section
-              key={card.glyph}
+              key={card.shot}
               className="onboarding-card"
               style={{ width: `${100 / SLIDES.length}%` }}
               // `inert` rather than `aria-hidden` alone: every card stays mounted so the
@@ -109,8 +117,20 @@ export default function Onboarding({
               // focusable is a tab order that walks off the side of the screen.
               inert={i === index ? undefined : true}
             >
-              <div className="onboarding-tile">
-                <PixelGlyph glyph={GLYPHS[card.glyph]} />
+              {/*
+                Eager, and every one of them. They are six precached files read off the disk,
+                and `loading="lazy"` on a deck whose cards are all mounted so that a swipe
+                reveals the next one would hand back a blank tile at exactly the moment the
+                swipe is meant to be showing it something.
+              */}
+              <div className="onboarding-shot" data-focus={card.focus}>
+                <img
+                  src={`/onboarding/${card.shot}.webp`}
+                  alt={card.alt}
+                  width={780}
+                  height={1200}
+                  decoding="async"
+                />
               </div>
               <h1>{card.title}</h1>
               <p>{card.body}</p>
@@ -148,7 +168,7 @@ export default function Onboarding({
         <div className="onboarding-dots">
           {SLIDES.map((card, i) => (
             <button
-              key={card.glyph}
+              key={card.shot}
               type="button"
               className="onboarding-dot-button"
               data-current={i === index ? 'yes' : 'no'}
@@ -174,27 +194,6 @@ export default function Onboarding({
           </button>
         </div>
       </footer>
-    </div>
-  )
-}
-
-/**
- * A glyph as a CSS grid of spans.
- *
- * `aria-hidden` because it is decoration: the title beside it says what the card is about, and
- * a screen reader announcing 280 empty cells would be worse than useless. The cell size is a
- * custom property so the same component serves the 12px tile here and anything smaller later.
- */
-function PixelGlyph({ glyph }: { glyph: Glyph }) {
-  return (
-    <div className="pixel-glyph" aria-hidden="true">
-      {glyph.map((row, y) => (
-        <div key={y} className="pixel-row">
-          {row.map((colour, x) => (
-            <span key={x} style={colour ? { background: colour } : undefined} />
-          ))}
-        </div>
-      ))}
     </div>
   )
 }

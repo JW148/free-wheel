@@ -50,6 +50,12 @@ pnpm-debug.log*
 *.rd5
 *.pmtiles
 
+# Screenshots taken by `web/tools/drive.mjs` and `--full` runs of `onboarding-shots.mjs`,
+# plus the browser profile the latter reuses. Looking at the app is not a build artefact; the
+# six pictures the walkthrough actually ships are written to web/public/onboarding/ instead,
+# and those are committed.
+/web/shots/
+
 # On-device spike runs are captured artefacts, not source. Keep the ones that
 # matter by copying them into docs/spike-*-results.md.
 /docs/spike-runs/

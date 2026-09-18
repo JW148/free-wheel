@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-07-26, updated 2026-09-14. Read `CLAUDE.md` first for the rules of the repo, then
+Written 2026-07-26, updated 2026-09-18. Read `CLAUDE.md` first for the rules of the repo, then
 this for where the work actually stands.
 
 `brouter-link/` is correctly excluded from git and its own checkout is clean; verify with
@@ -24,13 +24,15 @@ this for where the work actually stands.
 | **Phase 11** — the redesign | 🟡 Light chrome with a dark variant from one token set; two taps → three plain-language routes; a six-card pixel first run; the rail cut from seven buttons to two; Saved and Setup promoted to screens; hold-to-end. Driven end to end in headless Chrome at 390 px in **both themes**, 615 tests green. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 12** — what the riders found | 🟡 Offline place search over the names already in each basemap archive; saved places; a reroute that keeps the ride rather than replacing it; a sheet you can actually grab; a first run that swipes; ride totals; an unmistakable riding mode. 707 tests green, driven at 390 px in both themes against a real imported archive. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 13** — three quirks off the ride screen | 🟡 The riding HUD is dragged between its two sizes like the plan sheet (`--hud-p`, a centred chevron on the bottom edge); the sheet reopens on the view it was put away on; Saved's detail lost its second back arrow. 718 tests green, driven at 390 px. **Not yet ridden, not yet on a physical iPhone** |
+| **Phase 14** — the first run shows the app | 🟡 The walkthrough's six pixel glyphs are replaced by six rectangles clipped out of the running app — a real route over a real basemap, planned and ridden by a headless browser, at roughly life size. New tool `web/tools/onboarding-shots.mjs`; pictures committed to `web/public/onboarding/`. 715 tests green, driven at 390 x 844 and at 375 x 667. **Not yet ridden, not yet on a physical iPhone** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-2-progress.md`, `docs/phase-3-progress.md`, `docs/phase-4-progress.md`,
 `docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
 `docs/phase-8-progress.md`, `docs/phase-9-progress.md`, `docs/phase-10-progress.md`,
-`docs/phase-11-progress.md`, `docs/phase-12-progress.md`, `docs/phase-13-progress.md`. Each
+`docs/phase-11-progress.md`, `docs/phase-12-progress.md`, `docs/phase-13-progress.md`,
+`docs/phase-14-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
@@ -45,7 +47,7 @@ wrong.
 
 ## Where to pick up
 
-**The next action is a ride, and it is now overdue in three directions.** Phases 7 through 13
+**The next action is a ride, and it is now overdue in three directions.** Phases 7 through 14
 have all been built and none of them has been on a road. Phase 11 reversed the app's oldest
 visual decision — the chrome is light now — and that is a decision only sunlight can settle;
 `docs/phase-11-progress.md` §"Not done" lists the five questions a desk cannot answer, the first
