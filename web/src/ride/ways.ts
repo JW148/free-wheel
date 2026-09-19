@@ -1,0 +1,342 @@
+import type { ParsedRoute, WayTagsAt } from './gpx'
+import type { RouteGeometry } from './progress'
+
+/**
+ * What the road under the rider is made of, in the rider's words rather than the schema's.
+ *
+ * ## Where this comes from, and why it is not the basemap
+ *
+ * Every `.rd5` routing tile encodes its ways against `lookups.dat`, a fixed tag vocabulary,
+ * and that vocabulary carries `highway`, `surface`, `smoothness`, `tracktype` and the four
+ * cycle-route relations `route_bicycle_icn` / `ncn` / `rcn` / `lcn`. BRouter decodes them onto
+ * every segment of every route it computes, and mode 9 writes them out. So this is data the
+ * phone already had, from the file it was already routing against.
+ *
+ * It is worth being precise about the last of those, because `docs/phase-5-progress.md`
+ * concluded that cycle network data is absent and was right — about the **basemap**. Protomaps
+ * ships no `route=bicycle` relations at all. The routing tiles are a second dataset on the same
+ * phone and they know network *membership*. Not the number: this can say "6.2 km on the
+ * National Cycle Network" and can never say "NCN 1".
+ *
+ * ## Why a table
+ *
+ * The same argument `search/kinds.ts` makes about place kinds. `unclassified` is not "not
+ * classified", `tracktype=grade3` means nothing to anybody, and a rider does not want to be
+ * told they are on a `highway=living_street`. The vocabulary is wide and shallow, so it
+ * collapses into a handful of words, and anything the table has never heard of falls back
+ * rather than appearing raw.
+ *
+ * ## Why the fallbacks lean the way they do
+ *
+ * Two of them are asymmetric on purpose, and both asymmetries point the same way: **never
+ * invent a warning**.
+ *
+ * An untagged surface is `unknown`, not `paved`. The map marks unpaved stretches with a dash,
+ * and guessing here would draw that dash over a road nobody has measured — a claim about the
+ * world made out of a gap in OpenStreetMap. `unknown` earns a row in the table, where a rider
+ * can see that a tenth of the route is untagged and take it as a fact about the map.
+ *
+ * A `highway` value the table has never seen is `road`, never `main`. The main-road mark is
+ * supposed to mean something the first time it is seen, and a schema addition that quietly
+ * started painting caution stripes would spend that meaning.
+ */
+
+/** Ordered best to worst, which is the order the strip and the table are read in. */
+export const ROAD_CLASSES = ['cyclepath', 'path', 'road', 'main'] as const
+export type RoadClass = (typeof ROAD_CLASSES)[number]
+
+export const SURFACE_CLASSES = ['paved', 'rough', 'loose', 'unknown'] as const
+export type SurfaceClass = (typeof SURFACE_CLASSES)[number]
+
+/** A stretch of route over which the tags do not change. */
+export interface WayRun {
+  fromM: number
+  toM: number
+  /** Everything BRouter decoded, so a later question can be asked without re-routing. */
+  tags: Record<string, string>
+  road: RoadClass
+  surface: SurfaceClass
+}
+
+export const ROAD_LABELS: Record<RoadClass, string> = {
+  cyclepath: 'Cycle path',
+  path: 'Path or track',
+  road: 'Minor road',
+  main: 'Main road',
+}
+
+export const SURFACE_LABELS: Record<SurfaceClass, string> = {
+  paved: 'Paved',
+  rough: 'Cobbles or setts',
+  loose: 'Unpaved',
+  unknown: 'Not recorded',
+}
+
+const PAVED = new Set([
+  'asphalt',
+  'paved',
+  'concrete',
+  'concrete:plates',
+  'concrete:lanes',
+  'cement',
+  'chipseal',
+  'paving_stones',
+  'paving_stones:30',
+  'paving_stones:20',
+  'metal',
+  'wood',
+  'bricks',
+  'brick',
+])
+
+const ROUGH = new Set([
+  'sett',
+  'cobblestone',
+  'cobblestone:flattened',
+  'unhewn_cobblestone',
+  'grass_paver',
+  'pebblestone',
+])
+
+const LOOSE = new Set([
+  'unpaved',
+  'unpaved_minor',
+  'gravel',
+  'fine_gravel',
+  'compacted',
+  'ground',
+  'soil',
+  'dirt',
+  'dirt/sand',
+  'earth',
+  'sand',
+  'grass',
+  'artificial_turf',
+  'mud',
+  'clay',
+  'rock',
+  'rocks',
+  'rocky',
+  'stone',
+])
+
+/**
+ * The surface class of a way.
+ *
+ * `compacted` is deliberately `loose` rather than `paved`. It is a rideable bound gravel and
+ * plenty of tourers would not think twice, but it is not tarmac, and the rider who cares about
+ * this distinction is the one on 25 mm tyres who wants to know before they get there.
+ */
+export function classifySurface(tags: Record<string, string>): SurfaceClass {
+  const surface = tags.surface
+  if (surface) {
+    if (PAVED.has(surface)) return 'paved'
+    if (ROUGH.has(surface)) return 'rough'
+    if (LOOSE.has(surface)) return 'loose'
+    return 'unknown'
+  }
+
+  // Only where `surface` said nothing. A track tagged both ways means somebody surveyed the
+  // surface itself, and that beats a grading of the track as a whole.
+  const tracktype = tags.tracktype
+  if (tracktype) return tracktype === 'grade1' ? 'paved' : 'loose'
+
+  return 'unknown'
+}
+
+const PATHS = new Set([
+  'path',
+  'track',
+  'bridleway',
+  'footway',
+  'steps',
+  'pedestrian',
+  'corridor',
+  'platform',
+])
+
+const MAIN = new Set([
+  'primary',
+  'primary_link',
+  'secondary',
+  'secondary_link',
+  'trunk',
+  'trunk_link',
+  'motorway',
+  'motorway_link',
+])
+
+export function classifyRoad(tags: Record<string, string>): RoadClass {
+  const highway = tags.highway
+  if (highway === 'cycleway') return 'cyclepath'
+  if (highway && PATHS.has(highway)) return 'path'
+  if (highway && MAIN.has(highway)) return 'main'
+  return 'road'
+}
+
+const runCache = new WeakMap<ParsedRoute, WayRun[] | null>()
+
+/**
+ * The route cut into stretches of constant tags, measured in metres along it.
+ *
+ * Measured against the geometry the rest of the app measures against, rather than against
+ * BRouter's own `track-length`. The two differ by a few metres over tens of kilometres —
+ * `cumulativeM` is a sum of haversines over the track points, `track-length` is BRouter's —
+ * and this has to agree with the elevation profile's x-axis and with `snapToRoute`, not with
+ * the summary line. So the totals in the table are the route as drawn.
+ *
+ * Cached per route the way `routeGeometry` is, and for the same reason: the sheet, the map and
+ * the riding screen all ask for this, and a 76 km route is several hundred runs.
+ *
+ * **The first run starts at 0**, not at the first `<brouter:way>`. BRouter's first entry lands
+ * on the second track point, because the first is the snap from the tapped position onto the
+ * network, and leaving those few metres unattributed would put a gap in the strip at the one
+ * end the rider is looking at. The runs tile the route exactly, which is what lets the table
+ * claim to total it.
+ */
+export function wayRuns(route: ParsedRoute, geometry: RouteGeometry): WayRun[] | null {
+  const cached = runCache.get(route)
+  if (cached !== undefined) return cached
+
+  const built = buildRuns(route.ways, geometry)
+  runCache.set(route, built)
+  return built
+}
+
+function buildRuns(ways: WayTagsAt[] | undefined, geometry: RouteGeometry): WayRun[] | null {
+  if (!ways || ways.length === 0) return null
+
+  const { cumulativeM, totalM } = geometry
+  const at = (index: number) => cumulativeM[Math.min(index, cumulativeM.length - 1)]
+
+  const runs: WayRun[] = []
+  for (let i = 0; i < ways.length; i++) {
+    const fromM = i === 0 ? 0 : at(ways[i].index)
+    const toM = i === ways.length - 1 ? totalM : at(ways[i + 1].index)
+    // A tag change on a point the previous run already reached — two ways meeting at a
+    // node with no distance between them. Nothing to draw and nothing to measure.
+    if (toM <= fromM) continue
+    runs.push({
+      fromM,
+      toM,
+      tags: ways[i].tags,
+      road: classifyRoad(ways[i].tags),
+      surface: classifySurface(ways[i].tags),
+    })
+  }
+
+  // Collapsing a zero-length run leaves a hole. Close it by extending its neighbour, so the
+  // tiling property the table depends on survives contact with a real route.
+  for (let i = 1; i < runs.length; i++) {
+    if (runs[i].fromM > runs[i - 1].toM) runs[i - 1].toM = runs[i].fromM
+  }
+
+  return runs.length > 0 ? runs : null
+}
+
+export interface BreakdownRow {
+  label: string
+  metres: number
+}
+
+export interface Breakdown {
+  road: BreakdownRow[]
+  surface: BreakdownRow[]
+  /** Metres on the National Cycle Network, or a regional or international equivalent. */
+  networkM: number
+}
+
+/**
+ * How much of the route is what, longest first.
+ *
+ * `lcn` is excluded from the network figure on purpose. It is a council's own signage rather
+ * than the National Cycle Network the line names, and in a town it is on half the streets —
+ * counting it would turn an interesting figure into a meaningless one.
+ *
+ * @param keep how many rows survive before the tail is folded into `Other`. Four, because a
+ *             twelve-row table inside a drawer is a scroll, and the rows past the fourth are
+ *             a few hundred metres of service road nobody is deciding anything on.
+ */
+export function breakdownOf(runs: WayRun[], keep = 4): Breakdown {
+  const road = new Map<string, number>()
+  const surface = new Map<string, number>()
+  let networkM = 0
+
+  for (const run of runs) {
+    const length = run.toM - run.fromM
+    road.set(ROAD_LABELS[run.road], (road.get(ROAD_LABELS[run.road]) ?? 0) + length)
+    surface.set(
+      SURFACE_LABELS[run.surface],
+      (surface.get(SURFACE_LABELS[run.surface]) ?? 0) + length,
+    )
+    if (onNetwork(run.tags)) networkM += length
+  }
+
+  return { road: rank(road, keep), surface: rank(surface, keep), networkM }
+}
+
+const onNetwork = (tags: Record<string, string>): boolean =>
+  tags.route_bicycle_ncn === 'yes' ||
+  tags.route_bicycle_rcn === 'yes' ||
+  tags.route_bicycle_icn === 'yes'
+
+function rank(totals: Map<string, number>, keep: number): BreakdownRow[] {
+  const rows = [...totals]
+    .map(([label, metres]) => ({ label, metres }))
+    .filter((row) => row.metres > 0)
+    .sort((one, two) => two.metres - one.metres)
+
+  if (rows.length <= keep + 1) return rows
+
+  const tail = rows.slice(keep).reduce((total, row) => total + row.metres, 0)
+  return [...rows.slice(0, keep), { label: 'Other', metres: tail }]
+}
+
+/**
+ * What gets drawn on the map, and nothing else does.
+ *
+ * Two marks, both achromatic, both meaning "this stretch is not the ordinary case". Everything
+ * that is a paved minor road — most of a British ride — gets nothing, which is the whole
+ * design: mark every metre and the line becomes noise a rider learns to ignore; mark only what
+ * changes a decision and a dashed stretch means something the first time it appears.
+ *
+ * A stretch can carry both. They are different layers — a heavier casing beneath the line and
+ * a dashed centreline over it — so a gravel B road is drawn as both rather than one winning an
+ * argument.
+ *
+ * Neighbours carrying the same mark are merged, and that is not tidiness. A tag change is
+ * enough to end a run, so a single lane can be four runs as `smoothness` appears and
+ * disappears; drawn separately, every join is a visible seam in the dash.
+ */
+export type RunMark = 'unpaved' | 'main'
+
+export interface MarkedRun {
+  fromM: number
+  toM: number
+  mark: RunMark
+}
+
+export function markedRuns(runs: WayRun[]): MarkedRun[] {
+  const marked: MarkedRun[] = []
+
+  for (const mark of ['unpaved', 'main'] as const) {
+    const matches = (run: WayRun) =>
+      mark === 'unpaved' ? run.surface === 'loose' || run.surface === 'rough' : run.road === 'main'
+
+    let open: MarkedRun | null = null
+    for (const run of runs) {
+      if (!matches(run)) {
+        open = null
+        continue
+      }
+      if (open && open.toM === run.fromM) {
+        open.toM = run.toM
+      } else {
+        open = { fromM: run.fromM, toM: run.toM, mark }
+        marked.push(open)
+      }
+    }
+  }
+
+  return marked
+}
