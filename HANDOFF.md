@@ -26,7 +26,7 @@ this for where the work actually stands.
 | **Phase 13** — three quirks off the ride screen | 🟡 The riding HUD is dragged between its two sizes like the plan sheet (`--hud-p`, a centred chevron on the bottom edge); the sheet reopens on the view it was put away on; Saved's detail lost its second back arrow. 718 tests green, driven at 390 px. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 14** — the first run shows the app | 🟡 The walkthrough's six pixel glyphs are replaced by six rectangles clipped out of the running app — a real route over a real basemap, planned and ridden by a headless browser, at roughly life size. New tool `web/tools/onboarding-shots.mjs`; pictures committed to `web/public/onboarding/`. 715 tests green, driven at 390 x 844 and at 375 x 667. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 15** — stops along the way | 🟡 A plan is an ordered list of points that routes on every edit. A tap goes where it costs least — beside the line it is a stop, past the finish it extends — so there is no via mode; above two points one profile runs, because a stop changes the question three cards were answering. Make a loop, a named stop off the search, and a tap precedence that no longer eats the gesture. 743 tests, driven at 390 x 844 in both themes against a real basemap and a real `.rd5`. **Not yet ridden, not yet on a physical iPhone** |
-| **Phase 16** — the road, and the turns | 🟡 `turnInstructionMode = 9` makes BRouter write out what it already knew: the surface, road class and cycle-network membership of every metre, and the command at every junction. A strip and a breakdown in the sheet, two achromatic marks on the map, spoken and drawn turn-by-turn. Corpus runs both modes, 18 entries. 839 tests, driven at 390 x 844 in both themes against a real basemap and a real `.rd5`. **Not yet ridden, not yet on a physical iPhone** |
+| **Phase 16** — the road, and the turns | 🟡 `turnInstructionMode = 9` makes BRouter write out what it already knew: the surface, road class and cycle-network membership of every metre, and the command at every junction. A strip and a breakdown in the sheet, two achromatic marks on the map, spoken and drawn turn-by-turn. Corpus runs both modes, 20 entries, verified byte-identical against the running app. 839 tests, driven at 390 x 844 in both themes against a real basemap and a real `.rd5`. **Not yet ridden, not yet on a physical iPhone** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
@@ -41,8 +41,11 @@ wrong.
 ### The headline results, so they are not lost
 
 - **BRouter compiles to WasmGC unmodified.** 1.22 MB / 399 KB gzip.
-- **GPX is byte-identical to the JVM on 18/18 reference routes** — nine cases at two output
+- **GPX is byte-identical to the JVM on 20/20 reference routes** — ten cases at two output
   modes, including three that cross a tile seam. This is the regression net; keep it green.
+  One case, `edinburgh-short`, sits in the tile the driver scripts import, so
+  `web/tools/drive-parity.mjs` can check the running app against the JVM in about a minute
+  instead of needing a 215 MB import.
 - **The `.rd5` tiles carry surface, road class and cycle-network membership**, and BRouter
   computes them on every route whether or not anyone asks. `turnInstructionMode = 9` is the
   only mode that writes them out, along with the turn command at each junction.

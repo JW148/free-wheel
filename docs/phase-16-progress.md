@@ -46,7 +46,7 @@ Parity was never at risk. `jvmRoutes` calls the same `Router.routeIn` the browse
 purpose, so a mode change moves both sides identically. What went stale was the recorded byte
 lengths and CRCs.
 
-Eighteen entries now: every case at mode 0 and at mode 9. Mode 0 stays because it is what any
+Twenty entries now: every case at mode 0 and at mode 9. Mode 0 stays because it is what any
 other BRouter client would produce, and a divergence there is worth catching too.
 
 **Mode 9 is not slower.** Measured on the JVM:
@@ -60,6 +60,25 @@ other BRouter client would produce, and a divergence there is worth catching too
 The differences are warm-up noise. The spec carried a 25% threshold and a documented fallback
 (comparison at mode 0, the chosen route re-run at 9); neither is needed and the fallback was not
 built. **GPX roughly doubles**, which matters only for the library's IndexedDB records.
+
+### A tenth case, so parity can actually be checked
+
+The corpus was all southern England, which meant checking it in a browser needed `W5_N50` and
+`E0_N50` in OPFS — 215 MB through the file picker, which took **half an hour**. A check nobody
+will run is not a check.
+
+`edinburgh-short` is a tenth case — the 19th and 20th entries — inside `W5_N55`, the 26 MB tile
+every driver script already imports. `tools/drive-parity.mjs` seeds that case's waypoints into the plan *reversed*,
+presses the app's own Reverse button to route them in order through the same `toFixed(6)` path
+a tap takes, and compares the GPX to the JVM's by length and SHA-256.
+
+**Byte-identical**: 34,492 bytes, `7b098b9bfb7e2bfb…`, in about a minute. That is the check
+worth having after a change to the output format, because mode 9 writes numbers the plain mode
+never did — `VoiceHint.formatGeometry` casts floats to ints, and a float cast is exactly what a
+translation gets subtly wrong.
+
+It proves **V8** against HotSpot. The handoff's claim is about **JSC**, and only a phone settles
+that; the Diagnostics panel replaying all twenty is still the right tool there.
 
 ## 4 · Reading it back
 

@@ -88,6 +88,13 @@ public final class JvmRouteMain {
       "0.2196,51.4465|1.0789,51.2798",
       "~70 km entirely inside E0_N50; proves the second tile stands alone"));
 
+    // W5_N55, which every other case misses and every driver script uses. Edinburgh is the
+    // tile the browser harnesses import, so this is the one corpus case that can be checked
+    // against a *running app* in minutes rather than against a 215 MB import.
+    cases.add(new RouteCase("edinburgh-short", "trekking",
+      "-3.218000,55.941500|-3.180300,55.904000",
+      "~8 km across Edinburgh, inside W5_N55; the tile the drivers run on"));
+
     if (!gpxDir.exists() && !gpxDir.mkdirs()) {
       throw new IOException("could not create " + gpxDir);
     }

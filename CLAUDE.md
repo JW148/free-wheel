@@ -607,9 +607,15 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   setting it first is silently reverted and the GPX comes back with no extensions at all.
   The tags cost nothing: BRouter's second, guide-track pass already runs in detail mode and
   builds them. Measured on the JVM, mode 9 is **not slower**; the GPX roughly doubles.
-- **The corpus runs every case at both modes — 18 entries, not 9.** Mode 0 stays because it is
+- **The corpus runs every case at both modes — 20 entries, not 10.** Mode 0 stays because it is
   what any other BRouter client would produce. `ReferenceRoute.timode` is absent on a reference
   file older than this, where 0 is the only mode there ever was.
+- **`edinburgh-short` exists so parity can actually be checked.** Every other case is in
+  southern England, so replaying the corpus in a browser needed `W5_N50` and `E0_N50` in OPFS —
+  215 MB through the file picker, half an hour, a check nobody runs. That case sits in
+  `W5_N55`, the 26 MB tile the driver scripts already import, and `tools/drive-parity.mjs`
+  compares the running app's GPX to the JVM's by length and SHA-256 in about a minute. It
+  proves V8 against HotSpot; the **JSC** claim still needs the Diagnostics panel on a phone.
 - **The `.rd5` tiles know about cycle networks; the basemap does not.** `lookups.dat` carries
   `route_bicycle_ncn`/`rcn`/`lcn`/`icn` as well as `surface`, `smoothness` and `tracktype`, so
   a *route* can be measured against the National Cycle Network. It is **membership, never a
