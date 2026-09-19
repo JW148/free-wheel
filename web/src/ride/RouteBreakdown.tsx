@@ -4,7 +4,6 @@ import type { ParsedRoute } from './gpx'
 import { routeGeometry } from './progress'
 import { breakdownOf, wayRuns, ROAD_COLOURS, type BreakdownRow, type RoadClass } from './ways'
 
-
 /**
  * How much of the route is what.
  *
