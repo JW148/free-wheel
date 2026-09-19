@@ -43,6 +43,8 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
   src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
                  The navigation kernel — progress, climbs, power, ascent, recording, library,
                  hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
+                 Stops along the way are `insertionIndex` and `plan.shaping`, both in the same
+                 kernel. There is no via mode: a tap already knows where in the order it goes.
   src/onboarding/ The six-card first run. Each card shows the screen it is about, clipped out
                  of the running app by `tools/onboarding-shots.mjs`. Its bike question writes
                  to the rider, not to the plan. It swipes as well as pressing Next; `swipe.ts`
@@ -112,7 +114,15 @@ toolchain resolves even when Gradle is launched from a different JVM.
 cd web
 npm run dev                                  # or: npm run build && npm run preview
 npm run build && npm run spike-server        # LAN-serve + accept POSTed on-device reports
+node tools/drive.mjs <url> <out>             # look at the app at 390px, no engine needed
+node tools/drive-stops.mjs <url> <out>       # …and with a real engine, for stops and shaping
 ```
+
+`drive-stops.mjs` is the second one because shaping is the only flow that cannot be driven from
+a seeded plan: the whole question is what happens between a tap and the line moving, so it
+imports a real basemap and a real `.rd5` and every route in it is an actual BRouter run. Both
+scripts hardcode a preview port — check nothing else is on it first, because a stale
+`vite preview` from a finished worktree will serve you the *previous* build with no warning.
 
 `spike-server` is `web/tools/report-server.mjs`: `vite preview` plus a `POST /spike-report` route
 that writes to `docs/spike-runs/` (gitignored). It exists so results measured on a phone come back
@@ -216,6 +226,51 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   visible the moment it happens — where the toggle was a mode you could be in without knowing,
   which is how a rider ends up tapping a map that has stopped responding. Riding still refuses
   taps entirely, and *that* guarantee is the one worth keeping.
+- **A tapped point goes wherever it costs least, and that is the whole of stops.**
+  `insertionIndex` scores each leg by the detour it would add — `d(a,p) + d(p,b) − d(a,b)` —
+  against `d(finish,p)` for extending past the finish, and takes the cheapest. One formula gives
+  both behaviours a rider expects: beside the line bends it, past the finish lengthens it. So
+  there is no via mode to arm and no Add-a-stop button on the map. Measured over the
+  **waypoints**, never the drawn route — nearest-point-on-the-line has no answer when the route
+  is stale, failed or absent, and says nothing about how far out of the way a distant tap is.
+  Prepending is deliberately not a candidate (the start is the one point a rider is sure about,
+  and the search slot and the pin drag both move it properly), and ties go to the earlier leg,
+  which only arises on a loop where the two legs are coincident and the intent is ambiguous
+  anyway.
+- **Every edit routes: a tap, a pin drag, a removal.** The one-to-two transition used to be the
+  only trigger, which is what made extra pins decorative — the rider placed them and the line
+  went on describing the two-point journey underneath. A drag fires on `dragend` only, so it is
+  one search per drag and there is no debounce anywhere.
+- **You cannot shape a comparison, and `plan.shaping` is that rule.** Three cards are three
+  answers to "which way between these two ends"; a stop changes the question, so above two
+  points exactly one profile runs and nothing is deferred — a deferred card offers to compute
+  itself, and there is nothing left to compute it *against*. The profile is
+  `isRoutableProfile(chosen) ? chosen : preferred`, the same fallback `rerouteProfile` uses and
+  for the same reason. **`plan.selection` is left alone**: it is what the rider is offered, not
+  what is on the map, so removing the stops restores the comparison.
+- **A shaping run keeps the old line and dims it; every other run blanks the source.** The
+  `stale` `RouteState` exists for the second or two the Worker blocks inside Wasm — a blank map
+  reads as the app having dropped the tap. It beats every other state, including an open
+  comparison, because the run is about to replace all three lines with one. Never dimmed while
+  riding: that line is still the road being followed. A shaping run also **replaces** the route
+  set rather than merging, and commits nothing when it fails.
+- **Don't frame the camera on the waypoint count.** It used to, and under shaping that is a
+  re-fit per tap — the rider zooms in, taps, is pulled back to the overview, zooms in again. The
+  fit signature is the profile ids plus `plan.framing`, bumped only when the line becomes a
+  different journey *without being cleared first*. Everything else (a new run, Reverse, a new
+  end from the search, Make a loop) blanks the route and frames itself on arrival; loading out
+  of Saved does not, which is what the counter is for.
+- **`waypointRows` names and numbers every point, and three surfaces read it.** The map pins,
+  the plan card and the sheet's list all used to derive `S` / `1` / `F` / `Rejoined` for
+  themselves. A rejoin is named rather than counted so it cannot renumber the pins the rider
+  placed. `PointList` is the row markup, used by the card and the open sheet — the sheet's own
+  `Start | coordinates | Remove` table is gone and should not come back.
+- **Make a loop is a button because a tap cannot be one.** Nobody taps exactly on their own front
+  door, so closing a plan onto its start is the only part of stops that needs a control. It
+  lives in `.sheet-actions` beside Reverse and Clear — the things that act on the whole plan —
+  and is disabled inside `isLoop`'s 50 m. What it appends is an out-and-back, which is honest:
+  the circular ride comes from the stops placed after it. Those three labels may not wrap, or
+  the sheet's two measured heights disagree mid-animation.
 - **The map carries two buttons: Layers and Locate.** Anything you set once and never touch again
   belongs in the Layers sheet, not on the map. The collapse chevron went with the other five
   buttons — it was a control for a control.
@@ -274,6 +329,13 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   or a system edge gesture leaves the hold running with nothing pressing it.
 - **The finish sheet must never grow a text field**, whatever a design shows. iOS shake-to-undo
   cannot be refused. The ride saves itself under a generated name; renaming is in Saved.
+- **A stop is named only when it came off the search.** The search screen's one extra row —
+  `+ Add a stop`, or `2 stops · add another` — is the only gesture that sets `PlanSlot`'s
+  `'stop'`, which had been written and unreachable since the screen existed. It is quieter than
+  the two fields because it is an action rather than a value; a third row in the same clothes
+  claims a stop the plan has not got. `placeAt` keeps the drawn line for this slot **and only
+  this slot**: a stop leaves both ends where they were, so the line is stale rather than wrong,
+  where a replaced end makes it wrong — and a wrong line is worse than none.
 - **There is no geocoder and there is not going to be one.** Turning a *position* into a name
   is a network service and the whole app is built on not needing one. A point the rider tapped
   on the map shows coordinates to four decimal places — about 11 m, enough to tell two taps
@@ -549,6 +611,15 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   the more specific intent, and dropping a waypoint on the line you were pointing at would
   reroute the thing you were trying to select. Mid-ride the decision is already made, so
   `routeAt` is skipped entirely — a bump in the road must not throw the drawer over the map.
+- **Reverting a choice is a tap on the chosen line, not a tap anywhere.** It used to be any tap
+  at all, justified by the pin toggle being on by default — and both halves of that have gone.
+  With a stop now being a real point, the old order meant a rider who had chosen a route could
+  not place one: the first tap silently un-chose it and the second shaped in a style they had
+  not picked. So a tap on the chosen line means "not this one", a tap on another line means
+  "that one", and a tap on the map is free to be the gesture the app is built on. A **lone**
+  route re-chooses rather than reverting, so shaping a single route cannot lose it by touching
+  it. `mapTapAction` owns the precedence and is tested — and note that its tests all passed
+  while the rule was wrong, because they asserted the old one. Driving the app found it.
 - **The plan card and the sheet it opens are one element, not two.** `--sheet-p` runs 0 at the
   card to 1 open and every difference between them is a `calc()` over it — the insets that make
   the card float, the bottom two radii, the height, the scrim. `useSheetDrag` writes the number

@@ -31,7 +31,7 @@ import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 import SearchScreen from '../search/SearchScreen'
 import { places } from '../search/searchStore'
-import type { PlanSlot } from './plan'
+import { waypointRows, type PlanSlot } from './plan'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -268,6 +268,10 @@ export default function RideView({
   canChoose.current = !riding
   const clearable = useRef(false)
   clearable.current = plan.clearableChoice
+  // Read from the tap handler, which is registered once: a clear is a tap on the chosen line,
+  // so the handler has to know which line that is without being rebuilt when it changes.
+  const chosenNow = useRef<string | null>(null)
+  chosenNow.current = plan.chosen
   /*
    * A tap on the map places a waypoint whenever the rider is planning.
    *
@@ -312,6 +316,7 @@ export default function RideView({
         profileUnderTap: canChoose.current ? routeAt(instance, e.point) : null,
         choosing: canChoose.current,
         clearableChoice: clearable.current,
+        chosen: chosenNow.current,
         placing: canPlace.current,
       })
       if (action.do === 'choose') chooseRoute.current(action.profile)
@@ -401,21 +406,13 @@ export default function RideView({
       }
     }
 
-    /*
-     * Numbering counts only the points the rider placed.
-     *
-     * A reroute adds a point where they rejoined the route — that is what keeps the original
-     * start (see `stitch.ts`) — and it is not a via they chose. Counting it would renumber
-     * every pin after it in the middle of a ride, and drawing it like the others would claim
-     * they put it there.
-     */
-    let placed = 0
+    // Numbering counts only the points the rider placed, and the rule lives in `waypointRows`
+    // because the plan card and the sheet's list both draw it too — see its doc comment for
+    // why a rejoin is named rather than counted.
+    const rows = waypointRows(plan.waypoints)
     plan.waypoints.forEach((waypoint, index) => {
-      const last = index === plan.waypoints.length - 1
-      const rejoin = waypoint.kind === 'reroute' && !last && index > 0
-      const ordinal = rejoin ? placed : placed++
-      const label = rejoin ? '' : index === 0 ? 'S' : last ? 'F' : String(ordinal)
-      const role = rejoin ? 'rejoin' : index === 0 ? 'start' : last ? 'finish' : 'via'
+      const { role, badge: label, word } = rows[index]
+      const rejoin = role === 'rejoin'
 
       let marker = markers.current.get(waypoint.id)
       if (!marker) {
@@ -446,7 +443,7 @@ export default function RideView({
       element.dataset.role = role
       element.dataset.editable = editable ? 'yes' : 'no'
       element.textContent = label
-      const described = rejoin ? 'the point you rejoined the route at' : `${role} point ${label}`
+      const described = rejoin ? 'the point you rejoined the route at' : word
       element.setAttribute(
         'aria-label',
         editable ? `${described}. Tap to remove.` : described,
@@ -470,13 +467,23 @@ export default function RideView({
     const visible =
       riding && plan.chosen && chosenRoute ? { [plan.chosen]: chosenRoute } : plan.routes
     const ids = Object.keys(visible)
-    const drawn = drawnRoutes(visible, plan.chosen)
+    // Never dimmed while riding. Off the bike a faded line means "a better answer is coming";
+    // on the bike it is still the road the rider is being asked to follow, and a reroute is
+    // exactly the moment they are looking hardest at it.
+    const drawn = drawnRoutes(visible, plan.chosen, plan.stale && !riding)
     setRoutes(instance, drawn)
 
-    // Fit only when the *set* of routes changes, and never while riding — the camera belongs
-    // to the rider then, and being yanked out to an overview mid-junction is the opposite of
-    // helpful.
-    const signature = [...ids].sort().join(',') + '|' + plan.waypoints.length
+    /*
+     * Fit only when the *set* of routes changes or the journey is replaced wholesale, and never
+     * while riding — the camera belongs to the rider then, and being yanked out to an overview
+     * mid-junction is the opposite of helpful.
+     *
+     * Deliberately not the waypoint count, which is what this used to key on. Shaping a route
+     * is a run of taps on a map the rider is looking at, and re-framing after each one moves
+     * the ground out from under the next tap: they zoom in, tap, get pulled back out to the
+     * overview, and zoom in again. `plan.framing` is the honest signal — see `useRoute`.
+     */
+    const signature = [...ids].sort().join(',') + '|' + plan.framing
     if (!riding && drawn.length > 0 && signature !== lastFitted.current) {
       lastFitted.current = signature
       const bounds = boundsOf(drawn.flatMap((r) => r.coords))
@@ -485,7 +492,7 @@ export default function RideView({
       }
     }
     if (drawn.length === 0) lastFitted.current = null
-  }, [map, styleReady, suspended, plan.routes, plan.chosen, plan.waypoints.length, riding])
+  }, [map, styleReady, suspended, plan.routes, plan.chosen, plan.stale, plan.framing, riding])
 
   // ── Progress and the climb ahead, on the map ──────────────────────────────────────────
   // Quantised to 25 m so the two GeoJSON sources are not rebuilt on every fix. At 25 km/h that

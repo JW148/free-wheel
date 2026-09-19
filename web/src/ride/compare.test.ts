@@ -69,4 +69,26 @@ describe('profilesToRun', () => {
     const { run } = profilesToRun(['trekking', 'gravel'], 'mtb', 10_000)
     expect(run).toEqual(['trekking', 'gravel'])
   })
+
+  /*
+   * The shaping rule, and the reason a via costs one search rather than three. A third point
+   * changes the question the comparison was answering, so the other two cards are not deferred
+   * — deferring offers to compute them, and there is nothing left to compute them *against*.
+   */
+  it('runs one profile, and defers nothing, once there is a via', () => {
+    const { run, deferred } = profilesToRun([...DEFAULT_PROFILES], 'gravel', 10_000, 3)
+    expect(run).toEqual(['gravel'])
+    expect(deferred).toEqual([])
+  })
+
+  it('shapes in the profile it is led with, however long the route', () => {
+    const { run, deferred } = profilesToRun([...DEFAULT_PROFILES], 'trekking', 500_000, 5)
+    expect(run).toEqual(['trekking'])
+    expect(deferred).toEqual([])
+  })
+
+  it('still compares the two-point plan a via was removed from', () => {
+    const { run } = profilesToRun([...DEFAULT_PROFILES], 'gravel', 10_000, 2)
+    expect(run).toHaveLength(3)
+  })
 })

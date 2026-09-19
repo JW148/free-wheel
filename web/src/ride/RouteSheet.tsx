@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { DEFAULT_PROFILES, PROFILES, profileById } from './profiles'
+import { waypointRows } from './plan'
 import type { Plan } from './useRoute'
 import { formatDistance, formatDuration, hasHeights } from './gpx'
 import ElevationProfile from './ElevationProfile'
@@ -194,7 +195,13 @@ function InviteCard({
 }
 
 /**
- * A start placed and a finish still to come.
+ * The points placed so far, and a slot for the finish if there is not one yet.
+ *
+ * Every point, not only the two ends. It used to read the first and the last and draw those,
+ * which was honest while a third point was decoration and became a lie the moment the line
+ * started following one: a rider who had tapped four times saw a card describing two of them.
+ * The state is reachable in its own right, too — a routing failure leaves the plan un-routed
+ * with however many points are on it, and `explainRoutingFailure` suggests adding one more.
  *
  * A point tapped on the map shows its **coordinates**, because there is no geocoder on this
  * phone and there is not going to be one — turning a position into a name is a network service
@@ -206,46 +213,100 @@ function InviteCard({
  * something they told the app rather than something it inferred.
  */
 function PointsCard({ plan }: { plan: Plan }) {
-  const [start, ...rest] = plan.waypoints
-  const finish = rest.length > 0 ? rest[rest.length - 1] : null
-
+  const awaitingFinish = plan.waypoints.length < 2
   return (
     <>
-      <div className="plan-points">
-        <span className="plan-point-badge">S</span>
-        <span className="plan-point-label">{named(start)}</span>
-        <button
-          type="button"
-          className="plan-point-remove"
-          onClick={() => plan.removeWaypoint(start.id)}
-          aria-label="Remove the start"
-        >
-          ×
-        </button>
+      {/* The finish is a slot rather than a row until something is in it. One point is not a
+          journey, and a card that stopped at the start would not say what is missing. */}
+      <PointList plan={plan} awaitingFinish={awaitingFinish} />
+      <PlanNote awaitingFinish={awaitingFinish} />
+    </>
+  )
+}
 
-        <span className="plan-point-link" aria-hidden="true" />
-        <span />
-        <span />
+/**
+ * Every point in the plan, as rows: a badge, what it is called, and the × that removes it.
+ *
+ * The same component in the card and in the open sheet, which is the whole reason it exists.
+ * The sheet used to draw its own — a `Start | coordinates | Remove` table under a 4.5rem label
+ * column — so the two surfaces described one list in two vocabularies, and the heavier of them
+ * was the one a rider shaping a route looked at most. A badge, a dotted run and an × is the
+ * card's language and it reads at a glance; "Remove" in full is a word doing a symbol's job.
+ */
+function PointList({ plan, awaitingFinish }: { plan: Plan; awaitingFinish: boolean }) {
+  if (plan.waypoints.length === 0) return null
 
-        <span className="plan-point-badge" data-placed={finish ? 'yes' : 'no'}>
-          F
-        </span>
-        <span className="plan-point-label" data-placed={finish ? 'yes' : 'no'}>
-          {finish ? named(finish) : 'Search, or tap the map, for your finish'}
-        </span>
-        {finish && (
+  return (
+    <div className="plan-points">
+      {waypointRows(plan.waypoints).map((row, index) => (
+        <Fragment key={row.id}>
+          {index > 0 && <PointLink />}
+          <span className="plan-point-badge" data-role={row.role}>
+            {row.badge}
+          </span>
+          <span className="plan-point-label">{named(plan.waypoints[index])}</span>
           <button
             type="button"
             className="plan-point-remove"
-            onClick={() => plan.removeWaypoint(finish.id)}
-            aria-label="Remove the finish"
+            onClick={() => plan.removeWaypoint(row.id)}
+            aria-label={`Remove ${row.word.toLowerCase()}`}
           >
             ×
           </button>
-        )}
-      </div>
-      <p className="plan-note">Long-press a pin to drag it · add more stops after your finish</p>
+        </Fragment>
+      ))}
+
+      {awaitingFinish && (
+        <>
+          <PointLink />
+          <span className="plan-point-badge" data-placed="no">
+            F
+          </span>
+          <span className="plan-point-label" data-placed="no">
+            Search, or tap the map, for your finish
+          </span>
+          {/* The third column still has to be occupied, or the next row's badge flows into it
+              and the whole grid steps sideways. */}
+          <span />
+        </>
+      )}
+    </div>
+  )
+}
+
+/** The dotted run between two badges, plus the two cells it has to skip past. */
+function PointLink() {
+  return (
+    <>
+      <span className="plan-point-link" aria-hidden="true" />
+      <span />
+      <span />
     </>
+  )
+}
+
+/**
+ * How the gesture that edits a plan works, in one sentence.
+ *
+ * This is the whole of the discovery mechanism for stops, which is why it leads with the tap
+ * rather than the drag: there is no Add-a-stop button on the map and deliberately no via mode,
+ * so if this sentence does not say it, nothing does. It replaced "add more stops after your
+ * finish", which described the old limitation — a tapped point could only ever land at the end
+ * — as though it were a feature.
+ *
+ * Two sentences rather than one, because this card is on screen for a *moment*: the second
+ * point routes the plan and the routed card replaces it. So the version a rider actually reads
+ * is nearly always the one with a start and no finish — which is exactly the state in which
+ * "add a stop along the way" is not yet true, there being no way to be along. It has to teach
+ * the gesture without promising it works yet, and then say it plainly once it does.
+ */
+function PlanNote({ awaitingFinish }: { awaitingFinish: boolean }) {
+  return (
+    <p className="plan-note">
+      {awaitingFinish
+        ? 'Tap the map for your finish — then tap again to add stops along the way'
+        : 'Tap the map to add a stop along the way · long-press a pin to drag it'}
+    </p>
   )
 }
 
@@ -313,6 +374,18 @@ function RoutedCard({
  * The cards are ordered by the selection, not by the results, so a card holds its place while
  * the one above it is still computing — a list that reorders itself as results land is a list
  * you cannot tap.
+ *
+ * ## Once there is a stop, there is one route
+ *
+ * You cannot shape a comparison. Three cards are three answers to "which way between these two
+ * ends", and a stop changes the question — so all three are void, and re-running them on every
+ * tap would put three blocking searches between the rider and the line they are drawing. The
+ * engine-side half of that rule is in `profilesToRun`; this is the half the rider sees, and it
+ * is why the heading stops asking them to choose.
+ *
+ * `plan.selection` is deliberately left alone through all of it. It is what the rider is
+ * *offered*, not what is on the map, so taking the stops back out puts the comparison back
+ * rather than leaving them with the one style they happened to be shaping in.
  */
 function RouteChoice({
   plan,
@@ -325,13 +398,16 @@ function RouteChoice({
 }) {
   const [more, setMore] = useState(false)
   const extra = PROFILES.filter((p) => !DEFAULT_PROFILES.includes(p.id))
-  const shown = more ? PROFILES : PROFILES.filter((p) => plan.selection.includes(p.id))
+  const routed = Object.keys(plan.routes)
+  const shown = more
+    ? PROFILES
+    : PROFILES.filter((p) => (plan.shaping ? routed.includes(p.id) : plan.selection.includes(p.id)))
   const canRoute = plan.waypoints.length >= 2 && plan.routing === null
 
   return (
     <>
       <div className="drawer-head">
-        <h2 className="drawer-title">Choose a route</h2>
+        <h2 className="drawer-title">{plan.shaping ? 'Your route' : 'Choose a route'}</h2>
         {plan.routing ? (
           <button type="button" className="primary busy" onClick={plan.cancel}>
             Stop
@@ -383,12 +459,29 @@ function RouteChoice({
         </button>
       )}
 
+      {/* The plan's own points, one tap from the map rather than two. They describe the
+          journey rather than any one route, so they belong here beside the actions that act on
+          the journey — not in the detail view, which is about the one route it is showing.
+
+          No `PlanNote` under it. The card carries that sentence, which is where a rider meets
+          it while placing their first two points; repeating it here would say the same thing
+          twice on one screen and push the actions down to make room. */}
+      <PointList plan={plan} awaitingFinish={false} />
+
       <div className="sheet-actions">
         <button type="button" onClick={plan.reverse} disabled={plan.waypoints.length < 2}>
           Reverse
         </button>
+        {/*
+          The one shape a tap cannot make, because nobody can tap exactly on their own front
+          door — so it is the only part of stops that needs a button at all, and it sits with
+          the two other things that act on the whole plan rather than on a point.
+        */}
+        <button type="button" onClick={plan.makeLoop} disabled={!plan.canLoop}>
+          Make a loop
+        </button>
         <button type="button" onClick={plan.clear} disabled={plan.waypoints.length === 0}>
-          Clear route
+          Clear
         </button>
       </div>
     </>
@@ -603,8 +696,6 @@ function RouteDetail({
           Could not save it: {problem}
         </p>
       )}
-
-      <Waypoints plan={plan} />
     </>
   )
 }
@@ -616,42 +707,6 @@ function coords(point: { lat: number; lon: number }): string {
 /** The name the rider chose, or the coordinates for a point they put down with a finger. */
 function named(point: { lat: number; lon: number; label?: string }): string {
   return point.label ?? coords(point)
-}
-
-/**
- * Every point the route runs through, named.
- *
- * A reroute adds one of its own — where the rider rejoined the line after a wrong turn — and it
- * is named for what it is rather than counted as a via. Counting it would renumber the points
- * the rider actually placed, which is the same argument the pins on the map make.
- */
-function Waypoints({ plan }: { plan: Plan }) {
-  if (plan.waypoints.length === 0) return null
-  let placed = 0
-  return (
-    <ol className="waypoints">
-      {plan.waypoints.map((waypoint, index) => {
-        const last = index === plan.waypoints.length - 1
-        const rejoin = waypoint.kind === 'reroute' && !last && index > 0
-        const ordinal = rejoin ? placed : placed++
-        return (
-        <li key={waypoint.id}>
-          <span className="waypoint-role">
-            {rejoin ? 'Rejoined' : index === 0 ? 'Start' : last ? 'Finish' : `Via ${ordinal}`}
-          </span>
-          <span className="waypoint-coords">{named(waypoint)}</span>
-          <button
-            type="button"
-            onClick={() => plan.removeWaypoint(waypoint.id)}
-            aria-label={`Remove point ${index + 1}`}
-          >
-            Remove
-          </button>
-        </li>
-        )
-      })}
-    </ol>
-  )
 }
 
 /* Inline SVG rather than sprite lookups: a missing sprite entry would be one more thing that

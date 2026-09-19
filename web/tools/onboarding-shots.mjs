@@ -532,8 +532,28 @@ console.log('planning a route')
 await planRoute()
 console.log('  ' + ((await text('.plan-sheet')) ?? 'nothing').replace(/\s+/g, ' ').slice(0, 160))
 
-// The search leaves the sheet open on the comparison, which is card four exactly.
-await shot('compare', { x: 0, y: 244, width: 390, height: 600 })
+/*
+ * The search leaves the sheet open on the comparison, which is card four exactly.
+ *
+ * Framed by measuring the sheet rather than by a constant, and for the same reason the two
+ * shots below are: the sheet has no fixed height. It grew when the plan's own points were
+ * listed in it, and the `y: 244` this used to be then cut the heading in half — a picture of a
+ * screen with its title sliced off, which is worse than no picture. Twenty pixels of map above
+ * the top edge is what says this is a sheet over a map rather than a page.
+ *
+ * Six hundred pixels from there reaches the three cards and "More riding styles" and stops
+ * short of the point list and the actions, which is the right subject: the card this
+ * illustrates is about three routes you compare, not about editing the plan.
+ */
+const sheetTop = await evaluate(
+  `Math.round(document.querySelector('.plan-sheet')?.getBoundingClientRect().top ?? 244)`,
+)
+await shot('compare', {
+  x: 0,
+  y: Math.max(0, Math.min(844 - 600, sheetTop - 20)),
+  width: 390,
+  height: 600,
+})
 
 /*
  * And put away, which is card three: the lines on the map, with both ends of the plan on it.

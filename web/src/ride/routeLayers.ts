@@ -58,8 +58,12 @@ const OVERLAY: Record<'dark' | 'light', { travelled: string; halo: string; haloO
  * - `candidate` — one of several, none picked yet. All equal, all in their profile colour.
  * - `chosen` — the one the rider has committed to. Thickest, fully opaque, drawn last.
  * - `unchosen` — compared against, but not picked. Recedes without disappearing.
+ * - `stale` — still the right shape, but a search is already running that will replace it.
+ *   Drawn at the chosen width and well down in opacity: the alternative is to clear the source
+ *   and leave the map blank for the second or two the Worker is inside Wasm, and a blank map
+ *   while shaping reads as the app having dropped the tap rather than as the app thinking.
  */
-export type RouteState = 'solo' | 'candidate' | 'chosen' | 'unchosen'
+export type RouteState = 'solo' | 'candidate' | 'chosen' | 'unchosen' | 'stale'
 
 export interface DrawnRoute {
   /** The profile id. Carried onto the feature so a tap can name what it hit. */
@@ -116,7 +120,9 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
       // A dark casing on a dark map: the route needs separating from the road under it, and
       // a white halo would glare. This reads as a shadow rather than an outline.
       'line-color': '#06141b',
-      'line-opacity': 0.55,
+      // The casing fades with the line it cases. Left at 0.55 under a stale route it reads as
+      // a shadow with nothing casting it.
+      'line-opacity': ['match', ['get', 'state'], 'stale', 0.2, 0.55] as ExpressionSpecification,
       'line-width': ['interpolate', ['linear'], ['zoom'], 10, byState(7, 6, 5), 16, byState(13, 11, 9)],
     },
   })
@@ -139,6 +145,8 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
         0.55,
         'candidate',
         0.88,
+        'stale',
+        0.3,
         1,
       ],
       'line-width': ['interpolate', ['linear'], ['zoom'], 10, byState(4, 3.4, 2.5), 16, byState(8, 6.8, 5)],
@@ -369,6 +377,7 @@ function byState(
 export function drawnRoutes(
   routes: Record<string, { coords: [number, number][] }>,
   chosen: string | null,
+  stale = false,
 ): DrawnRoute[] {
   const ids = Object.keys(routes)
   const solo = ids.length === 1
@@ -380,7 +389,18 @@ export function drawnRoutes(
     id,
     coords: routes[id].coords,
     colour: profileById(id).colour,
-    state: solo ? 'solo' : live === null ? 'candidate' : id === live ? 'chosen' : 'unchosen',
+    // `stale` beats every other state, and beats the comparison too: a shaping run that starts
+    // from an open comparison is going to replace all three lines with one, so leaving two of
+    // them at candidate weight would claim they are still on offer.
+    state: stale
+      ? 'stale'
+      : solo
+        ? 'solo'
+        : live === null
+          ? 'candidate'
+          : id === live
+            ? 'chosen'
+            : 'unchosen',
   }))
 }
 
@@ -470,6 +490,23 @@ export type MapTap =
   | { do: 'place' }
   | { do: 'nothing' }
 
+/**
+ * Which of the three things a tap on the map meant.
+ *
+ * ## Clearing is a tap on a *line*, not a tap anywhere
+ *
+ * It used to be any tap at all: with a choice made, the first tap on the map reverted it and
+ * only the second placed a point. That was defensible while a third point did nothing — the
+ * justification written here was that the pin toggle was on by default, so the other order
+ * would have left the map gesture unreachable. Both halves of that have since gone. The toggle
+ * was removed, and a third point is now a stop the line routes through — so under the old
+ * order, a rider who had chosen a route could not place one at all. Their first tap silently
+ * un-chose the route instead, and the second tap then shaped in a style they had not picked.
+ *
+ * So a clear is now what it always logically was: a tap on the line you already chose, meaning
+ * "not this one". A tap on a different line still chooses it, and a tap on the map itself is
+ * free to be the gesture the whole app is built on.
+ */
 export function mapTapAction(input: {
   /**
    * Whether another screen currently owns the map, and the ride screen must keep its hands
@@ -496,14 +533,20 @@ export function mapTapAction(input: {
    * back to, and clearing would only strip the stats rail and disable Start.
    */
   clearableChoice: boolean
+  /** The profile the rider committed to. Tapping *its* line is how they take it back. */
+  chosen: string | null
   placing: boolean
 }): MapTap {
-  const { suspended, profileUnderTap, choosing, clearableChoice, placing } = input
+  const { suspended, profileUnderTap, choosing, clearableChoice, chosen, placing } = input
   if (suspended) return { do: 'nothing' }
-  if (choosing && profileUnderTap) return { do: 'choose', profile: profileUnderTap }
-  if (choosing && clearableChoice) return { do: 'clear' }
-  if (placing) return { do: 'place' }
-  return { do: 'nothing' }
+  if (choosing && profileUnderTap) {
+    // Tapping the line already chosen means "not this one" — the way back to the comparison.
+    // Tapping any other line means "that one". Both are specific, and both beat the map.
+    return profileUnderTap === chosen && clearableChoice
+      ? { do: 'clear' }
+      : { do: 'choose', profile: profileUnderTap }
+  }
+  return placing ? { do: 'place' } : { do: 'nothing' }
 }
 
 /**

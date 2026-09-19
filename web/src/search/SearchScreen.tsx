@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadManifest, type DataManifest } from '../data/manifest'
 import { sharedEngine } from '../engine/engineClient'
 import { downloadPlan } from '../data/regions'
-import { withEndpoint, type PlanSlot } from '../ride/plan'
+import { waypointRows, withEndpoint, type PlanSlot } from '../ride/plan'
 import type { Plan } from '../ride/useRoute'
 import { downloads } from '../setup/downloadStore'
 import { regionAt } from '../setup/regionShapes'
@@ -89,6 +89,8 @@ export default function SearchScreen({
 
   const start = plan.waypoints[0] ?? null
   const finish = plan.waypoints.length > 1 ? plan.waypoints[plan.waypoints.length - 1] : null
+  /** Counted the way the pins are numbered, so the row and the map cannot disagree. */
+  const stops = waypointRows(plan.waypoints).filter((row) => row.role === 'via').length
 
   // Focused on arrival, because the rider tapped a search field to get here and a field that
   // has to be tapped a second time is a field that did not open.
@@ -261,13 +263,56 @@ export default function SearchScreen({
             onChange={setQuery}
             onClear={() => setQuery('')}
           />
+          {/*
+            Somewhere to go *through*, between the two ends — which is where a stop goes, so it
+            is where the row goes.
+
+            This is the only way to give a stop a **name**. A stop tapped onto the map is a
+            position and shows its coordinates, because there is no geocoder; one picked off
+            this list was handed to the rider by the app, which is the other direction and costs
+            nothing. `withEndpoint` has understood the slot since it was written and nothing has
+            ever set it — the map tap covers shaping, and this covers the café.
+
+            Quiet until it is being used: a row that looks like the other two would claim the
+            plan has a stop in it when it does not. It counts the stops already placed rather
+            than listing them, because the pins and the plan card are both already doing that
+            and a third list of the same points is a third thing to keep in step.
+          */}
+          {start && finish && slot === 'stop' && (
+            <SearchRow
+              role="stop"
+              active
+              placeholder="Where do you want to stop?"
+              value={query}
+              fieldRef={field}
+              onActivate={() => setSlot('stop')}
+              onChange={setQuery}
+              onClear={() => setQuery('')}
+            />
+          )}
+          {start && finish && slot !== 'stop' && (
+            <button
+              type="button"
+              className="search-add"
+              onClick={() => {
+                setSlot('stop')
+                setQuery('')
+              }}
+            >
+              <span className="search-badge" data-role="stop" aria-hidden="true">
+                +
+              </span>
+              <span>{stops === 0 ? 'Add a stop' : `${stops} stop${stops === 1 ? '' : 's'} · add another`}</span>
+            </button>
+          )}
+
           {start && (
             <SearchRow
               role="finish"
-              active={slot === 'finish' || slot === 'stop'}
-              placeholder={slot === 'stop' ? 'Where do you want to stop?' : 'Where to?'}
-              value={slot === 'finish' || slot === 'stop' ? query : (finish?.label ?? coords(finish))}
-              fieldRef={slot === 'finish' || slot === 'stop' ? field : undefined}
+              active={slot === 'finish'}
+              placeholder="Where to?"
+              value={slot === 'finish' ? query : (finish?.label ?? coords(finish))}
+              fieldRef={slot === 'finish' ? field : undefined}
               onActivate={() => {
                 setSlot('finish')
                 setQuery('')
@@ -455,7 +500,7 @@ function SearchRow({
   onChange,
   onClear,
 }: {
-  role: 'start' | 'finish'
+  role: 'start' | 'stop' | 'finish'
   active: boolean
   placeholder: string
   value: string
@@ -469,6 +514,7 @@ function SearchRow({
       <span className="search-badge" data-role={role} aria-hidden="true">
         {role === 'start' ? 'S' : ''}
       </span>
+
       <input
         ref={fieldRef}
         type="search"
