@@ -2292,6 +2292,92 @@
   color: var(--text);
 }
 
+/* ── What the route is made of ──────────────────────────────────────────────────────────
+   A band directly under the elevation chart, sharing its width and its x-axis, so the two
+   are read as one picture of the route rather than two charts to match up by eye. */
+
+.surface-strip {
+  display: block;
+  width: 100%;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 3px;
+  /* The rects overlap by half a pixel to close the seams between them, so the last one runs
+     a hair past the right edge. Clipped here rather than special-cased there. */
+  overflow: hidden;
+}
+
+/* The same mark the elevation chart puts under the finger, in the ink that reads on any of
+   the four cells. It is a position, not a value, so it takes no colour of its own. */
+.surface-strip-cursor {
+  fill: var(--card);
+  fill-opacity: 0.9;
+}
+
+.breakdown {
+  margin-top: 1rem;
+}
+
+/*
+ * Two columns: what it is, and how much of it there is.
+ *
+ * `<dt>` then `<dd>` in the markup, which is the right order for a description list. No
+ * `column-reverse` anywhere near it — that trick is what put a label above its value for
+ * seven phases, and here the label belongs on the left regardless.
+ */
+.breakdown-rows {
+  display: grid;
+  margin: 0 0 0.6rem;
+  font-size: 0.82rem;
+}
+
+.breakdown-rows div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.breakdown-rows div:last-child {
+  border-bottom: 0;
+}
+
+.breakdown-rows dt {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.breakdown-rows dd {
+  margin: 0;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* The swatch is what makes the table the strip's legend. Sized to the strip's own height so
+   the two obviously refer to each other. */
+.breakdown-swatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 2px;
+  /* The colour is set inline, from the same `ROAD_COLOURS` the strip draws with — one source,
+     so the legend cannot drift from the thing it explains. */
+  /* Baseline-aligned text next to a block needs nudging or the square floats. */
+  transform: translateY(1px);
+}
+
+.breakdown-network {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 /* ── Choosing a region ──────────────────────────────────────────────────────────────── */
 
 /*

@@ -58,6 +58,43 @@ export interface WayRun {
   surface: SurfaceClass
 }
 
+/**
+ * The strip's colours, and why they are allowed to be colours at all.
+ *
+ * `gradeScale.ts` records the rule: these are chrome colours on a panel we control, so the
+ * C <= 15.4 stroke ceiling that governs the basemap does not apply. That ceiling exists to stop
+ * a route *line* being mistaken for a road, and nothing on a panel is on the map.
+ *
+ * What does apply is the same contrast window the gradient bands live in, and it is narrow. A
+ * band has to clear 3:1 against `#ffffff` and against `#11212d` at once, which confines every
+ * one to a relative luminance of roughly 0.14 to 0.30 — about 2:1 wide. Four classes cannot be
+ * separated by lightness inside that, so they separate by hue at a held lightness. Three of
+ * these sit at L* 45.5 to 45.9 and the fourth at 45.9, which is what makes the strip read as
+ * one object rather than as one pale cell and three dark ones.
+ *
+ * Found by sweeping the RGB cube rather than by picking. Measured:
+ *
+ * - contrast 3.11 to 3.18 on `#11212d`, 5.20 to 5.28 on white
+ * - worst pair among these four: ΔE 27.4, `path` against `road`
+ * - worst against the six gradient bands: **ΔE 13.1**, `main` against `brutal`
+ * - worst against the route colours: ΔE 12.0, `main` against `mtb`
+ *
+ * That 13.1 is below the 15 this started out wanting, and it is deliberate. The warm arc at
+ * this luminance is already occupied by `very steep`, `brutal`, `mtb` and `recorded`, and a
+ * red clearing 15 from all of them does not exist — the search returns a dusty rose at L* 60.6,
+ * 15 points lighter than its neighbours, which is a pale outlier rather than a warning. The
+ * confusion being risked is between a 10 px strip cell and an area chart's fill, two different
+ * objects an inch apart that are never adjacent and never mean the same thing, and the two
+ * bands it is nearest are both "be careful" like the cell itself. `chrome.test.ts` holds all
+ * of these at the numbers above, so the trade stays visible rather than becoming folklore.
+ */
+export const ROAD_COLOURS: Record<RoadClass, string> = {
+  cyclepath: '#007b60',
+  path: '#7e694b',
+  road: '#5d6c8a',
+  main: '#d80050',
+}
+
 export const ROAD_LABELS: Record<RoadClass, string> = {
   cyclepath: 'Cycle path',
   path: 'Path or track',
@@ -235,6 +272,14 @@ function buildRuns(ways: WayTagsAt[] | undefined, geometry: RouteGeometry): WayR
 }
 
 export interface BreakdownRow {
+  /**
+   * The class this row totals, or `other` for the folded tail.
+   *
+   * Carried as well as the label so the road table can show each class's colour beside it.
+   * That is what makes the table the strip's legend: four colours above with no key is a
+   * puzzle, and a separate legend row would be a third thing saying what two already say.
+   */
+  key: RoadClass | SurfaceClass | 'other'
   label: string
   metres: number
 }
@@ -258,21 +303,22 @@ export interface Breakdown {
  *             a few hundred metres of service road nobody is deciding anything on.
  */
 export function breakdownOf(runs: WayRun[], keep = 4): Breakdown {
-  const road = new Map<string, number>()
-  const surface = new Map<string, number>()
+  const road = new Map<RoadClass, number>()
+  const surface = new Map<SurfaceClass, number>()
   let networkM = 0
 
   for (const run of runs) {
     const length = run.toM - run.fromM
-    road.set(ROAD_LABELS[run.road], (road.get(ROAD_LABELS[run.road]) ?? 0) + length)
-    surface.set(
-      SURFACE_LABELS[run.surface],
-      (surface.get(SURFACE_LABELS[run.surface]) ?? 0) + length,
-    )
+    road.set(run.road, (road.get(run.road) ?? 0) + length)
+    surface.set(run.surface, (surface.get(run.surface) ?? 0) + length)
     if (onNetwork(run.tags)) networkM += length
   }
 
-  return { road: rank(road, keep), surface: rank(surface, keep), networkM }
+  return {
+    road: rank(road, ROAD_LABELS, keep),
+    surface: rank(surface, SURFACE_LABELS, keep),
+    networkM,
+  }
 }
 
 const onNetwork = (tags: Record<string, string>): boolean =>
@@ -280,16 +326,20 @@ const onNetwork = (tags: Record<string, string>): boolean =>
   tags.route_bicycle_rcn === 'yes' ||
   tags.route_bicycle_icn === 'yes'
 
-function rank(totals: Map<string, number>, keep: number): BreakdownRow[] {
+function rank<K extends RoadClass | SurfaceClass>(
+  totals: Map<K, number>,
+  labels: Record<K, string>,
+  keep: number,
+): BreakdownRow[] {
   const rows = [...totals]
-    .map(([label, metres]) => ({ label, metres }))
+    .map(([key, metres]) => ({ key, label: labels[key], metres }))
     .filter((row) => row.metres > 0)
     .sort((one, two) => two.metres - one.metres)
 
   if (rows.length <= keep + 1) return rows
 
   const tail = rows.slice(keep).reduce((total, row) => total + row.metres, 0)
-  return [...rows.slice(0, keep), { label: 'Other', metres: tail }]
+  return [...rows.slice(0, keep), { key: 'other' as const, label: 'Other', metres: tail }]
 }
 
 /**

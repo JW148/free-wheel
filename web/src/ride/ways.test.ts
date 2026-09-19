@@ -203,6 +203,15 @@ describe('breakdownOf', () => {
     expect(folded.road.at(-1)!.label).toBe('Other')
   })
 
+  it('carries the class key as well as the label, so the table can be the legend', () => {
+    // Four coloured bands above a table of the same four words is a puzzle. The swatch is
+    // what solves it, and it needs the key rather than the English.
+    for (const row of breakdown.road) {
+      expect(row.key).toBeTruthy()
+      if (row.key !== 'other') expect(ROAD_CLASSES).toContain(row.key)
+    }
+  })
+
   it('drops a class with no distance rather than showing a zero row', () => {
     const one = breakdownOf([
       { fromM: 0, toM: 100, tags: { highway: 'cycleway' }, road: 'cyclepath', surface: 'paved' },

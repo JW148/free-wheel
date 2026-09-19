@@ -1,9 +1,12 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { DEFAULT_PROFILES, PROFILES, profileById } from './profiles'
 import { waypointRows } from './plan'
 import type { Plan } from './useRoute'
 import { formatDistance, formatDuration, hasHeights } from './gpx'
+import { routeGeometry } from './progress'
+import { wayRuns } from './ways'
 import ElevationProfile from './ElevationProfile'
+import RouteBreakdown from './RouteBreakdown'
 import RouteClimbs from './RouteClimbs'
 import { putEntry, routeEntry } from './library'
 import { gpxFilename, shareGpx } from './share'
@@ -610,6 +613,13 @@ function RouteDetail({
     }
   }
 
+  // Null for a recorded ride and for anything saved before the app started asking BRouter for
+  // tags. Both flow through as "nothing to draw" rather than as an empty strip.
+  const runs = useMemo(() => {
+    const geometry = routeGeometry(chosen)
+    return geometry ? wayRuns(chosen, geometry) : null
+  }, [chosen])
+
   return (
     <>
       <div className="drawer-head">
@@ -654,7 +664,12 @@ function RouteDetail({
           flat road, which is a claim about the terrain rather than an absence of one. */}
       {hasHeights(chosen) ? (
         <>
-          <ElevationProfile route={chosen} colour={style.colour} label={style.plain} />
+          <ElevationProfile
+            route={chosen}
+            colour={style.colour}
+            label={style.plain}
+            runs={runs}
+          />
           <RouteClimbs route={chosen} />
         </>
       ) : (
@@ -663,6 +678,11 @@ function RouteDetail({
           list. Distance is measured from the track itself.
         </p>
       )}
+
+      {/* Outside the heights branch, on purpose. Surfaces and road classes come off BRouter's
+          tags rather than off SRTM, so a route whose heights are missing can still say what it
+          is made of. A recorded ride has neither and shows neither. */}
+      <RouteBreakdown route={chosen} />
 
       <div className="route-actions">
         <button type="button" onClick={() => void save()} disabled={saved === 'saved'}>
