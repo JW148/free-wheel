@@ -40,6 +40,36 @@ export function calloutMatters(ahead: GradientAhead | null, hasElevation: boolea
 }
 
 /**
+ * How close a turn has to be before the collapsed strip gives it the line.
+ *
+ * Tighter than the climb's 1.2 km, and the other way round from how the speech horizons
+ * compare. A climb is worth knowing about early because the decision it changes — gear,
+ * effort, whether to eat something — is made minutes in advance. A turn is a thing you do at a
+ * point, and 400 m of "left ahead" is a line that stops meaning anything before you reach it.
+ */
+export const TURN_HORIZON_M = 400
+
+/**
+ * Which of the two the collapsed strip's one line is about.
+ *
+ * The strip has room for exactly one, and that is the rule this file already holds: its budget
+ * is one thing at a time, and text appearing on the strip is itself the signal. The expanded
+ * panel has room for both and shows both, so this is only ever asked of the strip.
+ *
+ * A turn inside its horizon wins, because it is the one with a deadline. A climb announced
+ * late is still a climb coming up; a turn announced late is a rider on the wrong road. Past
+ * that horizon the climb keeps the line, which is where it spends most of a ride.
+ */
+export function calloutFor(
+  turnAwayM: number | null,
+  ahead: GradientAhead | null,
+  hasElevation: boolean,
+): 'turn' | 'climb' | null {
+  if (turnAwayM !== null && turnAwayM <= TURN_HORIZON_M) return 'turn'
+  return calloutMatters(ahead, hasElevation) ? 'climb' : null
+}
+
+/**
  * The four figures the expanded HUD carries.
  *
  * Every ride follows a line — a computed route, or a track someone rode and saved — so "to go"

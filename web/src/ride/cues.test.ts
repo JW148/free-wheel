@@ -5,6 +5,7 @@ import { cueFor, spokenDistance, spokenGrade, type CueInput } from './cues'
 import { gradients, type Gradient, type Severity } from './climbs'
 import { routeGeometry } from './progress'
 import { parseBrouterGpx } from './gpx'
+import { turnsAlong } from './turns'
 
 const fixture = (name: string) =>
   readFileSync(fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url)), 'utf8')
@@ -45,6 +46,8 @@ const base: CueInput = {
   offRoute: false,
   offRouteSince: null,
   routeVersion: 1,
+  turns: [],
+  speedMps: 25 / 3.6,
 }
 
 const none = new Set<string>()
@@ -217,10 +220,13 @@ describe('a whole ride, cue by cue', () => {
   // Walked over a real 95 km route rather than a synthetic one, because the thing most likely
   // to go wrong is not a single rule but their interaction over a long ride: a cue repeating
   // every fix, or a cue that never fires because another one always wins.
-  const geometry = routeGeometry(parseBrouterGpx(fixture('london-brighton.gpx')))!
+  const route = parseBrouterGpx(fixture('london-brighton.gpx'))
+  const geometry = routeGeometry(route)!
   const climbs = gradients(geometry)
+  const turns = turnsAlong(route, geometry)!
 
   const spoken: string[] = []
+  const keys: string[] = []
   const said = new Set<string>()
   for (let alongM = 0; alongM <= geometry.totalM; alongM += 25) {
     const cue = cueFor(
@@ -231,28 +237,57 @@ describe('a whole ride, cue by cue', () => {
         offRoute: false,
         offRouteSince: null,
         routeVersion: 1,
+        turns,
+        speedMps: 25 / 3.6,
       },
       said,
     )
     if (cue) {
       said.add(cue.key)
+      keys.push(cue.key)
       spoken.push(cue.text)
     }
   }
 
-  it('says something worth hearing, and not constantly', () => {
-    // 3,800 fixes' worth of positions. An unbounded rule set would produce hundreds.
-    expect(spoken.length).toBeGreaterThan(5)
-    expect(spoken.length).toBeLessThan(40)
+  const turnCues = spoken.filter((t) => !t.startsWith('Climb') && !t.startsWith('Downhill'))
+
+  it('speaks each junction once and only once', () => {
+    // Keys, not text. Two junctions a mile apart both produce "Left in 100 metres", and that
+    // is correct — `Cue.key` identifies the event and the words are just the words.
+    expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('never says the same thing twice', () => {
-    expect(new Set(spoken).size).toBe(spoken.length)
+  it('keeps the whole ride well under one utterance a minute', () => {
+    // 3,800 fixes' worth of positions over about four hours. 322 junctions announced the way
+    // a car satnav does them would be 644 utterances; the rules in `turns.ts` are what stand
+    // between that and an app the rider mutes in the first hour.
+    //
+    // The bound is what makes this a test rather than a demonstration. Four hours at one a
+    // minute is 240, and anything approaching that is a failure however sensible each
+    // individual cue looked.
+    expect(spoken.length).toBeGreaterThan(20)
+    expect(spoken.length).toBeLessThan(180)
   })
 
-  it('ends with the finish, in the right order', () => {
+  it('speaks well under half the junctions on the route', () => {
+    // Most of the saving is dropping the slight turns, then `C`, then chaining. If this ever
+    // creeps towards 1:1 something has stopped collapsing and the ride is a monologue.
+    expect(turnCues.length).toBeLessThan(turns.length / 2)
+  })
+
+  it('chains at least one pair, because a route this long has staggered junctions', () => {
+    expect(spoken.some((t) => t.includes(', then '))).toBe(true)
+  })
+
+  it('names the roundabout exits it meets', () => {
+    expect(spoken.some((t) => /Roundabout in .*, \d(st|nd|rd|th) exit/.test(t))).toBe(true)
+  })
+
+  it('ends with arrival, having counted down to it', () => {
+    // Not adjacent any more, and that is right: the finish is announced at 500 m and a
+    // junction inside that is still a junction the rider has to take.
     expect(spoken[spoken.length - 1]).toBe('You have arrived.')
-    expect(spoken[spoken.length - 2]).toContain('Finish in')
+    expect(spoken.filter((t) => t.startsWith('Finish in'))).toHaveLength(1)
   })
 
   it('announces the climbs that matter and nothing that does not', () => {

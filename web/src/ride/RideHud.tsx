@@ -3,7 +3,9 @@ import type { GradientAhead } from './climbs'
 import { formatAway, formatClock, formatElapsed, formatPower, formatSpeed } from './format'
 import { formatDistance } from './gpx'
 import { formatGrade, gradeColour } from './gradeScale'
-import { calloutMatters, compactFigures, figuresFor, type FigureKey } from './hud'
+import { calloutFor, compactFigures, figuresFor, type FigureKey } from './hud'
+import { turnLabel, type Turn } from './turns'
+import TurnGlyph from './TurnGlyph'
 import type { RideTelemetry } from './useRideTelemetry'
 import RideProfile, { RouteOverview } from './RideProfile'
 import HoldButton from './HoldButton'
@@ -88,6 +90,10 @@ export default function RideHud({
   onExpandedChange: (expanded: boolean) => void
 }) {
   const { progress, geometry, climbs, record, ahead, rest, powerW, arrivalAt, offRoute } = telemetry
+  // Off route, the next junction describes a road the rider has left. Drawing it there would
+  // point at a turning that is not in front of them, which is worse than the blank the
+  // off-route banner already puts on screen.
+  const turnAhead = offRoute ? null : telemetry.turnAhead
   // The elapsed clock has to move on its own. Everything else on this panel is refreshed by a
   // fix arriving, but a rider stopped at a level crossing gets no fixes worth reporting and
   // the one number that must keep counting is the one that would stop.
@@ -111,6 +117,7 @@ export default function RideHud({
    * says what it is waiting for.
    */
   const tracking = hasRoute && progress !== null
+  const strip = calloutFor(turnAhead?.awayM ?? null, ahead, hasElevation)
   const hud = useHudDrag({ expanded, onExpandedChange })
 
   return (
@@ -138,6 +145,11 @@ export default function RideHud({
           {tracking && hasElevation && <RideProfile geometry={geometry} progress={progress} />}
           {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
 
+          {/* Expanded, both lines fit, and the turn goes above the climb — it is the nearer
+              thing and the one with a deadline. */}
+          {tracking && turnAhead && (
+            <TurnCallout turn={turnAhead.turn} awayM={turnAhead.awayM} />
+          )}
           {tracking && hasElevation && (
             <Callout ahead={ahead} rest={rest} grade={progress.grade} />
           )}
@@ -158,7 +170,12 @@ export default function RideHud({
         >
           <Figures keys={mini} value={value} compact />
           {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
-          {tracking && calloutMatters(ahead, hasElevation) && (
+          {/* One line, and `calloutFor` decides which. The strip's budget is one thing at a
+              time, and text appearing on it is itself the signal. */}
+          {tracking && strip === 'turn' && turnAhead && (
+            <TurnCallout turn={turnAhead.turn} awayM={turnAhead.awayM} />
+          )}
+          {tracking && strip === 'climb' && (
             <Callout ahead={ahead} rest={null} grade={progress.grade} />
           )}
         </div>
@@ -294,6 +311,26 @@ function Figure({
       </dt>
       <dd>{value}</dd>
     </div>
+  )
+}
+
+/**
+ * One line about the next thing the hands will do.
+ *
+ * Built from the same `.hud-callout` row as the climb, with the arrow standing in for the
+ * tint bar — same height, same gap, so the two callouts are interchangeable in the strip's
+ * single slot rather than two different-sized lines swapping places.
+ *
+ * Untinted, deliberately. The climb callout's bar carries the gradient colour because severity
+ * is the thing it is reporting; a turn has no severity, and a colour here would be the second
+ * palette on a panel that already reads by hue.
+ */
+function TurnCallout({ turn, awayM }: { turn: Turn; awayM: number }) {
+  return (
+    <p className="hud-callout hud-callout-turn">
+      <TurnGlyph kind={turn.kind} />
+      <strong>{turnLabel(turn)}</strong> in {formatAway(awayM)}
+    </p>
   )
 }
 

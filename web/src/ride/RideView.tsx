@@ -234,6 +234,11 @@ export default function RideView({
             offRoute: telemetry.offRoute,
             offRouteSince: telemetry.offRouteSince,
             routeVersion,
+            turns: telemetry.turns,
+            // The fix's own speed, not the smoothed one the power model uses: this only
+            // decides how many seconds of warning to give, and a lagging estimate on a
+            // descent gives that warning late, which is the one direction that costs.
+            speedMps: fix?.speed ?? null,
           }
         : null,
     [
@@ -242,6 +247,8 @@ export default function RideView({
       telemetry.climbs,
       telemetry.offRoute,
       telemetry.offRouteSince,
+      telemetry.turns,
+      fix?.speed,
       routeVersion,
     ],
   )

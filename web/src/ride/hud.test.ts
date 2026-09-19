@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Gradient, GradientAhead } from './climbs'
-import { calloutMatters, compactFigures, figuresFor, CALLOUT_HORIZON_M } from './hud'
+import {
+  calloutFor,
+  calloutMatters,
+  compactFigures,
+  figuresFor,
+  CALLOUT_HORIZON_M,
+  TURN_HORIZON_M,
+} from './hud'
 
 const gradient: Gradient = {
   kind: 'climb',
@@ -70,5 +77,39 @@ describe('compactFigures', () => {
   it('drops distance ridden rather than the pair that says how much is left', () => {
     const compact = compactFigures(figuresFor({ hasElevation: false }))
     expect(compact).toEqual(['speed', 'togo', 'arrive'])
+  })
+})
+
+describe('calloutFor', () => {
+  const climbAhead = ahead({ distanceToM: 500 })
+
+  it('gives a near turn the line, over a climb that would otherwise have it', () => {
+    // The turn is the one with a deadline. A climb announced late is still a climb coming up;
+    // a turn announced late is a rider on the wrong road.
+    expect(calloutFor(150, climbAhead, true)).toBe('turn')
+  })
+
+  it('leaves the line to the climb once the turn is far enough off', () => {
+    expect(calloutFor(TURN_HORIZON_M + 1, climbAhead, true)).toBe('climb')
+  })
+
+  it('shows a turn even where there are no heights to describe', () => {
+    // Following a recorded track that came off a computed route: no gradients and no power,
+    // but the junctions are still there.
+    expect(calloutFor(100, null, false)).toBe('turn')
+  })
+
+  it('shows a climb when there is no turn coming', () => {
+    expect(calloutFor(null, climbAhead, true)).toBe('climb')
+  })
+
+  it('shows nothing rather than a permanent line saying nothing', () => {
+    // The strip's whole argument: text appearing on it is itself the signal.
+    expect(calloutFor(null, null, true)).toBeNull()
+    expect(calloutFor(null, ahead({ distanceToM: CALLOUT_HORIZON_M + 1 }), true)).toBeNull()
+  })
+
+  it('takes a turn at zero distance, which is a rider on the junction', () => {
+    expect(calloutFor(0, climbAhead, true)).toBe('turn')
   })
 })

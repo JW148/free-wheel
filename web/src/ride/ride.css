@@ -770,6 +770,33 @@
   background: var(--tint);
 }
 
+/* The turn's arrow stands where the climb's tint bar stands, so the two callouts are one
+   slot rather than two lines of different heights swapping places. Wider than the 4px bar
+   because it is a shape to be recognised rather than a marker to be noticed. */
+.turn-glyph {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The fork a keep-left does not take. Present, because the whole instruction is that there
+   are two of them, and quiet, because only one is the answer. */
+.turn-glyph-ghost {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+/* The words carry no tint bar, so the row loses its 4px indent and the arrow sits at the
+   left edge where the bar would have been. */
+.hud-callout-turn {
+  gap: 0.4rem;
+}
+
 /* Off route. The only red surface in the riding UI, which is what makes it mean something. */
 .hud-alert {
   display: flex;
