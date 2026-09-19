@@ -641,6 +641,13 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
 - **Turn cues are timed, not spaced**: 15 seconds of warning, floored at 60 m. A fixed distance
   is two streets early in town and late at 50 km/h downhill. The 400 m cap only binds above
   96 km/h, so it is a backstop for a bad fix rather than a path any ride takes.
+- **A cue that speaks two events must mark both said, and that is `Cue.covers`.** A chained
+  pair — "left, then right" — is one utterance answering for two junctions. Keyed on the first
+  only, the second was found again on the next fix and announced alone a few seconds later:
+  the exact failure chaining exists to prevent, and worse than not chaining, because
+  `useAnnouncer` cancels rather than queues so the repeat clips the sentence still speaking.
+  It cost 36 utterances on the reference route. Neither test caught it — one asserted the
+  `{ turn, then }` shape, the other that no *key* repeats, and the repeat had a different key.
 - **There are no street names at a turn and there cannot be from this data.** `lookups.dat` has
   no `name` key, so the `.rd5` tiles do not carry one. Every instruction is "left in 200
   metres". A name could be recovered from the *basemap* at the turn's coordinate, which is a

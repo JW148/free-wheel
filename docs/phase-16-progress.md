@@ -191,12 +191,36 @@ Four rules bring it down, all pure and all in `turns.ts`, measured at each step:
 |---|---|
 | one utterance per turn, not a prepare and a now | halves it |
 | `C` — BRouter's "ignore that turning" — never spoken | 37 of 322 gone |
-| two turns within 120 m chained into one sentence | 69 pairs collapsed |
+| two turns within 120 m chained into one sentence | 59 pairs collapsed |
 | **slight turns shown but not spoken** | **125 of 285 actionable junctions** |
 
 The last one is the big one, and it was found by the cue walk failing its own bound. With slight
-turns spoken the route produced **267 utterances, one every 54 seconds**. Without them: **165
-over 3.8 hours, one every 83 seconds**.
+turns spoken the route produced **267 utterances, one every 54 seconds**.
+
+Walked at 7 m a step — about 1 Hz at 25 km/h, which is the rate a real fix arrives at — the
+finished rules give **138 utterances over 3.8 hours, one every 99 seconds.**
+
+### The chained pair was being spoken twice
+
+Found by an adversarial review of the branch, after the feature looked finished and the tests
+were green. `turnToAnnounce` returns the turn and its chained partner, and `cueFor` keyed the
+cue on the **first junction only**. Nothing ever marked the partner as said, so on the next fix
+`turns.find(…)` found it again and announced it alone a few seconds later.
+
+That is the exact failure chaining exists to prevent, and worse than not chaining at all:
+`useAnnouncer` cancels rather than queues, so on a 29 m staggered crossroads the repeat arrives
+while "Left in 100 metres, then right." is still speaking and clips it.
+
+45 of 74 chained pairs did this. The fix is `Cue.covers` — the other keys a cue has already
+answered for, marked said alongside its own — and it is worth **36 utterances**, taking the
+route from one every 79 seconds to one every 99.
+
+Both tests that should have caught it did not, and the reason is worth recording. `turns.test.ts`
+only asserted the `{ turn, then }` *shape*. And the cue walk asserted that no key repeats —
+which was true, because the repeat had a **different** key. The walk now consumes `cue.covers`
+exactly as `useAnnouncer` does, and asserts that no covered key is ever also announced on its
+own. It carries a `covered.length > 20` guard, because without one a `cueFor` that stopped
+reporting `covers` at all would pass the loop vacuously.
 
 A slight turn is mostly a road bending where another road joins. BRouter is right to emit one —
 a decision technically exists — but a rider following a road round a curve does not need to be
@@ -250,7 +274,7 @@ route reopens with its surfaces and junctions intact.
 
 In rough order of risk. **None of this has been ridden.**
 
-1. **Whether 165 utterances over four hours is right.** Every number in §9 is a judgement made
+1. **Whether 138 utterances over four hours is right.** Every number in §9 is a judgement made
    at a desk against a reference route. The two levers are the fifteen-second lead and the
    slight-turn suppression, and both could be wrong in either direction. Suppression is the one
    to watch: the failure mode is a missed fork on an unfamiliar lane, and it will feel like the

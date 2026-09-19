@@ -227,6 +227,8 @@ describe('a whole ride, cue by cue', () => {
 
   const spoken: string[] = []
   const keys: string[] = []
+  /** Keys a cue answered for without being keyed on — the second half of a chained pair. */
+  const covered: string[] = []
   const said = new Set<string>()
   for (let alongM = 0; alongM <= geometry.totalM; alongM += 25) {
     const cue = cueFor(
@@ -243,8 +245,12 @@ describe('a whole ride, cue by cue', () => {
       said,
     )
     if (cue) {
+      // Exactly what `useAnnouncer` does, so the walk exercises the real rule rather than a
+      // simplification of it.
       said.add(cue.key)
+      for (const also of cue.covers ?? []) said.add(also)
       keys.push(cue.key)
+      covered.push(...(cue.covers ?? []))
       spoken.push(cue.text)
     }
   }
@@ -281,6 +287,24 @@ describe('a whole ride, cue by cue', () => {
 
   it('names the roundabout exits it meets', () => {
     expect(spoken.some((t) => /Roundabout in .*, \d(st|nd|rd|th) exit/.test(t))).toBe(true)
+  })
+
+  it('never announces a junction it has already chained onto another', () => {
+    /*
+     * The bug this is here for: a chained pair was spoken as "left, then right", and then the
+     * second junction was announced *again* on its own a few seconds later, because only the
+     * first one's key was ever marked as said.
+     *
+     * That is the exact failure chaining exists to prevent, and it is worse than not chaining
+     * at all — `useAnnouncer` cancels rather than queues, so on a staggered crossroads the
+     * repeat arrives while the first sentence is still speaking and clips it.
+     *
+     * The walk above collects `covered`, so this measures the real route rather than a
+     * contrived pair. The first assertion is load-bearing: without it, a `cueFor` that stopped
+     * reporting `covers` at all would leave `covered` empty and pass the loop vacuously.
+     */
+    expect(covered.length).toBeGreaterThan(20)
+    for (const key of covered) expect(keys).not.toContain(key)
   })
 
   it('ends with arrival, having counted down to it', () => {

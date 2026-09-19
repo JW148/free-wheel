@@ -57,7 +57,27 @@ export interface Cue {
   /** Unique per event, so a cue is spoken once. Not a message — two climbs can share words. */
   key: string
   text: string
+  /**
+   * Other events this cue has already answered for, to be marked said alongside {@link key}.
+   *
+   * Exists for one case and it is a real bug it was written to fix: a chained pair spoken as
+   * "left, then right" keyed only on the *first* junction, so the second was found again on
+   * the next fix and announced on its own a few seconds later. That is the exact failure
+   * chaining exists to prevent, and worse than not chaining at all — `useAnnouncer` cancels
+   * rather than queues, so the repeat arrives while the first sentence is still speaking.
+   */
+  covers?: string[]
 }
+
+/**
+ * A junction's key.
+ *
+ * One function, because the cue that speaks a chained pair has to suppress its partner using
+ * exactly the key the partner would have generated — including the rounding, which is there so
+ * a key is stable as `alongM` creeps past on successive fixes.
+ */
+const turnKey = (routeVersion: number, atM: number) =>
+  `turn:${routeVersion}:${Math.round(atM)}`
 
 export interface CueInput {
   alongM: number
@@ -140,9 +160,9 @@ export function cueFor(input: CueInput, said: ReadonlySet<string>): Cue | null {
   if (!offRoute) {
     const announce = turnToAnnounce(input.turns, alongM, input.speedMps)
     if (announce) {
-      // Rounded to the metre so a key is stable as `alongM` creeps, and versioned so the same
-      // junction on a stitched route is a new instruction rather than one already given.
-      const key = `turn:${routeVersion}:${Math.round(announce.turn.atM)}`
+      // Versioned so the same junction on a stitched route is a new instruction rather than
+      // one already given.
+      const key = turnKey(routeVersion, announce.turn.atM)
       if (unsaid(key)) {
         return {
           key,
@@ -151,6 +171,9 @@ export function cueFor(input: CueInput, said: ReadonlySet<string>): Cue | null {
             announce.then,
             spokenDistance(announce.turn.atM - alongM),
           ),
+          // The chained partner is spoken *inside* this sentence, so it must be marked said
+          // too. Without this it is announced again on its own a few seconds later.
+          covers: announce.then ? [turnKey(routeVersion, announce.then.atM)] : undefined,
         }
       }
     }

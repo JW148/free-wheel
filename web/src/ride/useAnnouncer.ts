@@ -104,6 +104,10 @@ export function useAnnouncer(
     const cue = cueFor(input, said.current)
     if (!cue) return
     said.current.add(cue.key)
+    // Anything the cue spoke *inside* its own sentence counts as said too. A chained pair —
+    // "left, then right" — is one utterance answering for two junctions, and marking only the
+    // first left the second to be announced again a few seconds later.
+    for (const also of cue.covers ?? []) said.current.add(also)
     say(cue.text)
   }, [enabled, input, say])
 
