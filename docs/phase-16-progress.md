@@ -263,8 +263,20 @@ In rough order of risk. **None of this has been ridden.**
 4. **Whether the strip is legible at 10 px** on a real screen at arm's length, and whether four
    hues at one lightness separate in sunlight the way they do on a monitor.
 5. **Turn instruction cost on the phone.** Not slower on the JVM, unmeasured on device.
-6. **GPX size in the library.** Doubling is fine in principle; twenty saved routes at 443 kB is
-   9 MB of IndexedDB and nobody has watched that happen.
+6. **GPX size, in two stores.** Twenty saved routes at 443 kB is 9 MB of IndexedDB, which is
+   nothing against a ~60%-of-disk quota, but nobody has watched it happen.
+
+   The other store is worth the arithmetic, because it fails silently. `plan.ts` drops the
+   whole `gpx` map out of the stored plan when the total passes `MAX_STORED_GPX` (2 MB), so a
+   cold start re-routes instead of redrawing. Doubling the GPX halves the headroom: three 95 km
+   routes were 708 kB and are now 1.33 MB.
+
+   It still cannot be breached by anything the app allows, and the reason is a constant nobody
+   had this in mind when choosing. `COMPARE_CEILING_M` is 50 km, so three routes only ever
+   exist below that — about 700 kB together — and past it a single route runs, which even at
+   the 150 km air-distance ceiling lands near 1 MB. The margin is real but it is now one
+   doubling wide rather than two, and a future change that raises the compare ceiling would
+   spend it.
 
 ## 12 · Not done
 
