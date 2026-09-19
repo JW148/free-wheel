@@ -1,138 +1,145 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- track-length = 1964 filtered ascend = 1 plain-ascend = -2 cost=2975 energy=.0kwh time=5m 23s -->
 <gpx 
  xmlns="http://www.topografix.com/GPX/1/1" 
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+ xmlns:brouter="Not yet documented" 
  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" 
  creator="BRouter-1.7.10" version="1.1">
- <trk>
+ <metadata>
   <name>brouter_trekking_0</name>
+  <extensions>
+   <brouter:info>track-length = 1964 filtered ascend = 1 plain-ascend = -2 cost=2975 energy=.0kwh time=5m 23s</brouter:info>
+  </extensions>
+ </metadata>
+ <trk>
+  <src>brouter_trekking_0</src>
+  <type>bike</type>
   <trkseg>
-   <trkpt lon="-0.127818" lat="51.507392"><ele>8.0</ele></trkpt>
-   <trkpt lon="-0.127843" lat="51.507415"><ele>8.25</ele></trkpt>
-   <trkpt lon="-0.127937" lat="51.507432"><ele>8.5</ele></trkpt>
-   <trkpt lon="-0.127996" lat="51.507446"><ele>8.75</ele></trkpt>
-   <trkpt lon="-0.127933" lat="51.507502"><ele>8.75</ele></trkpt>
+   <trkpt lon="-0.127818" lat="51.507392"><ele>8.0</ele><desc>start</desc><type>via</type></trkpt>
+   <trkpt lon="-0.127843" lat="51.507415"><ele>8.25</ele><desc>slight left</desc><sym>TSLL</sym><extensions><brouter:voicehint>TSLL;11, 4(-39)4 (102)4</brouter:voicehint><brouter:way>highway=footway surface=paving_stones</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.127937" lat="51.507432"><ele>8.5</ele><extensions><brouter:node>barrier=kerb kerb=lowered</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127996" lat="51.507446"><ele>8.75</ele><desc>sharp right</desc><sym>TSHR</sym><extensions><brouter:voicehint>TSHR;25, 4(104)26 (0)4 (-89)26</brouter:voicehint><brouter:way>reversedirection=yes highway=footway surface=asphalt bicycle=dismount</brouter:way><brouter:node>highway=crossing estimated_crossing_class=0 crossing=traffic_signals foot=yes</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127933" lat="51.507502"><ele>8.75</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes junction=circular route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
    <trkpt lon="-0.127872" lat="51.507533"><ele>9.0</ele></trkpt>
    <trkpt lon="-0.127827" lat="51.507548"><ele>9.0</ele></trkpt>
    <trkpt lon="-0.127710" lat="51.507570"><ele>8.75</ele></trkpt>
-   <trkpt lon="-0.127630" lat="51.507577"><ele>8.5</ele></trkpt>
+   <trkpt lon="-0.127630" lat="51.507577"><ele>8.5</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes junction=circular</brouter:way></extensions></trkpt>
    <trkpt lon="-0.127556" lat="51.507576"><ele>8.25</ele></trkpt>
    <trkpt lon="-0.127496" lat="51.507569"><ele>8.0</ele></trkpt>
-   <trkpt lon="-0.127405" lat="51.507540"><ele>8.0</ele></trkpt>
-   <trkpt lon="-0.127355" lat="51.507515"><ele>8.0</ele></trkpt>
+   <trkpt lon="-0.127405" lat="51.507540"><ele>8.0</ele><extensions><brouter:node>highway=traffic_signals traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127355" lat="51.507515"><ele>8.0</ele><extensions><brouter:node>highway=crossing estimated_crossing_class=0 crossing=traffic_signals foot=yes</brouter:node></extensions></trkpt>
    <trkpt lon="-0.127322" lat="51.507497"><ele>7.75</ele></trkpt>
-   <trkpt lon="-0.127284" lat="51.507463"><ele>7.75</ele></trkpt>
-   <trkpt lon="-0.127280" lat="51.507455"><ele>7.75</ele></trkpt>
+   <trkpt lon="-0.127284" lat="51.507463"><ele>7.75</ele><desc>slight right</desc><sym>TSLR</sym><extensions><brouter:voicehint>TSLR;26, 26(18)26 (-104)26</brouter:voicehint></extensions></trkpt>
+   <trkpt lon="-0.127280" lat="51.507455"><ele>7.75</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes junction=circular cycleway:left=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
    <trkpt lon="-0.127278" lat="51.507436"><ele>7.75</ele></trkpt>
    <trkpt lon="-0.127301" lat="51.507360"><ele>7.25</ele></trkpt>
    <trkpt lon="-0.127341" lat="51.507302"><ele>7.25</ele></trkpt>
-   <trkpt lon="-0.127413" lat="51.507254"><ele>7.0</ele></trkpt>
-   <trkpt lon="-0.127434" lat="51.507209"><ele>6.75</ele></trkpt>
-   <trkpt lon="-0.127439" lat="51.507168"><ele>6.75</ele></trkpt>
-   <trkpt lon="-0.127438" lat="51.507132"><ele>6.5</ele></trkpt>
+   <trkpt lon="-0.127413" lat="51.507254"><ele>7.0</ele><desc>slight left</desc><sym>TSLL</sym><extensions><brouter:voicehint>TSLL;664, 26(-26)26 (17)26</brouter:voicehint></extensions></trkpt>
+   <trkpt lon="-0.127434" lat="51.507209"><ele>6.75</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.127439" lat="51.507168"><ele>6.75</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127438" lat="51.507132"><ele>6.5</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals foot=yes</brouter:node></extensions></trkpt>
    <trkpt lon="-0.127396" lat="51.506850"><ele>5.5</ele></trkpt>
-   <trkpt lon="-0.127370" lat="51.506790"><ele>5.5</ele></trkpt>
-   <trkpt lon="-0.127306" lat="51.506645"><ele>5.25</ele></trkpt>
+   <trkpt lon="-0.127370" lat="51.506790"><ele>5.5</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.127306" lat="51.506645"><ele>5.25</ele><extensions><brouter:node>nodeaccessgranted=yes estimated_crossing_class=6</brouter:node></extensions></trkpt>
    <trkpt lon="-0.127231" lat="51.506483"><ele>5.0</ele></trkpt>
    <trkpt lon="-0.127109" lat="51.506271"><ele>5.0</ele></trkpt>
    <trkpt lon="-0.127070" lat="51.506199"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.126980" lat="51.506154"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.126959" lat="51.506114"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.126945" lat="51.506089"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.126897" lat="51.506009"><ele>4.75</ele></trkpt>
-   <trkpt lon="-0.126707" lat="51.505621"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126655" lat="51.505502"><ele>3.75</ele></trkpt>
-   <trkpt lon="-0.126597" lat="51.505396"><ele>3.75</ele></trkpt>
-   <trkpt lon="-0.126521" lat="51.505246"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126441" lat="51.505048"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126418" lat="51.504996"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126357" lat="51.504855"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126306" lat="51.504729"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126293" lat="51.504698"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126205" lat="51.504452"><ele>4.0</ele></trkpt>
+   <trkpt lon="-0.126980" lat="51.506154"><ele>5.0</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.126959" lat="51.506114"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals traffic_signals:direction=forward</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126945" lat="51.506089"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126897" lat="51.506009"><ele>4.75</ele><extensions><brouter:node>nodeaccessgranted=yes estimated_crossing_class=0</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126707" lat="51.505621"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes estimated_crossing_class=5</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126655" lat="51.505502"><ele>3.75</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=share_busway route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.126597" lat="51.505396"><ele>3.75</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent cycleway=share_busway oneway=yes route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.126521" lat="51.505246"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.126441" lat="51.505048"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent cycleway=share_busway oneway=yes route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126418" lat="51.504996"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126357" lat="51.504855"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=no route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes estimated_crossing_class=0</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126306" lat="51.504729"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt cycleway:both=no oneway=yes route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes estimated_crossing_class=0</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126293" lat="51.504698"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126205" lat="51.504452"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=share_busway route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
    <trkpt lon="-0.126156" lat="51.504266"><ele>4.0</ele></trkpt>
    <trkpt lon="-0.126139" lat="51.504200"><ele>4.0</ele></trkpt>
    <trkpt lon="-0.126113" lat="51.504008"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126046" lat="51.503421"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126040" lat="51.503367"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.126008" lat="51.503154"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.125998" lat="51.503039"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.125992" lat="51.502975"><ele>4.0</ele></trkpt>
+   <trkpt lon="-0.126046" lat="51.503421"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126040" lat="51.503367"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt smoothness=excellent oneway=yes cycleway:left=no route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126008" lat="51.503154"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes estimated_crossing_class=4</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.125998" lat="51.503039"><ele>4.0</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes cycleway:left=share_busway route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.125992" lat="51.502975"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
    <trkpt lon="-0.125974" lat="51.502763"><ele>4.0</ele></trkpt>
    <trkpt lon="-0.125975" lat="51.502665"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.125986" lat="51.502407"><ele>4.5</ele></trkpt>
-   <trkpt lon="-0.125991" lat="51.502326"><ele>4.5</ele></trkpt>
-   <trkpt lon="-0.125992" lat="51.502290"><ele>4.5</ele></trkpt>
-   <trkpt lon="-0.125993" lat="51.502237"><ele>4.5</ele></trkpt>
-   <trkpt lon="-0.126001" lat="51.502105"><ele>4.75</ele></trkpt>
-   <trkpt lon="-0.126019" lat="51.502013"><ele>4.75</ele></trkpt>
-   <trkpt lon="-0.126088" lat="51.501563"><ele>4.75</ele></trkpt>
-   <trkpt lon="-0.126100" lat="51.501434"><ele>4.75</ele></trkpt>
+   <trkpt lon="-0.125986" lat="51.502407"><ele>4.5</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes cycleway:left=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.125991" lat="51.502326"><ele>4.5</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.125992" lat="51.502290"><ele>4.5</ele><extensions><brouter:node>nodeaccessgranted=yes direction=forward</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.125993" lat="51.502237"><ele>4.5</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126001" lat="51.502105"><ele>4.75</ele><extensions><brouter:node>nodeaccessgranted=yes estimated_crossing_class=5</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126019" lat="51.502013"><ele>4.75</ele><extensions><brouter:node>nodeaccessgranted=yes estimated_crossing_class=5</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126088" lat="51.501563"><ele>4.75</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes cycleway:right=lane cycleway:left=shared_lane route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.126100" lat="51.501434"><ele>4.75</ele><desc>straight</desc><sym>C</sym><extensions><brouter:voicehint>C;57, 26(17)26 (-31)26</brouter:voicehint></extensions></trkpt>
    <trkpt lon="-0.126137" lat="51.501371"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.126153" lat="51.501197"><ele>5.5</ele></trkpt>
-   <trkpt lon="-0.126158" lat="51.501150"><ele>5.5</ele></trkpt>
-   <trkpt lon="-0.126160" lat="51.501130"><ele>5.75</ele></trkpt>
-   <trkpt lon="-0.126154" lat="51.501008"><ele>5.5</ele></trkpt>
+   <trkpt lon="-0.126153" lat="51.501197"><ele>5.5</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126158" lat="51.501150"><ele>5.5</ele><extensions><brouter:node>nodeaccessgranted=yes direction=forward</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126160" lat="51.501130"><ele>5.75</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126154" lat="51.501008"><ele>5.5</ele><extensions><brouter:way>highway=primary surface=asphalt oneway=yes route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
    <trkpt lon="-0.126151" lat="51.500958"><ele>5.25</ele></trkpt>
-   <trkpt lon="-0.126150" lat="51.500926"><ele>5.25</ele></trkpt>
-   <trkpt lon="-0.126330" lat="51.500931"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.126405" lat="51.500940"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.127088" lat="51.500978"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.127116" lat="51.500979"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.127228" lat="51.501051"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.127310" lat="51.501099"><ele>5.0</ele></trkpt>
+   <trkpt lon="-0.126150" lat="51.500926"><ele>5.25</ele><desc>right</desc><sym>TR</sym><extensions><brouter:voicehint>TR;67, 26(94)6 (-83)6 (0)26 (43)6</brouter:voicehint><brouter:way>highway=primary surface=asphalt oneway=yes junction=circular route_bicycle_lcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes estimated_crossing_class=0</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.126330" lat="51.500931"><ele>5.0</ele><extensions><brouter:way>highway=cycleway surface=asphalt foot=no cycleway=crossing oneway=no route_bicycle_rcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.126405" lat="51.500940"><ele>5.0</ele><extensions><brouter:way>highway=cycleway surface=asphalt foot=no oneway=no route_bicycle_rcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=backward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127088" lat="51.500978"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127116" lat="51.500979"><ele>5.0</ele><desc>slight right</desc><sym>TSLR</sym><extensions><brouter:voicehint>TSLR;11, 6(43)6 (-5)6</brouter:voicehint></extensions></trkpt>
+   <trkpt lon="-0.127228" lat="51.501051"><ele>5.0</ele><desc>straight</desc><sym>C</sym><extensions><brouter:voicehint>C;8, 6(-2)6 (119)26 (-75)26</brouter:voicehint><brouter:way>reversedirection=yes highway=cycleway surface=asphalt foot=no smoothness=excellent cycleway=crossing oneway=no route_bicycle_rcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes estimated_crossing_class=5</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127310" lat="51.501099"><ele>5.0</ele><desc>slight left</desc><sym>TSLL</sym><extensions><brouter:voicehint>TSLL;422, 6(4)6 (156)22 (-32)22</brouter:voicehint></extensions></trkpt>
    <trkpt lon="-0.127376" lat="51.501143"><ele>4.75</ele></trkpt>
-   <trkpt lon="-0.127449" lat="51.501151"><ele>4.75</ele></trkpt>
-   <trkpt lon="-0.127512" lat="51.501163"><ele>4.75</ele></trkpt>
+   <trkpt lon="-0.127449" lat="51.501151"><ele>4.75</ele><extensions><brouter:way>reversedirection=yes highway=cycleway surface=asphalt foot=no oneway=no route_bicycle_rcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=crossing crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.127512" lat="51.501163"><ele>4.75</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
    <trkpt lon="-0.127865" lat="51.501188"><ele>5.0</ele></trkpt>
    <trkpt lon="-0.128319" lat="51.501212"><ele>4.5</ele></trkpt>
-   <trkpt lon="-0.129447" lat="51.501306"><ele>4.0</ele></trkpt>
+   <trkpt lon="-0.129447" lat="51.501306"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=backward traffic_signals=signal</brouter:node></extensions></trkpt>
    <trkpt lon="-0.129492" lat="51.501309"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.129619" lat="51.501306"><ele>4.0</ele></trkpt>
+   <trkpt lon="-0.129619" lat="51.501306"><ele>4.0</ele><extensions><brouter:way>highway=cycleway surface=asphalt foot=no oneway=yes route_bicycle_rcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes barrier=block bicycle=yes</brouter:node></extensions></trkpt>
    <trkpt lon="-0.129696" lat="51.501320"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.129800" lat="51.501330"><ele>4.0</ele></trkpt>
+   <trkpt lon="-0.129800" lat="51.501330"><ele>4.0</ele><extensions><brouter:way>reversedirection=yes highway=cycleway surface=asphalt foot=no oneway=no route_bicycle_rcn=yes</brouter:way></extensions></trkpt>
    <trkpt lon="-0.129847" lat="51.501335"><ele>4.0</ele></trkpt>
    <trkpt lon="-0.129908" lat="51.501341"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.130045" lat="51.501340"><ele>3.75</ele></trkpt>
-   <trkpt lon="-0.130106" lat="51.501337"><ele>3.75</ele></trkpt>
-   <trkpt lon="-0.130163" lat="51.501337"><ele>3.75</ele></trkpt>
+   <trkpt lon="-0.130045" lat="51.501340"><ele>3.75</ele><extensions><brouter:way>highway=cycleway surface=asphalt foot=no smoothness=good oneway=no route_bicycle_rcn=yes</brouter:way><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.130106" lat="51.501337"><ele>3.75</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.130163" lat="51.501337"><ele>3.75</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=backward traffic_signals=signal</brouter:node></extensions></trkpt>
    <trkpt lon="-0.130301" lat="51.501334"><ele>3.5</ele></trkpt>
    <trkpt lon="-0.130723" lat="51.501310"><ele>3.0</ele></trkpt>
-   <trkpt lon="-0.131731" lat="51.501206"><ele>3.0</ele></trkpt>
-   <trkpt lon="-0.133280" lat="51.501035"><ele>3.5</ele></trkpt>
-   <trkpt lon="-0.133837" lat="51.500986"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.133911" lat="51.500977"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.133985" lat="51.500969"><ele>4.0</ele></trkpt>
-   <trkpt lon="-0.136299" lat="51.500730"><ele>4.5</ele></trkpt>
-   <trkpt lon="-0.138571" lat="51.500490"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.138641" lat="51.500484"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.138715" lat="51.500477"><ele>5.0</ele></trkpt>
+   <trkpt lon="-0.131731" lat="51.501206"><ele>3.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing crossing=unmarked traffic_calming=table</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.133280" lat="51.501035"><ele>3.5</ele><desc>straight</desc><sym>C</sym><extensions><brouter:voicehint>C;405, 6(2)6 (92)4 (34)2 (-87)4 (143)2</brouter:voicehint></extensions></trkpt>
+   <trkpt lon="-0.133837" lat="51.500986"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.133911" lat="51.500977"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing crossing=traffic_signals kerb=lowered</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.133985" lat="51.500969"><ele>4.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=backward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.136299" lat="51.500730"><ele>4.5</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing crossing=unmarked traffic_calming=table kerb=flush</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.138571" lat="51.500490"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.138641" lat="51.500484"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing crossing=traffic_signals kerb=lowered</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.138715" lat="51.500477"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals crossing=no bicycle=yes traffic_signals:direction=backward traffic_signals=signal</brouter:node></extensions></trkpt>
    <trkpt lon="-0.138944" lat="51.500465"><ele>5.0</ele></trkpt>
    <trkpt lon="-0.138990" lat="51.500472"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.139046" lat="51.500481"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.139094" lat="51.500459"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.139168" lat="51.500375"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.139187" lat="51.500345"><ele>5.0</ele></trkpt>
+   <trkpt lon="-0.139046" lat="51.500481"><ele>5.0</ele><desc>slight left</desc><sym>TSLL</sym><extensions><brouter:voicehint>TSLL;4, 6(-50)6 (36)6</brouter:voicehint></extensions></trkpt>
+   <trkpt lon="-0.139094" lat="51.500459"><ele>5.0</ele><desc>slight left</desc><sym>TSLL</sym><extensions><brouter:voicehint>TSLL;11, 6(-24)6 (71)22 (-112)22 (11)6</brouter:voicehint><brouter:way>reversedirection=yes highway=cycleway surface=asphalt foot=no oneway=no route_bicycle_rcn=proposed route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.139168" lat="51.500375"><ele>5.0</ele><desc>slight right</desc><sym>TSLR</sym><extensions><brouter:voicehint>TSLR;33, 6(-6)6 (-120)22 (60)22</brouter:voicehint><brouter:way>highway=cycleway surface=asphalt foot=no oneway=yes route_bicycle_rcn=proposed route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.139187" lat="51.500345"><ele>5.0</ele><extensions><brouter:way>highway=cycleway surface=asphalt foot=yes oneway=yes route_bicycle_rcn=proposed route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
    <trkpt lon="-0.139519" lat="51.500304"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.139592" lat="51.500338"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.140443" lat="51.500239"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.140565" lat="51.500225"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.140636" lat="51.500216"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.140865" lat="51.500193"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.140991" lat="51.500176"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.141044" lat="51.500161"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.141124" lat="51.500139"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.141171" lat="51.500118"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.141196" lat="51.500107"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.141275" lat="51.500181"><ele>5.0</ele></trkpt>
-   <trkpt lon="-0.141308" lat="51.500212"><ele>5.0</ele></trkpt>
+   <trkpt lon="-0.139592" lat="51.500338"><ele>5.0</ele><desc>slight left</desc><sym>TSLL</sym><extensions><brouter:voicehint>TSLL;90, 6(-46)22 (133)22</brouter:voicehint></extensions></trkpt>
+   <trkpt lon="-0.140443" lat="51.500239"><ele>5.0</ele><extensions><brouter:way>highway=tertiary cycleway:both=separate oneway=yes route_bicycle_rcn=proposed route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.140565" lat="51.500225"><ele>5.0</ele><extensions><brouter:way>highway=tertiary surface=asphalt cycleway:both=separate oneway=yes</brouter:way><brouter:node>highway=traffic_signals traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.140636" lat="51.500216"><ele>5.0</ele><extensions><brouter:node>highway=crossing crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.140865" lat="51.500193"><ele>5.0</ele><desc>straight</desc><sym>C</sym><extensions><brouter:voicehint>C;25, 22(-2)26 (106)22 (-100)24</brouter:voicehint><brouter:way>highway=tertiary surface=asphalt oneway=yes oneway:bicycle=no cycleway:right=lane route_bicycle_rcn=proposed route_bicycle_lcn=yes cycleway:right:oneway=-1</brouter:way><brouter:node>nodeaccessgranted=yes estimated_crossing_class=0</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.140991" lat="51.500176"><ele>5.0</ele><extensions><brouter:way>reversedirection=yes highway=primary surface=asphalt cycleway:both=no route_bicycle_lcn=yes</brouter:way></extensions></trkpt>
+   <trkpt lon="-0.141044" lat="51.500161"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=crossing estimated_crossing_class=0 crossing=traffic_signals</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.141124" lat="51.500139"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes direction=forward</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.141171" lat="51.500118"><ele>5.0</ele><extensions><brouter:node>nodeaccessgranted=yes highway=traffic_signals traffic_signals:direction=forward traffic_signals=signal</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.141196" lat="51.500107"><ele>5.0</ele><desc>right</desc><sym>TR</sym><extensions><brouter:voicehint>TR;68, 26(92)6 (2)26</brouter:voicehint><brouter:node>nodeaccessgranted=yes estimated_crossing_class=6</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.141275" lat="51.500181"><ele>5.0</ele><extensions><brouter:way>highway=service surface=asphalt</brouter:way><brouter:node>highway=crossing</brouter:node></extensions></trkpt>
+   <trkpt lon="-0.141308" lat="51.500212"><ele>5.0</ele><extensions><brouter:node>barrier=gate</brouter:node></extensions></trkpt>
    <trkpt lon="-0.141627" lat="51.500506"><ele>5.25</ele></trkpt>
    <trkpt lon="-0.141665" lat="51.500522"><ele>5.0</ele></trkpt>
    <trkpt lon="-0.141709" lat="51.500530"><ele>5.0</ele></trkpt>
    <trkpt lon="-0.141755" lat="51.500528"><ele>5.25</ele></trkpt>
    <trkpt lon="-0.141798" lat="51.500518"><ele>5.25</ele></trkpt>
-   <trkpt lon="-0.141834" lat="51.500500"><ele>5.5</ele></trkpt>
+   <trkpt lon="-0.141834" lat="51.500500"><ele>5.5</ele><desc>end</desc><type>via</type></trkpt>
   </trkseg>
  </trk>
 </gpx>

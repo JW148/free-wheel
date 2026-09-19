@@ -54,6 +54,47 @@ export interface ParsedRoute {
    * `stitch.ts`.
    */
   resumeAtM?: number
+  /**
+   * Where the road's tags change, from `<brouter:way>`. Absent on anything but a mode 9 route.
+   *
+   * Positioned by **track point index** rather than by distance, and deliberately. Converting
+   * to metres needs a cumulative distance array, `routeGeometry` already builds and caches one,
+   * and two independent measurements of the same route would be two things to keep in step.
+   * `ways.ts` does the conversion; this only reads the document.
+   *
+   * A run begins at its index and continues until the next entry, or to the end of the track.
+   * That is BRouter's convention: `FormatGpx` writes the tags only when they *change*, and the
+   * final stretch carries no entry of its own.
+   */
+  ways?: WayTagsAt[]
+  /**
+   * The junctions, from mode 9's `<sym>`. Absent on anything but a mode 9 route.
+   *
+   * Absent and empty are different facts and both occur: a recorded ride has no turns because
+   * nothing computed them, and a route straight down one road has none because there are none.
+   */
+  turns?: TurnAt[]
+}
+
+/** The road's decoded tags, at the track point where they start applying. */
+export interface WayTagsAt {
+  index: number
+  /** Exactly what BRouter wrote, split on `=`. `highway`, `surface`, `route_bicycle_ncn`, … */
+  tags: Record<string, string>
+}
+
+/** A junction, at the track point it happens on. */
+export interface TurnAt {
+  index: number
+  /**
+   * BRouter's own token: `TL`, `TSLR`, `TSHL`, `KR`, `TU`, `C`, `BL`, `RNDB3`, `RNLB-2`.
+   *
+   * The token and not `<desc>`, which is BRouter's English. The app writes its own sentences
+   * in `cues.ts` — partly because a synthesiser reads "450 m" as "four hundred and fifty em",
+   * and partly because a cue list tested against a fixture of English is a cue list that
+   * breaks when somebody rewords it.
+   */
+  command: string
 }
 
 /**
@@ -66,10 +107,24 @@ export interface ParsedRoute {
 const SUMMARY = /track-length\s*=\s*(-?\d+)\s+filtered ascend\s*=\s*(-?\d+)/
 const TIME = /\btime=(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?/
 
-const TRKPT = /<trkpt\b([^>]*)>(?:\s*<ele>([-\d.]+)<\/ele>)?/g
+/**
+ * One whole track point, attributes and body.
+ *
+ * The body is captured rather than skipped because mode 9 hangs `<sym>` and
+ * `<brouter:way>` off it, and those have to be numbered against the same points the
+ * coordinates are — one pass, one counter, no chance of the two disagreeing.
+ *
+ * Both closings are handled, and the self-closing one is not hypothetical: a point with no
+ * elevation and no extensions is written `<trkpt lon=".." lat=".."/>`, and a pattern that
+ * insisted on `</trkpt>` read a whole such document as having no track points at all.
+ */
+const TRKPT = /<trkpt\b([^>]*?)(?:\/>|>([\s\S]*?)<\/trkpt>)/g
+const ELE = /<ele>([-\d.]+)<\/ele>/
 const LON = /\blon="(-?[\d.]+)"/
 const LAT = /\blat="(-?[\d.]+)"/
 const TRACK_NAME = /<name>([^<]*)<\/name>/
+const WAY = /<brouter:way>([^<]*)<\/brouter:way>/
+const SYM = /<sym>([^<]*)<\/sym>/
 
 /**
  * The track points, in order, with a height per point.
@@ -78,20 +133,57 @@ const TRACK_NAME = /<name>([^<]*)<\/name>/
  * computed route and a recorded ride differ entirely in their summaries and not at all in
  * the shape of a `<trkpt>`.
  */
-function trackPoints(gpx: string): { coords: [number, number][]; elevations: number[] } {
+function trackPoints(gpx: string): {
+  coords: [number, number][]
+  elevations: number[]
+  ways: WayTagsAt[]
+  turns: TurnAt[]
+} {
   const coords: [number, number][] = []
   const elevations: number[] = []
+  const ways: WayTagsAt[] = []
+  const turns: TurnAt[] = []
 
   for (const match of gpx.matchAll(TRKPT)) {
-    const [, attributes, ele] = match
+    const [, attributes, body] = match
     const lon = LON.exec(attributes)
     const lat = LAT.exec(attributes)
     if (!lon || !lat) continue
+
+    const index = coords.length
     coords.push([Number(lon[1]), Number(lat[1])])
-    elevations.push(ele === undefined ? 0 : Number(ele))
+
+    // Undefined for a self-closing point, which carries nothing by definition.
+    const ele = body === undefined ? null : ELE.exec(body)
+    elevations.push(ele === null ? 0 : Number(ele[1]))
+    if (body === undefined) continue
+
+    const way = WAY.exec(body)
+    if (way) ways.push({ index, tags: parseTags(way[1]) })
+
+    const sym = SYM.exec(body)
+    if (sym) turns.push({ index, command: sym[1] })
   }
 
-  return { coords, elevations }
+  return { coords, elevations, ways, turns }
+}
+
+/**
+ * `highway=cycleway surface=asphalt route_bicycle_ncn=yes` into an object.
+ *
+ * Space-separated, which is safe because BRouter builds this string from `lookups.dat` and
+ * every value in that vocabulary is a single token. `reversedirection=yes` arrives here like
+ * any other tag — it is BRouter's note that it walked the way backwards, not a property of
+ * the road, and dropping it is the classifier's job rather than the parser's. Keeping
+ * everything means a tag nobody reads today costs nothing and is there when somebody does.
+ */
+function parseTags(text: string): Record<string, string> {
+  const tags: Record<string, string> = {}
+  for (const pair of text.split(' ')) {
+    const eq = pair.indexOf('=')
+    if (eq > 0) tags[pair.slice(0, eq)] = pair.slice(eq + 1)
+  }
+  return tags
 }
 
 export function parseBrouterGpx(gpx: string): ParsedRoute {
@@ -100,7 +192,7 @@ export function parseBrouterGpx(gpx: string): ParsedRoute {
   // nothing, which looks like a routing success with no road.
   if (gpx.startsWith('error:')) throw new Error(gpx.slice('error:'.length).trim())
 
-  const { coords, elevations } = trackPoints(gpx)
+  const { coords, elevations, ways, turns } = trackPoints(gpx)
 
   if (coords.length === 0) {
     throw new Error('the route came back with no track points')
@@ -116,6 +208,11 @@ export function parseBrouterGpx(gpx: string): ParsedRoute {
     ascendM: summary ? Number(summary[2]) : 0,
     timeS: time ? Number(time[1] ?? 0) * 3600 + Number(time[2] ?? 0) * 60 + Number(time[3] ?? 0) : null,
     name: TRACK_NAME.exec(gpx)?.[1] ?? null,
+    // Undefined rather than `[]` on a mode 0 document. Everything downstream branches on
+    // whether this route can describe itself at all, and an empty list is a claim that it can
+    // and has nothing to say.
+    ways: ways.length > 0 ? ways : undefined,
+    turns: turns.length > 0 ? turns : undefined,
   }
 }
 

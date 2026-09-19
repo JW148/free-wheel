@@ -63,6 +63,87 @@ describe('parseBrouterGpx', () => {
     })
   })
 
+  describe('the mode 9 extensions', () => {
+    const short = parseBrouterGpx(fixture('urban-short.gpx'))
+    const long = parseBrouterGpx(fixture('london-brighton.gpx'))
+
+    it('reads a <brouter:way> into tags, at the point it appears', () => {
+      // The first one in the file, verbatim:
+      //   <brouter:way>highway=footway surface=paving_stones</brouter:way>
+      expect(short.ways![0]).toEqual({
+        index: 1,
+        tags: { highway: 'footway', surface: 'paving_stones' },
+      })
+    })
+
+    it('keeps every tag, including the ones nothing reads yet', () => {
+      const circular = short.ways!.find((w) => w.tags.junction === 'circular')
+      expect(circular!.tags).toMatchObject({
+        highway: 'primary',
+        surface: 'asphalt',
+        oneway: 'yes',
+        route_bicycle_lcn: 'yes',
+      })
+    })
+
+    it('finds one way entry per <brouter:way> in the document', () => {
+      const emitted = fixture('urban-short.gpx').match(/<brouter:way>/g)!.length
+      expect(short.ways).toHaveLength(emitted)
+    })
+
+    it('indexes ways against the coordinate array, never past its end', () => {
+      for (const way of long.ways!) {
+        expect(way.index).toBeGreaterThanOrEqual(0)
+        expect(way.index).toBeLessThan(long.coords.length)
+      }
+    })
+
+    it('keeps the ways in order', () => {
+      const indices = long.ways!.map((w) => w.index)
+      expect(indices).toEqual([...indices].sort((a, b) => a - b))
+    })
+
+    it('reads a <sym> into a turn command', () => {
+      // <desc>slight left</desc><sym>TSLL</sym> on the second track point.
+      expect(short.turns![0]).toEqual({ index: 1, command: 'TSLL' })
+    })
+
+    it('keeps BRouter tokens rather than its prose', () => {
+      // The app writes its own sentences — `<desc>` is BRouter's English and the wording
+      // the rider hears comes from `cues.ts`, which is tested by advancing a number.
+      for (const turn of long.turns!) {
+        expect(turn.command).toMatch(/^[A-Z]+\d*$/)
+      }
+    })
+
+    it('carries the roundabout exit number in the command', () => {
+      // `RNDB<n>` clockwise, `RNLB<n>` anticlockwise. Britain drives on the left, so every
+      // roundabout on a route from London to Brighton is an RNLB — ten of them, exits 1 to 3.
+      const roundabouts = long.turns!.filter((t) => t.command.startsWith('RN'))
+      expect(roundabouts.length).toBeGreaterThan(0)
+      for (const r of roundabouts) expect(r.command).toMatch(/^RN[DL]B\d+$/)
+    })
+
+    it('indexes turns against the coordinate array', () => {
+      for (const turn of long.turns!) {
+        expect(turn.index).toBeGreaterThanOrEqual(0)
+        expect(turn.index).toBeLessThan(long.coords.length)
+      }
+    })
+
+    it('leaves both absent on a mode 0 route, rather than empty', () => {
+      // Absence and emptiness are different facts, and everything downstream branches on it:
+      // a route with no extensions cannot describe its surfaces, where a route across a field
+      // genuinely has no turns.
+      const plain = parseBrouterGpx(fixture('urban-short-plain.gpx'))
+      expect(plain.ways).toBeUndefined()
+      expect(plain.turns).toBeUndefined()
+      // ...and it is otherwise the same route.
+      expect(plain.distanceM).toBe(short.distanceM)
+      expect(plain.coords).toHaveLength(short.coords.length)
+    })
+  })
+
   describe('summary parsing', () => {
     const withComment = (comment: string) =>
       parseBrouterGpx(
