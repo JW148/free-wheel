@@ -9,14 +9,17 @@ import { useHeading } from './useHeading'
 import { useRideTelemetry } from './useRideTelemetry'
 import { useAnnouncer } from './useAnnouncer'
 import type { Rider } from './useRider'
-import { sliceAlong, splitWaypoints } from './progress'
+import { routeGeometry, sliceAlong, splitWaypoints } from './progress'
 import { riddenPrefix } from './stitch'
+import { markedRuns, wayRuns } from './ways'
 import {
   boundsOf,
   drawnRoutes,
   mapTapAction,
+  markFeatures,
   routeAt,
   setFocus,
+  setMarkedRuns,
   setPosition,
   setPositionEmphasis,
   setRoutes,
@@ -493,6 +496,39 @@ export default function RideView({
     }
     if (drawn.length === 0) lastFitted.current = null
   }, [map, styleReady, suspended, plan.routes, plan.chosen, plan.stale, plan.framing, riding])
+
+  /*
+   * ── What the chosen route is made of ─────────────────────────────────────────────────
+   *
+   * The stretches worth flagging: where it leaves the tarmac, and where it puts the rider on a
+   * main road. Both come off the tags BRouter already wrote into the GPX — see `ways.ts`.
+   *
+   * Only ever the *one* route. Three candidates each wearing their own dashes and caution
+   * weights is a map nobody can read, and "does this put me on the A23" is a question you ask
+   * about the route you have picked, not about three you are weighing. So this is drawn for a
+   * chosen route, or for a lone one, and for nothing else — which is `describable` below, and
+   * is the same nullability `plan.chosen` has everywhere: say nothing rather than pick one.
+   *
+   * An older saved route and a recorded ride both arrive with no tags at all, and get nothing
+   * rather than an empty claim.
+   */
+  const ids = Object.keys(plan.routes)
+  const describableId = plan.chosen ?? (ids.length === 1 ? ids[0] : null)
+  const describable = describableId ? plan.routes[describableId] : undefined
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady || suspended) return
+    if (!describable) {
+      setMarkedRuns(instance, null)
+      return
+    }
+    const geometry = routeGeometry(describable)
+    const runs = geometry && wayRuns(describable, geometry)
+    setMarkedRuns(
+      instance,
+      geometry && runs ? markFeatures(geometry, markedRuns(runs)) : null,
+    )
+  }, [map, styleReady, suspended, describable])
 
   // ── Progress and the climb ahead, on the map ──────────────────────────────────────────
   // Quantised to 25 m so the two GeoJSON sources are not rebuilt on every fix. At 25 km/h that

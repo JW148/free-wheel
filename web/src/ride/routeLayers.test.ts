@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { drawnRoutes, mapTapAction, routeFeatures } from './routeLayers'
+import {
+  drawnRoutes,
+  ensureRouteLayers,
+  mapTapAction,
+  markFeatures,
+  routeFeatures,
+} from './routeLayers'
+import { routeGeometry } from './progress'
 import { profileById } from './profiles'
 
 const line = (n: number): [number, number][] => [
@@ -191,5 +198,92 @@ describe('mapTapAction', () => {
    */
   it('refuses to place a stop while riding, whatever is under the tap', () => {
     expect(tap({ choosing: false, placing: false, chosen: 'gravel' })).toEqual({ do: 'nothing' })
+  })
+})
+
+describe('ensureRouteLayers', () => {
+  /*
+   * A stand-in for MapLibre that records the order layers were added in.
+   *
+   * Insertion order *is* the draw order here — nothing passes a `beforeId` — so it is the one
+   * property worth asserting, and the one that silently inverts the next time a layer is added
+   * in the wrong place. That failure looks like a styling bug rather than a reordering: a
+   * main-road stretch painted over the route line it is supposed to sit beneath.
+   */
+  const order = (): string[] => {
+    const layers: string[] = []
+    const map = {
+      addSource: () => {},
+      getSource: () => undefined,
+      addLayer: (layer: { id: string }) => void layers.push(layer.id),
+      getLayer: (id: string) => (layers.includes(id) ? { id } : undefined),
+      setPaintProperty: () => {},
+      setLayoutProperty: () => {},
+      hasImage: () => true,
+      addImage: () => {},
+    }
+    ensureRouteLayers(map as unknown as Parameters<typeof ensureRouteLayers>[0], 'light')
+    return layers
+  }
+
+  it('puts the main-road weight under the casing, and the dash over the line', () => {
+    const layers = order()
+    const at = (id: string) => layers.indexOf(id)
+
+    expect(at('route-mainroad')).toBeGreaterThan(-1)
+    expect(at('route-unpaved')).toBeGreaterThan(-1)
+
+    // Under the casing: the mark is that the line is *heavier* here. Painted on top it would
+    // be a second colour on a line whose colour already says which route it is.
+    expect(at('route-mainroad')).toBeLessThan(at('route-casing'))
+    // Over the line, or a 2.8 px dash under a 6.8 px stroke is not visible at all.
+    expect(at('route-unpaved')).toBeGreaterThan(at('route-line'))
+    // ...and under the travelled grey, because a road behind you has stopped being a road you
+    // are deciding about.
+    expect(at('route-unpaved')).toBeLessThan(at('route-travelled'))
+  })
+
+  it('keeps the rider above every route layer', () => {
+    const layers = order()
+    const rider = layers.indexOf('position-halo')
+    for (const id of ['route-mainroad', 'route-casing', 'route-line', 'route-unpaved']) {
+      expect(layers.indexOf(id)).toBeLessThan(rider)
+    }
+  })
+})
+
+describe('markFeatures', () => {
+  const geometry = routeGeometry({
+    coords: [
+      [-3.2, 55.95],
+      [-3.19, 55.95],
+      [-3.18, 55.95],
+      [-3.17, 55.95],
+    ],
+    elevations: [0, 0, 0, 0],
+    distanceM: 0,
+    ascendM: 0,
+    timeS: null,
+    name: null,
+  })!
+
+  it('cuts the route at the marked distances and carries the mark', () => {
+    const features = markFeatures(geometry, [
+      { fromM: 0, toM: geometry.totalM / 2, mark: 'unpaved' },
+    ])
+    expect(features.features).toHaveLength(1)
+    expect(features.features[0].properties).toEqual({ mark: 'unpaved' })
+    expect(features.features[0].geometry.type).toBe('LineString')
+  })
+
+  it('drops a mark too short to draw rather than emitting a one-point line', () => {
+    // A LineString of one coordinate is invalid GeoJSON, and MapLibre's answer to one is to
+    // stop rendering the whole source.
+    const features = markFeatures(geometry, [{ fromM: 100, toM: 100, mark: 'main' }])
+    expect(features.features).toHaveLength(0)
+  })
+
+  it('emits nothing at all when there is nothing marked', () => {
+    expect(markFeatures(geometry, []).features).toHaveLength(0)
   })
 })
