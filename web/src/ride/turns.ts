@@ -77,6 +77,11 @@ const KINDS: Record<string, TurnKind> = {
   C: 'straight',
   BL: 'beeline',
   END: 'end',
+  // Exit left and right, and they are here *because* the app asks for mode 9. Every other
+  // mode reports these two as `KL` and `KR`; only 2 and 9 spell them out. Upstream's own
+  // fallback is the mapping, so taking it is not a guess.
+  EL: 'keep-left',
+  ER: 'keep-right',
 }
 
 /** `RNDB3` clockwise, `RNLB2` anticlockwise — Britain's are all the latter. */

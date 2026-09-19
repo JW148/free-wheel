@@ -87,7 +87,11 @@ export interface WayTagsAt {
 export interface TurnAt {
   index: number
   /**
-   * BRouter's own token: `TL`, `TSLR`, `TSHL`, `KR`, `TU`, `C`, `BL`, `RNDB3`, `RNLB-2`.
+   * BRouter's own token: `TL`, `TSLR`, `TSHL`, `KR`, `TU`, `C`, `BL`, `RNDB3`, `RNLB2`.
+   *
+   * The roundabout number is always positive. `Formatter.getCommandString` writes
+   * `"RNLB" + (-roundaboutExit)` and the anticlockwise exit is held negative, so the two
+   * negations cancel and `RNLB-2` is not a shape that occurs.
    *
    * The token and not `<desc>`, which is BRouter's English. The app writes its own sentences
    * in `cues.ts` — partly because a synthesiser reads "450 m" as "four hundred and fifty em",

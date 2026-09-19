@@ -250,8 +250,15 @@ function buildRuns(ways: WayTagsAt[] | undefined, geometry: RouteGeometry): WayR
   for (let i = 0; i < ways.length; i++) {
     const fromM = i === 0 ? 0 : at(ways[i].index)
     const toM = i === ways.length - 1 ? totalM : at(ways[i + 1].index)
-    // A tag change on a point the previous run already reached — two ways meeting at a
-    // node with no distance between them. Nothing to draw and nothing to measure.
+    /*
+     * A tag change on a point the previous run already reached — two ways meeting at a node
+     * with no distance between them. Nothing to draw and nothing to measure.
+     *
+     * Dropping it cannot open a gap, which is the property the table depends on. Way indices
+     * are non-decreasing and `at` is monotonic, so `toM <= fromM` forces `toM === fromM`: the
+     * run being dropped has zero length, and its neighbours already meet where it was. There
+     * was a repair pass here closing gaps this cannot produce.
+     */
     if (toM <= fromM) continue
     runs.push({
       fromM,
@@ -260,12 +267,6 @@ function buildRuns(ways: WayTagsAt[] | undefined, geometry: RouteGeometry): WayR
       road: classifyRoad(ways[i].tags),
       surface: classifySurface(ways[i].tags),
     })
-  }
-
-  // Collapsing a zero-length run leaves a hole. Close it by extending its neighbour, so the
-  // tiling property the table depends on survives contact with a real route.
-  for (let i = 1; i < runs.length; i++) {
-    if (runs[i].fromM > runs[i - 1].toM) runs[i - 1].toM = runs[i].fromM
   }
 
   return runs.length > 0 ? runs : null

@@ -121,6 +121,17 @@ describe('wayRuns', () => {
     for (const run of runs) expect(run.toM).toBeGreaterThan(run.fromM)
   })
 
+  it('tiles even when two ways meet at a node with no distance between them', () => {
+    // A zero-length run is dropped, and dropping it cannot open a gap: way indices are
+    // non-decreasing and the cumulative array is monotonic, so `toM <= fromM` forces the two
+    // to be equal and the neighbours already meet where the dropped run was.
+    const doubled = { ...short, ways: short.ways!.flatMap((w) => [w, { ...w }]) }
+    const tiled = wayRuns(doubled, routeGeometry(doubled)!)!
+    expect(tiled[0].fromM).toBe(0)
+    expect(tiled.at(-1)!.toM).toBeCloseTo(geometry.totalM, 6)
+    for (let i = 1; i < tiled.length; i++) expect(tiled[i].fromM).toBe(tiled[i - 1].toM)
+  })
+
   it('carries the classification alongside the raw tags', () => {
     const cycleway = runs.find((r) => r.road === 'cyclepath')
     if (cycleway) expect(cycleway.tags.highway).toBe('cycleway')

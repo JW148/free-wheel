@@ -58,9 +58,20 @@ describe('turnKind', () => {
     expect(turnKind('TRU')).toBe('u-turn')
   })
 
+  it('reads the two tokens that only exist because the app asks for mode 9', () => {
+    // `Formatter.getCommandString` spells EL and ER out at modes 2 and 9, and reports them as
+    // KL and KR to every other client. Taking upstream's own fallback is not a guess, and
+    // without it these junctions were dropped in silence by the one mode that emits them.
+    expect(turnKind('EL')).toBe('keep-left')
+    expect(turnKind('ER')).toBe('keep-right')
+  })
+
   it('returns null for a token it has never seen rather than inventing one', () => {
-    // Telling a rider to do something nobody decided on is worse than saying nothing.
+    // Telling a rider to do something nobody decided on is worse than saying nothing. `OFFR`
+    // is deliberately among these: it is BRouter reporting a state rather than asking for a
+    // manoeuvre, and `cues.ts` owns off-route already.
     expect(turnKind('WAT')).toBeNull()
+    expect(turnKind('OFFR')).toBeNull()
     expect(turnKind('')).toBeNull()
   })
 })
