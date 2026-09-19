@@ -1,5 +1,5 @@
 import { haversineM } from './geo'
-import type { ParsedRoute } from './gpx'
+import type { ParsedRoute, TurnAt, WayTagsAt } from './gpx'
 import { ascentBy, elevationAt, pointAt, type RouteGeometry } from './progress'
 
 /**
@@ -53,6 +53,16 @@ export interface RiddenPrefix {
   ascentM: number
   /** Pro-rated share of the original estimate, or `null` for a profile with no energy model. */
   timeS: number | null
+  /**
+   * The road tags and the junctions that fall before the cut, indexed as they already were.
+   *
+   * A prefix is a *leading* slice, so every index it keeps means the same point it always
+   * did. Only the suffix needs shifting, which is why this pair is carried rather than
+   * recomputed — and why a bug here would show up as the second half of a rerouted ride
+   * describing the first half's roads.
+   */
+  ways: WayTagsAt[]
+  turns: TurnAt[]
 }
 
 /**
@@ -73,10 +83,12 @@ export function riddenPrefix(
   const elevations: number[] = []
   // A plain scan rather than a binary search: this runs once per reroute, against a search
   // that takes seconds.
+  let kept = 0
   for (let i = 0; i < geometry.coords.length; i++) {
     if (geometry.cumulativeM[i] > cut) break
     coords.push(geometry.coords[i])
     elevations.push(geometry.elevations[i] ?? 0)
+    kept = i + 1
   }
 
   // The interpolated cut, unless the rider is standing on a vertex already.
@@ -96,6 +108,14 @@ export function riddenPrefix(
       route.timeS === null || geometry.totalM <= 0
         ? null
         : route.timeS * (cut / geometry.totalM),
+    // `kept`, not `coords.length`: the interpolated cut point was pushed on the end and is
+    // not an original index, so anything at or past `kept` belongs to the road ahead — which
+    // is the half being thrown away and re-routed.
+    ways: (route.ways ?? []).filter((way) => way.index < kept),
+    // The junctions already passed are kept rather than dropped. Nothing reads backwards, so
+    // they cost nothing while riding, and a stitched route saved and reopened is then a route
+    // that can still describe its whole self.
+    turns: (route.turns ?? []).filter((turn) => turn.index < kept),
   }
 }
 
@@ -114,6 +134,13 @@ export function stitchRoute(prefix: RiddenPrefix, fresh: ParsedRoute): ParsedRou
   const joinTo = fresh.coords[0]
   const gapM = joinFrom && joinTo ? haversineM(joinFrom, joinTo) : 0
 
+  // The fresh half's points land after the prefix's, so every index it carries moves by the
+  // prefix's length. Without this the road ahead would be described using the tags of the road
+  // already ridden — and the turns would be announced for junctions an hour behind.
+  const shift = prefix.coords.length
+  const ways = [...prefix.ways, ...(fresh.ways ?? []).map(shiftBy(shift))]
+  const turns = [...prefix.turns, ...(fresh.turns ?? []).map(shiftBy(shift))]
+
   return {
     coords: [...prefix.coords, ...fresh.coords],
     elevations: [...prefix.elevations, ...fresh.elevations],
@@ -122,8 +149,16 @@ export function stitchRoute(prefix: RiddenPrefix, fresh: ParsedRoute): ParsedRou
     timeS: prefix.timeS === null || fresh.timeS === null ? null : prefix.timeS + fresh.timeS,
     name: fresh.name,
     resumeAtM: prefix.distanceM + gapM,
+    // Undefined, not empty, when neither half had any — the same distinction everywhere else
+    // makes between a route that cannot describe itself and one with nothing to say.
+    ways: ways.length > 0 ? ways : undefined,
+    turns: turns.length > 0 ? turns : undefined,
   }
 }
+
+const shiftBy =
+  (by: number) =>
+  <T extends { index: number }>(item: T): T => ({ ...item, index: item.index + by })
 
 /**
  * The stitched route as a GPX document.
@@ -140,17 +175,34 @@ export function stitchRoute(prefix: RiddenPrefix, fresh: ParsedRoute): ParsedRou
  * from the library behaves like any other.
  */
 export function stitchedGpx(route: ParsedRoute, name: string): string {
+  // Written in mode 9's shape as well as `FormatGpx`'s, so a stitched route saved to the
+  // library and reopened still knows what it is made of and where it turns. Without this a
+  // rider who took one wrong turn would find their saved ride had lost its surfaces and its
+  // junctions — which is the half of the ride they most wanted to look at again.
+  const wayAt = new Map((route.ways ?? []).map((way) => [way.index, way]))
+  const turnAt = new Map((route.turns ?? []).map((turn) => [turn.index, turn]))
+
   const points = route.coords
     .map((point, i) => {
       const ele = route.elevations[i]
       const height = ele === undefined ? '' : `<ele>${ele.toFixed(2)}</ele>`
-      return `   <trkpt lon="${point[0].toFixed(6)}" lat="${point[1].toFixed(6)}">${height}</trkpt>`
+      const turn = turnAt.get(i)
+      const sym = turn ? `<sym>${escapeXml(turn.command)}</sym>` : ''
+      const way = wayAt.get(i)
+      const tags = way
+        ? `<extensions><brouter:way>${escapeXml(
+            Object.entries(way.tags)
+              .map(([key, value]) => `${key}=${value}`)
+              .join(' '),
+          )}</brouter:way></extensions>`
+        : ''
+      return `   <trkpt lon="${point[0].toFixed(6)}" lat="${point[1].toFixed(6)}">${height}${sym}${tags}</trkpt>`
     })
     .join('\n')
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!-- track-length = ${Math.round(route.distanceM)} filtered ascend = ${Math.round(route.ascendM)} plain-ascend = 0 cost=0 energy=.0kwh${formatTime(route.timeS)} -->
-<gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.1" creator="free-wheel">
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:brouter="Not yet documented" version="1.1" creator="free-wheel">
  <trk>
   <name>${escapeXml(name)}</name>
   <trkseg>

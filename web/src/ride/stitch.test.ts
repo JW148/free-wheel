@@ -142,3 +142,92 @@ describe('stitchedGpx', () => {
     expect(parseBrouterGpx(doc).timeS).toBeNull()
   })
 })
+
+describe('what survives a reroute', () => {
+  /*
+   * The road tags and the junctions, which a stitched route has to carry or the app goes quiet
+   * at the exact moment a lost rider needs it: turn-by-turn stops the instant you take a wrong
+   * turn, and the route stops being able to say what it is made of.
+   *
+   * The arithmetic is one line — shift the fresh half by the prefix's length — and it is the
+   * kind that fails silently. Getting it wrong describes the road ahead using the tags of the
+   * road behind, which looks entirely plausible all the way down.
+   */
+  // 0.001 degrees of longitude at 55.95 N is about 62 m, so a 21-point route is roughly
+  // 1,250 m and a cut at 500 m falls just past the ninth point. The gravel at index 16 is
+  // therefore comfortably on the far side of it — which is the half being replaced.
+  const original: ParsedRoute = {
+    ...measured(straight(-3.2, 21)),
+    ways: [
+      { index: 0, tags: { highway: 'cycleway', surface: 'asphalt' } },
+      { index: 8, tags: { highway: 'primary', surface: 'asphalt' } },
+      { index: 16, tags: { highway: 'track', surface: 'gravel' } },
+    ],
+    turns: [
+      { index: 4, command: 'TL' },
+      { index: 12, command: 'RNLB2' },
+      { index: 18, command: 'TR' },
+    ],
+  }
+  const geometry = routeGeometry(original)!
+  const prefix = riddenPrefix(geometry, original, 500)
+
+  const fresh: ParsedRoute = {
+    ...measured(straight(-3.2 + 500 / 62_000, 11)),
+    ways: [
+      { index: 0, tags: { highway: 'residential', surface: 'asphalt' } },
+      { index: 5, tags: { highway: 'cycleway', surface: 'asphalt' } },
+    ],
+    turns: [
+      { index: 3, command: 'TR' },
+      { index: 9, command: 'TL' },
+    ],
+  }
+  const joined = stitchRoute(prefix, fresh)
+
+  it('keeps only what is behind the cut in the prefix', () => {
+    for (const way of prefix.ways) expect(way.index).toBeLessThan(prefix.coords.length)
+    for (const turn of prefix.turns) expect(turn.index).toBeLessThan(prefix.coords.length)
+    // The gravel track at index 16 is past the cut, so it belongs to the road being replaced.
+    expect(prefix.ways.some((w) => w.tags.surface === 'gravel')).toBe(false)
+    expect(prefix.ways).toHaveLength(2)
+    expect(prefix.turns).toHaveLength(1)
+  })
+
+  it('shifts the fresh half so it describes the road ahead and not the road behind', () => {
+    const shifted = joined.ways!.filter((w) => w.index >= prefix.coords.length)
+    expect(shifted).toHaveLength(fresh.ways!.length)
+    expect(shifted.map((w) => w.index)).toEqual(
+      fresh.ways!.map((w) => w.index + prefix.coords.length),
+    )
+  })
+
+  it('keeps every index inside the joined route', () => {
+    for (const way of joined.ways!) expect(way.index).toBeLessThan(joined.coords.length)
+    for (const turn of joined.turns!) expect(turn.index).toBeLessThan(joined.coords.length)
+  })
+
+  it('leaves the junctions already passed in place', () => {
+    // Nothing reads backwards while riding, so they cost nothing — and a stitched route saved
+    // and reopened can then describe the whole ride rather than half of it.
+    expect(joined.turns!.length).toBe(prefix.turns.length + fresh.turns!.length)
+  })
+
+  it('stays undefined when neither half was described', () => {
+    const plain = measured(straight(-3.2, 21))
+    const bare = stitchRoute(
+      riddenPrefix(routeGeometry(plain)!, plain, 1000),
+      measured(straight(-3.19, 11)),
+    )
+    expect(bare.ways).toBeUndefined()
+    expect(bare.turns).toBeUndefined()
+  })
+
+  it('round-trips both through the GPX it writes', () => {
+    // The saved ride has to come back the same, or one wrong turn quietly costs a rider the
+    // surfaces and the junctions of the half they actually rode.
+    const reparsed = parseBrouterGpx(stitchedGpx(joined, 'x'))
+    expect(reparsed.ways).toEqual(joined.ways)
+    expect(reparsed.turns).toEqual(joined.turns)
+  })
+})
