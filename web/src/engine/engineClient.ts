@@ -179,9 +179,19 @@ export class EngineClient {
     return this.spawn().openForReading(path)
   }
 
-  async route(profile: string, lonLats: string): Promise<RouteOutcome> {
+  /**
+   * Routes, in the app's output mode unless a caller asks for another.
+   *
+   * The only caller that asks is the parity harness, which replays the corpus at both modes
+   * and would otherwise compare mode 9 output against mode 0 expectations for half of it.
+   */
+  async route(
+    profile: string,
+    lonLats: string,
+    turnInstructionMode?: number,
+  ): Promise<RouteOutcome> {
     await this.init()
-    return this.spawn().route(profile, lonLats)
+    return this.spawn().route(profile, lonLats, turnInstructionMode)
   }
 
   async diagnostics() {

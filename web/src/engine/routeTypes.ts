@@ -7,6 +7,14 @@ export interface ReferenceRoute {
   /** BRouter's URL waypoint format: `lon,lat|lon,lat|…` in degrees. */
   lonLats: string
   note: string
+  /**
+   * BRouter's output mode for this case. Every route in the corpus appears twice, at 0 and at
+   * 9, because the app asks for 9 and every other BRouter client would produce 0.
+   *
+   * Absent on reference files generated before the corpus carried both, where 0 is the only
+   * mode there ever was.
+   */
+  timode?: number
   ok: boolean
   gpxLength: number
   gpxCrc32: number

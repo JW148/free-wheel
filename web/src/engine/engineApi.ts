@@ -76,9 +76,21 @@ const PROFILES = [
   'lookups.dat',
 ]
 
+/**
+ * BRouter's GPX output mode, and the reason the app never asks for the plain one.
+ *
+ * Mode 9 is the only mode `FormatGpx` emits both of the things this app reads: a
+ * `<brouter:voicehint>` at each junction, which is turn-by-turn, and a `<brouter:way>` at each
+ * change of road tags, which is the surface, the road class and whether the way is on the
+ * National Cycle Network. Both are computed on every route regardless — BRouter's second,
+ * guide-track pass builds them — so this asks for data already in hand rather than for more
+ * work. Mode 0 is still reachable through `Router.route` and the parity corpus runs both.
+ */
+export const TURN_INSTRUCTION_MODE = 9
+
 interface WasmEngine {
   Router: {
-    route(profile: string, lonLats: string): string
+    route(profile: string, lonLats: string, turnInstructionMode: number): string
     crc32Utf8(text: string): number
     utf8Length(text: string): number
   }
@@ -393,13 +405,17 @@ const engineApi = {
    * as data rather than exceptions so a JS-level throw out of Wasm (a stack `RangeError`,
    * which Java cannot catch) is reported rather than lost.
    */
-  route(profile: string, lonLats: string): RouteOutcome {
+  route(
+    profile: string,
+    lonLats: string,
+    turnInstructionMode: number = TURN_INSTRUCTION_MODE,
+  ): RouteOutcome {
     if (!engine) return { ok: false, error: 'engine not initialised', ms: 0 }
 
     const started = performance.now()
     let gpx: string
     try {
-      gpx = engine.Router.route(profile, lonLats)
+      gpx = engine.Router.route(profile, lonLats, turnInstructionMode)
     } catch (error) {
       return {
         ok: false,

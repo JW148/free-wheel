@@ -54,13 +54,17 @@ public final class Router {
    * @param profile a profile name such as {@code trekking}, without the {@code .brf}
    * @param lonLats waypoints in BRouter's URL format: {@code lon,lat|lon,lat|…}
    *                (semicolons also accepted), in degrees
+   * @param turnInstructionMode BRouter's output mode. {@code 0} is the plain track.
+   *                {@code 9} additionally emits {@code <brouter:voicehint>} at each
+   *                junction and {@code <brouter:way>} at each change of road tags, which
+   *                is what the app reads for turn-by-turn and for the surface breakdown.
    * @return the GPX document, or a string starting {@code error:} — returning the failure
    *         rather than throwing keeps it legible across the JS boundary instead of
    *         surfacing as an opaque Wasm trap
    */
   @JSExport
-  public static String route(String profile, String lonLats) {
-    return routeIn(PROFILE_DIR, SEGMENT_DIR, profile, lonLats);
+  public static String route(String profile, String lonLats, int turnInstructionMode) {
+    return routeIn(PROFILE_DIR, SEGMENT_DIR, profile, lonLats, turnInstructionMode);
   }
 
   /**
@@ -74,7 +78,8 @@ public final class Router {
    * @param profileDir directory holding {@code <profile>.brf} and {@code lookups.dat}
    * @param segmentDir directory holding the {@code .rd5} tiles
    */
-  public static String routeIn(String profileDir, String segmentDir, String profile, String lonLats) {
+  public static String routeIn(String profileDir, String segmentDir, String profile, String lonLats,
+                               int turnInstructionMode) {
     try {
       RoutingContext rc = new RoutingContext();
       // lookups.dat is resolved by BRouter from this file's parent directory.
@@ -87,6 +92,13 @@ public final class Router {
       RoutingEngine engine = new RoutingEngine(
         null, null, new File(segmentDir), waypoints, rc,
         RoutingEngine.BROUTER_ENGINEMODE_ROUTING);
+
+      // After the constructor, never before. The constructor calls ProfileCache.parseProfile,
+      // which calls rc.readGlobalConfig(), which assigns turnInstructionMode from the profile's
+      // own global variables — zero, for every profile shipped here. Set it first and it is
+      // silently reverted, and the GPX comes back without a single extension.
+      rc.turnInstructionMode = turnInstructionMode;
+
       engine.quite = true;          // suppresses System.out
       engine.doRun(MAX_RUNNING_TIME_MS);  // synchronous; despite extending Thread
 
