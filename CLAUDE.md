@@ -42,7 +42,9 @@ engine/          Gradle + TeaVM. Compiles BRouter's Java to WasmGC and JS.
 web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (generated).
   src/ride/      The ride screen: map, waypoints, routing, follow, navigation. This is the app.
                  The navigation kernel — progress, climbs, power, ascent, recording, library,
-                 hud — is pure and tested; `useRideTelemetry` is the only place it meets React.
+                 hud, ways, turns — is pure and tested; `useRideTelemetry` is the only place it
+                 meets React. `ways.ts` and `turns.ts` read what BRouter wrote into the GPX:
+                 what the road is made of, and where to turn.
                  Stops along the way are `insertionIndex` and `plan.shaping`, both in the same
                  kernel. There is no via mode: a tap already knows where in the order it goes.
   src/onboarding/ The six-card first run. Each card shows the screen it is about, clipped out
@@ -116,13 +118,21 @@ npm run dev                                  # or: npm run build && npm run prev
 npm run build && npm run spike-server        # LAN-serve + accept POSTed on-device reports
 node tools/drive.mjs <url> <out>             # look at the app at 390px, no engine needed
 node tools/drive-stops.mjs <url> <out>       # …and with a real engine, for stops and shaping
+node tools/drive-surface.mjs <url> <out>     # …and for the surface strip, the breakdown, the turns
 ```
 
-`drive-stops.mjs` is the second one because shaping is the only flow that cannot be driven from
-a seeded plan: the whole question is what happens between a tap and the line moving, so it
-imports a real basemap and a real `.rd5` and every route in it is an actual BRouter run. Both
+`drive-stops.mjs` and `drive-surface.mjs` are separate because neither flow can be driven from a
+seeded plan. For stops the whole question is what happens between a tap and the line moving; for
+the surfaces and the turns the data is what BRouter *writes into the GPX*, so a seeded fixture
+would show the strip drawn from whatever was seeded rather than from what the engine said. Both
+import a real basemap and a real `.rd5` and every route in them is an actual BRouter run, and
+both take `--keep` to reuse the browser profile so the 86 MB import happens once. All three
 scripts hardcode a preview port — check nothing else is on it first, because a stale
 `vite preview` from a finished worktree will serve you the *previous* build with no warning.
+
+**Driving the app in both themes is not optional for anything drawn on the map.** The main-road
+mark passed every unit test, looked right on the light theme, and was invisible on the dark one,
+because its colour and most of the dark basemap are both `#06141b`.
 
 `spike-server` is `web/tools/report-server.mjs`: `vite preview` plus a `POST /spike-report` route
 that writes to `docs/spike-runs/` (gitignored). It exists so results measured on a phone come back
@@ -588,6 +598,66 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   GeoJSON directly, but the GPX corpus is the regression net — routing the map through the
   same `FormatGpx` output that parity checks makes what the rider sees provably covered.
   `src/ride/gpx.ts` does it, against fixtures that are verbatim `jvmRoutes` output.
+- **The app asks for `turnInstructionMode = 9`, and that is the only mode that carries the
+  data.** It emits `<brouter:way>` at every change of road tags *and* `<brouter:voicehint>`
+  with a `<sym>` at every junction, which is where the surface breakdown, the map's marks and
+  turn-by-turn all come from. **Set it after the `RoutingEngine` constructor, never before**:
+  the constructor calls `ProfileCache.parseProfile`, which calls `readGlobalConfig`, which
+  assigns the field from the profile's own globals — zero for every profile shipped here — so
+  setting it first is silently reverted and the GPX comes back with no extensions at all.
+  The tags cost nothing: BRouter's second, guide-track pass already runs in detail mode and
+  builds them. Measured on the JVM, mode 9 is **not slower**; the GPX roughly doubles.
+- **The corpus runs every case at both modes — 18 entries, not 9.** Mode 0 stays because it is
+  what any other BRouter client would produce. `ReferenceRoute.timode` is absent on a reference
+  file older than this, where 0 is the only mode there ever was.
+- **The `.rd5` tiles know about cycle networks; the basemap does not.** `lookups.dat` carries
+  `route_bicycle_ncn`/`rcn`/`lcn`/`icn` as well as `surface`, `smoothness` and `tracktype`, so
+  a *route* can be measured against the National Cycle Network. It is **membership, never a
+  number** — the app can say "42 km on the National Cycle Network" and can never say "NCN 20",
+  even when that is exactly what it is. This does not reopen the overlay question in
+  `docs/phase-5-progress.md`: a road the rider is *not* on still cannot be drawn as part of it.
+- **Ways and turns are indexed by track point, and `ways.ts`/`turns.ts` convert to metres.**
+  Never measure them off BRouter's `track-length` — they have to agree with the elevation
+  profile's x-axis and with `snapToRoute`, and `routeGeometry` already caches the cumulative
+  array. `ParsedRoute.ways`/`.turns` are **`undefined` rather than `[]`** on a route with no
+  extensions, because a recorded ride cannot describe its surfaces at all where a route down
+  one road genuinely has no turns.
+- **`stitch.ts` must shift the fresh half's indices by the prefix's length.** A prefix is a
+  leading slice so its own indices are unchanged; get the suffix wrong and the road ahead is
+  described with the tags of the road behind, which looks plausible all the way down. Cut on
+  `kept`, not `coords.length` — the interpolated cut point is pushed on the end and is not an
+  original index.
+- **Never invent a warning out of a missing tag.** An untagged `surface` is `unknown`, not
+  `paved`: the map dashes unpaved stretches, and a guess there is a claim about the world made
+  out of a gap in OpenStreetMap. A `highway` value the table has not seen is `road`, never
+  `main`. `Not recorded` earns a row in the table — it is a quarter of the London–Brighton
+  route — and gets no mark on the line.
+- **A slight turn is drawn and never spoken, and that one rule is what keeps the app quiet.**
+  London to Brighton has 322 junctions over 95 km; slight turns are 125 of the 285 actionable
+  ones and are mostly a road bending where another joins. With them the cue walk produced 267
+  utterances, one every 54 seconds. Without: 165 over 3.8 hours. They still *chain* — "left,
+  then bear right" costs no extra interruption — and `cues.test.ts` holds the budget, so a
+  change that makes the app chatty fails a build rather than a ride.
+- **Turn cues are timed, not spaced**: 15 seconds of warning, floored at 60 m. A fixed distance
+  is two streets early in town and late at 50 km/h downhill. The 400 m cap only binds above
+  96 km/h, so it is a backstop for a bad fix rather than a path any ride takes.
+- **There are no street names at a turn and there cannot be from this data.** `lookups.dat` has
+  no `name` key, so the `.rd5` tiles do not carry one. Every instruction is "left in 200
+  metres". A name could be recovered from the *basemap* at the turn's coordinate, which is a
+  lookup at a known point rather than a geocoder — a decision for the user, not a thing to slip
+  in.
+- **The surface strip is coloured by road class and the map marks only the exceptions.** Colour
+  is free on a panel (`gradeScale.ts` records why) and spoken for on the map, which is the
+  whole split. The four strip colours sit at one lightness inside the same 0.14–0.30 luminance
+  window the gradient bands live in, and `chrome.test.ts` holds three deliberately *different*
+  floors: ΔE 18 between cells, **13** against the gradient bands, 11 against the route colours.
+  The 13 is a trade with its reasoning written down — a red clearing 15 from `very steep`,
+  `brutal`, `mtb` and `recorded` does not exist. Don't "tidy" the three to one number.
+- **A near-black mark is invisible on the dark basemap.** The main-road mark began as a wider
+  dark casing, which worked on light and vanished entirely on dark — every unit test green
+  throughout. It is now flanking hairlines in the theme's overlay ink via `line-gap-width`, and
+  it sits **above** the casing because at z16 the casing reaches 6.5 px where the flanks sit at
+  4.25–6.25 and would be painted over.
 - **`time=` is absent from the GPX summary for profiles with no energy model** (`shortest`).
   `timeS` is `null` there, not `0` — rendering "0 min" would be a lie.
 - **Use `100dvh`, not `inset: 0`, for full-screen chrome.** In Safari proper the bottom
