@@ -4,6 +4,7 @@ import type { ParsedRoute } from './gpx'
 import { routeGeometry } from './progress'
 import { breakdownOf, wayRuns, ROAD_COLOURS, type BreakdownRow, type RoadClass } from './ways'
 
+
 /**
  * How much of the route is what.
  *
@@ -65,7 +66,7 @@ function Rows({ rows, swatches = false }: { rows: BreakdownRow[]; swatches?: boo
         // this project got backwards from phase 4 until phase 11.
         <div key={row.key}>
           <dt>
-            {swatches && row.key !== 'other' && (
+            {swatches && (
               <span
                 className="breakdown-swatch"
                 style={{ background: ROAD_COLOURS[row.key as RoadClass] }}

@@ -273,13 +273,13 @@ function buildRuns(ways: WayTagsAt[] | undefined, geometry: RouteGeometry): WayR
 
 export interface BreakdownRow {
   /**
-   * The class this row totals, or `other` for the folded tail.
+   * The class this row totals.
    *
    * Carried as well as the label so the road table can show each class's colour beside it.
    * That is what makes the table the strip's legend: four colours above with no key is a
    * puzzle, and a separate legend row would be a third thing saying what two already say.
    */
-  key: RoadClass | SurfaceClass | 'other'
+  key: RoadClass | SurfaceClass
   label: string
   metres: number
 }
@@ -294,15 +294,20 @@ export interface Breakdown {
 /**
  * How much of the route is what, longest first.
  *
+ * Every row is shown. There is no fold into an `Other` tail and there was one until driving
+ * the app showed it could never fire: both vocabularies are four classes wide and fixed, so
+ * the longest either table can be is four rows. Code that cannot run is worse than no code,
+ * because the next reader has to work out why it is there.
+ *
+ * A class with no distance is dropped rather than shown as a zero. A five-metre row is *not*
+ * dropped, and that is deliberate: the tables total the route exactly, which is what lets them
+ * be read as a description of it rather than as a summary with an unstated threshold.
+ *
  * `lcn` is excluded from the network figure on purpose. It is a council's own signage rather
  * than the National Cycle Network the line names, and in a town it is on half the streets —
  * counting it would turn an interesting figure into a meaningless one.
- *
- * @param keep how many rows survive before the tail is folded into `Other`. Four, because a
- *             twelve-row table inside a drawer is a scroll, and the rows past the fourth are
- *             a few hundred metres of service road nobody is deciding anything on.
  */
-export function breakdownOf(runs: WayRun[], keep = 4): Breakdown {
+export function breakdownOf(runs: WayRun[]): Breakdown {
   const road = new Map<RoadClass, number>()
   const surface = new Map<SurfaceClass, number>()
   let networkM = 0
@@ -314,11 +319,7 @@ export function breakdownOf(runs: WayRun[], keep = 4): Breakdown {
     if (onNetwork(run.tags)) networkM += length
   }
 
-  return {
-    road: rank(road, ROAD_LABELS, keep),
-    surface: rank(surface, SURFACE_LABELS, keep),
-    networkM,
-  }
+  return { road: rank(road, ROAD_LABELS), surface: rank(surface, SURFACE_LABELS), networkM }
 }
 
 const onNetwork = (tags: Record<string, string>): boolean =>
@@ -329,17 +330,11 @@ const onNetwork = (tags: Record<string, string>): boolean =>
 function rank<K extends RoadClass | SurfaceClass>(
   totals: Map<K, number>,
   labels: Record<K, string>,
-  keep: number,
 ): BreakdownRow[] {
-  const rows = [...totals]
+  return [...totals]
     .map(([key, metres]) => ({ key, label: labels[key], metres }))
     .filter((row) => row.metres > 0)
     .sort((one, two) => two.metres - one.metres)
-
-  if (rows.length <= keep + 1) return rows
-
-  const tail = rows.slice(keep).reduce((total, row) => total + row.metres, 0)
-  return [...rows.slice(0, keep), { key: 'other' as const, label: 'Other', metres: tail }]
 }
 
 /**

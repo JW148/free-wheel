@@ -113,29 +113,6 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
     },
   })
 
-  // A main road, drawn as extra weight *under* the route. It has to go beneath the casing
-  // rather than over the line: the mark is that the line is heavier here, and anything painted
-  // on top would be a second colour on a line whose colour already means which route it is.
-  //
-  // Only on the chosen or lone route — see `setMarkedRuns`. Three routes each wearing their
-  // own caution stripes is a map nobody can read, and the question "does this put me on the
-  // A23" is one you ask about the route you have picked.
-  map.addLayer({
-    id: 'route-mainroad',
-    type: 'line',
-    source: WAYS_SOURCE,
-    filter: ['==', ['get', 'mark'], 'main'],
-    layout: { 'line-cap': 'butt', 'line-join': 'round' },
-    paint: {
-      'line-color': '#06141b',
-      'line-opacity': 0.9,
-      // Half again as wide as the casing it sits under, at both ends of the zoom range, so
-      // the stretch reads as thicker rather than as a different colour.
-      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 10.5, 16, 19.5],
-      'line-blur': 1,
-    },
-  })
-
   // A casing under the line, for the same reason roads have one: a bare stroke over a busy
   // basemap is hard to follow at a glance, which is the only thing that matters here.
   map.addLayer({
@@ -177,6 +154,44 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
         1,
       ],
       'line-width': ['interpolate', ['linear'], ['zoom'], 10, byState(4, 3.4, 2.5), 16, byState(8, 6.8, 5)],
+    },
+  })
+
+  /*
+   * A main road, drawn as a pair of hairlines hugging the route on both sides.
+   *
+   * This started as extra weight *under* the route — a wider, darker casing, on the reasoning
+   * that a heavier line reads as a bigger road. On the light theme it worked. On the dark one
+   * it vanished completely, because the casing colour is `#06141b` and so is most of the dark
+   * basemap: a near-black mark on a near-black map says nothing at all. The unit tests were
+   * green throughout; driving the app in both themes is what found it.
+   *
+   * So it uses the theme's overlay ink like the other two marks, and `line-gap-width` to put
+   * it *beside* the line rather than under it. That is what road casings are drawn with, which
+   * is the right association: the route looks like it has picked up the edges of a wider road.
+   * It cannot be confused with the climb halo, which is blurred, centred and much wider.
+   *
+   * Above the line rather than below, and that is arithmetic rather than taste: at z16 the
+   * casing is 13 px against the line's 8, so flanks sitting at a radius of 4.25 to 6.25 would
+   * be painted over by a casing reaching 6.5.
+   *
+   * Only on the chosen or lone route — see `setMarkedRuns`. Three routes each wearing their
+   * own caution marks is a map nobody can read, and "does this put me on the A23" is a
+   * question about the route you have picked.
+   */
+  map.addLayer({
+    id: 'route-mainroad',
+    type: 'line',
+    source: WAYS_SOURCE,
+    filter: ['==', ['get', 'mark'], 'main'],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: {
+      'line-color': OVERLAY[theme].halo,
+      'line-opacity': 0.75,
+      // The gap is the chosen route line's own width plus a hair, so the flanks sit just
+      // outside the colour without a gap of basemap showing between.
+      'line-gap-width': ['interpolate', ['linear'], ['zoom'], 10, 4.4, 16, 8.4],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.2, 16, 2],
     },
   })
 
@@ -334,10 +349,10 @@ export function applyOverlayTheme(map: MapLibreMap, theme: 'dark' | 'light'): vo
     map.setPaintProperty('route-focus', 'line-color', OVERLAY[theme].halo)
     map.setPaintProperty('route-focus', 'line-opacity', OVERLAY[theme].haloOpacity)
   }
-  // The dash is the halo's ink — white on the dark map, near-black on the light one — so it
-  // has to turn over with it. Left behind, it is a white dash on a white road.
-  if (map.getLayer('route-unpaved')) {
-    map.setPaintProperty('route-unpaved', 'line-color', OVERLAY[theme].halo)
+  // Both marks are the halo's ink — white on the dark map, near-black on the light one — so
+  // they have to turn over with it. Left behind, the dash is white on a white road.
+  for (const id of ['route-unpaved', 'route-mainroad']) {
+    if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', OVERLAY[theme].halo)
   }
 }
 

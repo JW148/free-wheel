@@ -226,21 +226,23 @@ describe('ensureRouteLayers', () => {
     return layers
   }
 
-  it('puts the main-road weight under the casing, and the dash over the line', () => {
+  it('draws both marks over the line and under the travelled grey', () => {
     const layers = order()
     const at = (id: string) => layers.indexOf(id)
 
     expect(at('route-mainroad')).toBeGreaterThan(-1)
     expect(at('route-unpaved')).toBeGreaterThan(-1)
 
-    // Under the casing: the mark is that the line is *heavier* here. Painted on top it would
-    // be a second colour on a line whose colour already says which route it is.
-    expect(at('route-mainroad')).toBeLessThan(at('route-casing'))
-    // Over the line, or a 2.8 px dash under a 6.8 px stroke is not visible at all.
-    expect(at('route-unpaved')).toBeGreaterThan(at('route-line'))
-    // ...and under the travelled grey, because a road behind you has stopped being a road you
-    // are deciding about.
-    expect(at('route-unpaved')).toBeLessThan(at('route-travelled'))
+    for (const mark of ['route-mainroad', 'route-unpaved']) {
+      // Over the line. A 2.8 px dash under a 6.8 px stroke is not visible at all, and at z16
+      // the casing reaches a radius of 6.5 where the main-road flanks sit at 4.25 to 6.25 —
+      // drawn below, the casing paints straight over them.
+      expect(at(mark)).toBeGreaterThan(at('route-line'))
+      expect(at(mark)).toBeGreaterThan(at('route-casing'))
+      // ...and under the travelled grey, because a road behind you has stopped being a road
+      // you are deciding about.
+      expect(at(mark)).toBeLessThan(at('route-travelled'))
+    }
   })
 
   it('keeps the rider above every route layer', () => {

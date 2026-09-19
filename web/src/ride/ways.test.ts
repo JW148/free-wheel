@@ -183,33 +183,29 @@ describe('breakdownOf', () => {
     expect(on({ route_bicycle_ncn: 'proposed' })).toBe(0)
   })
 
-  it('folds the tail into one Other row rather than listing twelve', () => {
-    const rows = [
-      { metres: 1000, key: 'a' },
-      { metres: 900, key: 'b' },
-      { metres: 800, key: 'c' },
-      { metres: 700, key: 'd' },
-      { metres: 600, key: 'e' },
-      { metres: 500, key: 'f' },
-    ].map((r, i) => ({
-      fromM: i * 100,
-      toM: i * 100 + r.metres,
-      tags: { highway: ['cycleway', 'path', 'residential', 'primary', 'busway', 'service'][i] },
-      road: (['cyclepath', 'path', 'road', 'main', 'road', 'road'] as const)[i],
-      surface: 'paved' as const,
-    }))
-    const folded = breakdownOf(rows, 2)
-    expect(folded.road).toHaveLength(3)
-    expect(folded.road.at(-1)!.label).toBe('Other')
+  it('can never be longer than the vocabulary, so nothing is folded away', () => {
+    // Both classifications are four classes wide and fixed. That is why there is no `Other`
+    // row: a fold could never fire, and code that cannot run is worse than no code.
+    expect(breakdown.road.length).toBeLessThanOrEqual(ROAD_CLASSES.length)
+    expect(breakdown.surface.length).toBeLessThanOrEqual(SURFACE_CLASSES.length)
+  })
+
+  it('keeps a five-metre row rather than applying a threshold nobody stated', () => {
+    // The tables total the route exactly, which is what lets them be read as a description of
+    // it. A hidden minimum would quietly make the sums wrong.
+    const tiny = breakdownOf([
+      { fromM: 0, toM: 5, tags: {}, road: 'main', surface: 'rough' },
+      { fromM: 5, toM: 5000, tags: {}, road: 'road', surface: 'paved' },
+    ])
+    expect(tiny.road).toHaveLength(2)
+    expect(tiny.road.at(-1)!.metres).toBe(5)
   })
 
   it('carries the class key as well as the label, so the table can be the legend', () => {
     // Four coloured bands above a table of the same four words is a puzzle. The swatch is
     // what solves it, and it needs the key rather than the English.
-    for (const row of breakdown.road) {
-      expect(row.key).toBeTruthy()
-      if (row.key !== 'other') expect(ROAD_CLASSES).toContain(row.key)
-    }
+    for (const row of breakdown.road) expect(ROAD_CLASSES).toContain(row.key)
+    for (const row of breakdown.surface) expect(SURFACE_CLASSES).toContain(row.key)
   })
 
   it('drops a class with no distance rather than showing a zero row', () => {
