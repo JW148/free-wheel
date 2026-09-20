@@ -679,10 +679,18 @@
 .hud-nav {
   display: flex;
   align-items: center;
-  /* Centred across the panel as well as down it. Left-aligned, the arrow and two short lines
-     sat against the left edge with a third of the card empty beside them, which reads as the
-     page having lost something rather than as an instruction. */
-  justify-content: center;
+  /*
+   * Anchored left, and centred was tried first.
+   *
+   * Everything else on this panel starts at the same left edge: the figures are a grid whose
+   * cells align to it, the progress bar spans edge to edge, the chart on the other page fills
+   * the width. A centred island is the only element not sharing that edge, and an *asymmetric*
+   * one — a dense arrow, then ragged text — so the eye cannot find the axis it is centred on
+   * and reads it as slightly wrong rather than as deliberate.
+   *
+   * Left-anchored, the arrow lines up under the first figure and the whole panel has one
+   * margin. The space left over on the right is the same space the figures row already leaves.
+   */
   gap: 1rem;
   /* Fills the page and centres in it. The layer is as tall as the *graph*, which is the taller
      of the two, so the navigation page has slack under it whatever it does — sitting at the
@@ -734,7 +742,6 @@
    turn passes, which would be the figures moving under a reader again. */
 .hud-nav[data-empty='yes'] {
   align-items: center;
-  text-align: center;
 }
 
 /*
