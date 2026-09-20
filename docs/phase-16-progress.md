@@ -321,7 +321,90 @@ In rough order of risk. **None of this has been ridden.**
    doubling wide rather than two, and a future change that raises the compare ceiling would
    spend it.
 
-## 12 · Not done
+## 12 · What looking at it changed
+
+The first report back was three complaints, all from reading the shipped screens. Every one was
+right, and two of them were mistakes rather than trade-offs.
+
+### The legend was below the fold
+
+`RouteBreakdown` says in its own comment that the table is the strip's legend, and §7 above
+argued the table belongs under the climb list because a climb changes the ride more than a
+surface does. Both cannot be true. Four coloured bands you have to scroll to decode are a
+puzzle, and the first thing anyone does with a puzzle is stop looking at it.
+
+The two arguments were never equal. Climb ordering is a preference about what to read first;
+legend adjacency is what makes the strip mean anything at all. The table moved up.
+
+The strip also went from 10 px to 16. A segment's width is its share of the route, so 281 m of
+cycle path on a 7.7 km route is 13 px of a 356 px strip — a 13 × 10 chip is not enough colour to
+judge a hue against three others.
+
+### The palette was fixed at the wrong thing
+
+The four cells were pinned at L\* 45.5 to 45.9, borrowing "read by hue at held lightness" from
+`gradeScale.ts` — correct there, because a gradient scale is a *severity ramp*. Road class is
+four categories, and the worst pair was ΔE 27.4: `path` against `road`, two near-neutrals.
+
+The obvious fix was to let lightness vary, and that was said out loud before it was checked. A
+sweep says it buys **at most 1.6 ΔE**: the best fixed-lightness set scores 38.48 against 38.55
+free. Lightness was never the constraint, because the contrast window is only about 2:1 wide.
+
+**Chroma was.** `path` goes from C 20.4 to 56.6 and `cyclepath` from a teal at h 170 to a green
+at h 145, the teal having sat right next to the blue-grey `road`. Worst pair is now **ΔE 38.2**.
+`main` is untouched: crimson at h 15 is the only red in the window, a true orange-red peaks at
+ΔE 12.7 against the bands and fails, and its 13.1 is the most a red can manage.
+
+`chrome.test.ts`'s mutual floor goes 18 → 30. A floor well under the measured worst is one that
+lets the whole gain be given back an edit at a time without ever failing.
+
+### The map and the table were speaking two languages
+
+The strip is colour; the map is texture, because the map cannot have four more hues. Two
+languages for one fact is a seam, and the report was exactly that: the line and the table do not
+look like they are about the same thing.
+
+The fix is in the table, not on the map. Rows that produce a mark carry a **drawing of it** in
+the route's own colour — same dash spacing, same flanking pair. Seeing samples on only a few
+rows of eight is itself the explanation of why the line is quiet everywhere else, which is the
+half of the design that was not communicating at all.
+
+The first idea was a map highlight driven by dragging the strip, and it was measured out: the
+open sheet leaves about 110 px of map, so the stretch being pointed at is usually hidden behind
+the sheet doing the pointing.
+
+### The turn arrow was 20 px
+
+Folded away, the callout line *is* the navigation. The rest of the panel is figures to be read
+and this is the one thing on it to be **recognised**, which is a cheaper act and needs size. It
+goes to 2rem on the strip, and the opened panel gains a page where it is 4.5rem.
+
+A page rather than an automatic promotion, and the reason is a rule the panel already holds.
+The instinct was to let the panel promote the turn when one got close; `hudDrag.ts` says a tap
+anywhere but the chevron deliberately does nothing, because that surface is where a hand lands
+and resizing the figures being read is hostile. A takeover on a timer is the same hostility.
+
+`hudAxis` waits for the first dozen pixels and writes nothing until one axis is clearly ahead —
+`sheetDrag`'s `pendingVerdict` shape. A diagonal tie goes to resizing, the gesture the panel had
+first. **The graph keeps its turn line**: taking it away would mean anyone who stays on the
+graph loses the turn entirely, which is a worse panel than the one before there were pages.
+
+Three things `drive-surface.mjs` caught that no test could:
+
+- A sideways drag across text is a text selection. The first swipe came back with "20 m"
+  highlighted in blue.
+- The page sliding off to the left stopped **11 px inside the panel** and showed a sliver of
+  chart down the edge. The panel clips at its border box and the layer inside carries 0.7rem of
+  padding, so the clip needed its own window. A probe showed the track had been translating a
+  full page width all along, which is not what it looked like.
+- The navigation page sat at the top of a layer sized to the taller graph, leaving a hole under
+  it.
+
+And one that was the *driver's* fault and worth recording: the page persists across launches, so
+with `--keep` a second run opened on whatever page the first run swiped to and the shot named
+for the graph quietly showed navigation.
+
+## 13 · Not done
 
 - **Street names at turns**, per §9.
 - **A cycle network overlay across the whole map**, with route numbers. Still needs a planetiler

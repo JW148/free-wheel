@@ -661,11 +661,37 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   in.
 - **The surface strip is coloured by road class and the map marks only the exceptions.** Colour
   is free on a panel (`gradeScale.ts` records why) and spoken for on the map, which is the
-  whole split. The four strip colours sit at one lightness inside the same 0.14–0.30 luminance
-  window the gradient bands live in, and `chrome.test.ts` holds three deliberately *different*
-  floors: ΔE 18 between cells, **13** against the gradient bands, 11 against the route colours.
-  The 13 is a trade with its reasoning written down — a red clearing 15 from `very steep`,
-  `brutal`, `mtb` and `recorded` does not exist. Don't "tidy" the three to one number.
+  whole split. `chrome.test.ts` holds three deliberately *different* floors: ΔE **30** between
+  cells, **13** against the gradient bands, **11** against the route colours. The 13 is a trade
+  with its reasoning written down — a red clearing 15 from `very steep`, `brutal`, `mtb` and
+  `recorded` does not exist, and crimson at h 15 is the only red in the window at all. Don't
+  "tidy" the three to one number.
+- **Categorical cells separate on chroma; a severity ramp separates on hue at held lightness.**
+  The strip's first palette pinned all four at L\* 45.6, borrowing the second rule from
+  `gradeScale.ts` where it is right, and scraped a worst pair of ΔE 27.4. Letting lightness vary
+  buys **at most 1.6 ΔE** — the contrast window is only ~2:1 wide, so there is nowhere to go.
+  Raising `path` from C 20.4 to 56.6 and moving `cyclepath` off the teal that sat beside the
+  blue-grey `road` took it to 38.2. Reach for chroma first.
+- **The breakdown table is the legend for the strip *and* for the map.** It sits directly under
+  the strip — it was below the climb list, and a legend a scroll away from its subject is not a
+  legend; climb ordering is a preference, legend adjacency is what makes the strip mean
+  anything. Rows that produce a map mark carry a drawing of it in the route's own colour, which
+  is what ties the map's texture to the strip's colour. Dragging the strip to highlight the map
+  was tried on paper and measured out: the open sheet leaves ~110 px of map, so the stretch
+  being pointed at is behind the sheet doing the pointing.
+- **The opened riding panel has pages, and `hudAxis` arbitrates the two gestures.** Down
+  resizes, sideways changes page, and **nothing is written until the first dozen pixels say
+  which** — guessing on the first move nudges the panel's height at the start of every swipe,
+  which is the "figures changing size while you read them" the panel already refuses on a tap.
+  A diagonal tie goes to resizing. `hudPages` returns only the pages a ride has, so a recorded
+  track has nothing to swipe to. **The graph keeps its own turn line**: the navigation page is
+  the large version for a rider who asked for it, not a relocation, and moving it would mean
+  anyone who stays on the graph loses the turn entirely.
+- **A paged track needs its own clipping window.** `.hud-pages` exists because the panel clips
+  at its *border* box while the layer inside carries 0.7rem of padding, so the outgoing page
+  stopped 11 px inside the panel and showed a sliver of chart down the edge. The track was
+  translating a full page width the whole time — measured, not guessed. A panel that is dragged
+  sideways also needs `user-select: none`, or the first swipe selects the text it crosses.
 - **A near-black mark is invisible on the dark basemap.** The main-road mark began as a wider
   dark casing, which worked on light and vanished entirely on dark — every unit test green
   throughout. It is now flanking hairlines in the theme's overlay ink via `line-gap-width`, and

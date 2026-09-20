@@ -158,6 +158,10 @@ await evaluate(`(async () => {
   localStorage.setItem('free-wheel.onboarded.v1', 'yes')
   localStorage.removeItem('free-wheel.plan.v2')
   localStorage.setItem('free-wheel.theme.v1', 'light')
+  // The riding panel's page is remembered across launches, and \`--keep\` reuses the profile —
+  // so without this a second run opens on whatever page the *first* run swiped to, and the
+  // shot named for the graph quietly shows navigation instead.
+  localStorage.removeItem('free-wheel.hud-page.v1')
   return 'cleared'
 })()`)
 
