@@ -212,7 +212,10 @@ export default function RideHud({
               and it is the one thing on the panel that never stops being relevant. */}
           {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
 
-          {hasRoute && !hasElevation && !turns.length && (
+          {/* Kept unconditional on the turns, which it briefly was not. Without heights there
+              is no graph page, and this line is the only thing that says why — a rider left
+              with a single page and no explanation would read it as the app having lost one. */}
+          {hasRoute && !hasElevation && (
             <p className="hud-callout">
               <span className="hud-callout-mark" style={{ '--tint': 'currentColor' } as React.CSSProperties} />
               No surveyed heights on this track, so no gradients or power.
