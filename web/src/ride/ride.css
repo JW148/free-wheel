@@ -498,6 +498,14 @@
   initial-value: 0;
 }
 
+/* Which page the opened panel is on, as a fraction so a finger can sit between two. Registered
+   for the same reason `--hud-p` is: unregistered, a transition on it is a step. */
+@property --hud-x {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
 /*
  * The two stops, in pixels, published by `useHudDrag` from a `ResizeObserver` on each layer.
  *
@@ -535,9 +543,15 @@
   /* The whole surface is dragged, so the browser must not claim the gesture first. Nothing
      inside scrolls, so there is nothing to hand `pan-y` back to. */
   touch-action: none;
+  /* A sideways drag across a panel of text is also a text selection, and the first swipe to
+     the navigation page came back with "20 m" and "Left" highlighted in blue. There is nothing
+     here worth selecting and the gesture is worth more. */
+  user-select: none;
+  -webkit-user-select: none;
   cursor: grab;
   transition:
     --hud-p 300ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    --hud-x 300ms cubic-bezier(0.2, 0.7, 0.2, 1),
     --hud-mini 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
     --hud-full 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -606,6 +620,144 @@
    neither of them may be `hidden` — without this the incoming one would fade in invisible. */
 .hud[data-dragging='yes'] .hud-layer {
   visibility: visible;
+}
+
+/*
+ * ── The pages ──────────────────────────────────────────────────────────────────────────
+ *
+ * A track as wide as one page per page, slid by `--hud-x`. Both are laid out at all times,
+ * which is what keeps the layer's measured height steady across a swipe — the height is the
+ * taller of the two and nothing jumps when one replaces the other. The slack under the shorter
+ * page is the price, and it is a cheap one next to a panel that changes height under a finger.
+ */
+/*
+ * The window the pages slide behind, and it has to exist.
+ *
+ * The panel's own `overflow: hidden` was doing this job and was 11 px out: it clips at the
+ * panel's border box, and the layer inside it carries 0.7rem of padding, so the page sliding
+ * off to the left stopped exactly one padding width *inside* the panel and showed a sliver of
+ * elevation chart down the edge. Measured rather than guessed — the track was translating the
+ * full page width all along.
+ */
+.hud-pages {
+  overflow: hidden;
+}
+
+/*
+ * The track is exactly one page wide and its pages overflow to the right, which is what makes
+ * `translateX(-100%)` move by one page rather than by however many there happen to be. A track
+ * sized to its contents would need the page count in the arithmetic, and would then be wrong
+ * by a page width the moment a ride had only one.
+ */
+.hud-track {
+  display: flex;
+  width: 100%;
+  transform: translateX(calc(var(--hud-x) * -100%));
+}
+
+/* `flex: 0 0 100%` and not `flex: 1`: the pages overflow rather than sharing the width, which
+   is the whole idea. `min-width: 0` because a flex item's automatic minimum is its content,
+   and the graph is wider than it looks. */
+.hud-page {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+/*
+ * The next turn, at the size the panel has room for.
+ *
+ * The arrow is the point of the page. At 4.5rem it is about four times the area of the one on
+ * the callout line, which is what a rider glancing down at 25 km/h can actually resolve — and
+ * the reason the page exists at all rather than the callout simply growing: a strip whose
+ * budget is one line has no room for this.
+ */
+.hud-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  /* Fills the page and centres in it. The layer is as tall as the *graph*, which is the taller
+     of the two, so the navigation page has slack under it whatever it does — sitting at the
+     top leaves a hole, and centring turns the same slack into margin. */
+  min-height: 100%;
+  height: 100%;
+  padding: 0.35rem 0 0.2rem;
+}
+
+.hud-nav .turn-glyph {
+  width: 4.5rem;
+  height: 4.5rem;
+  /* Scaled up, the 2-unit stroke of a 24-unit viewBox lands at 6 device pixels, which is
+     heavier than the arrow wants. Thinned so the shape reads rather than the ink. */
+  stroke-width: 1.6;
+}
+
+.hud-nav-text {
+  min-width: 0;
+}
+
+/* The same type as the figures above it, because it is the same kind of fact: a number you
+   read at a glance and act on. */
+.hud-nav-distance {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-nav-label {
+  margin: 0.05rem 0 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hud-nav-next,
+.hud-nav-none {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Nothing inside the horizon. The page keeps its height so the panel does not resize when a
+   turn passes, which would be the figures moving under a reader again. */
+.hud-nav[data-empty='yes'] {
+  align-items: flex-start;
+  padding-top: 1.2rem;
+}
+
+/*
+ * Two dots, in the strip the chevron owns.
+ *
+ * `pointer-events: none` on purpose. The chevron spans this whole strip and a press here has
+ * always toggled the panel; putting a control on top of it would change what that press does
+ * depending on where in the strip it landed, which is the kind of thing a gloved hand cannot
+ * be asked to aim at. These say "there are two of these" and nothing else.
+ */
+.hud-dots {
+  position: absolute;
+  right: 0.7rem;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.2rem;
+  pointer-events: none;
+}
+
+.hud-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.35;
+  transition: opacity 200ms ease;
+}
+
+.hud-dots span[data-on='yes'] {
+  opacity: 1;
 }
 
 /*
@@ -770,12 +922,18 @@
   background: var(--tint);
 }
 
-/* The turn's arrow stands where the climb's tint bar stands, so the two callouts are one
-   slot rather than two lines of different heights swapping places. Wider than the 4px bar
-   because it is a shape to be recognised rather than a marker to be noticed. */
+/*
+ * The turn's arrow stands where the climb's tint bar stands, so the two callouts are one slot
+ * rather than two lines of different heights swapping places.
+ *
+ * 2rem, not the 1.25 it shipped at. Folded away, this line *is* the navigation, and a 20 px
+ * arrow is not something you read at 25 km/h with one glance — the rest of the panel is
+ * figures to be read, and this is the one thing on it to be *recognised*. Stroke width is in
+ * viewBox units, so scaling the glyph thickens the arrow with it.
+ */
 .turn-glyph {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 2rem;
+  height: 2rem;
   flex: none;
   fill: none;
   stroke: var(--text);
@@ -2296,10 +2454,18 @@
    A band directly under the elevation chart, sharing its width and its x-axis, so the two
    are read as one picture of the route rather than two charts to match up by eye. */
 
+/*
+ * 16 px, not the 10 it shipped at.
+ *
+ * A segment's width is its share of the route, and short stretches are the ones worth
+ * spotting: 281 m of cycle path on a 7.7 km route is 13 px of a 356 px strip. At 10 px tall
+ * that is a 13 x 10 chip, which is not enough colour to judge a hue against three others. The
+ * extra six pixels cost nothing in a scrolling sheet and nearly double every segment's area.
+ */
 .surface-strip {
   display: block;
   width: 100%;
-  height: 10px;
+  height: 16px;
   margin-top: 4px;
   border-radius: 3px;
   /* The rects overlap by half a pixel to close the seams between them, so the last one runs
@@ -2359,23 +2525,42 @@
   color: var(--text);
 }
 
-/* The swatch is what makes the table the strip's legend. Sized to the strip's own height so
-   the two obviously refer to each other. */
+/*
+ * The swatch is what makes the table the strip's legend.
+ *
+ * Sized to the *text* beside it rather than to the strip above it. It used to match the
+ * strip's height, on the theory that equal size reads as "these are the same thing"; the
+ * strip is 16 px now and a 16 px block beside 0.82rem type is taller than the type and reads
+ * as a bullet gone wrong. What ties the two together is the colour, which comes from one
+ * `ROAD_COLOURS` and is set inline so the legend cannot drift from the thing it explains.
+ */
 .breakdown-swatch {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   flex: none;
   border-radius: 2px;
-  /* The colour is set inline, from the same `ROAD_COLOURS` the strip draws with — one source,
-     so the legend cannot drift from the thing it explains. */
   /* Baseline-aligned text next to a block needs nudging or the square floats. */
   transform: translateY(1px);
 }
 
+/* A drawing of how the map marks this stretch, sitting after the label it belongs to. Centred
+   rather than baseline-aligned, because it is a picture in a row of text. */
+.breakdown-sample {
+  width: 30px;
+  height: 14px;
+  flex: none;
+  align-self: center;
+}
+
+.breakdown-note,
 .breakdown-network {
   margin: 0;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.breakdown-note {
+  margin: 0.15rem 0 0.55rem;
 }
 
 /* ── Choosing a region ──────────────────────────────────────────────────────────────── */

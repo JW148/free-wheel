@@ -663,15 +663,7 @@ function RouteDetail({
           recorded without one has none at all — and an elevation chart drawn from zeros is a
           flat road, which is a claim about the terrain rather than an absence of one. */}
       {hasHeights(chosen) ? (
-        <>
-          <ElevationProfile
-            route={chosen}
-            colour={style.colour}
-            label={style.plain}
-            runs={runs}
-          />
-          <RouteClimbs route={chosen} />
-        </>
+        <ElevationProfile route={chosen} colour={style.colour} label={style.plain} runs={runs} />
       ) : (
         <p className="warn">
           This track carries no surveyed heights, so there is no elevation profile and no climb
@@ -679,10 +671,13 @@ function RouteDetail({
         </p>
       )}
 
-      {/* Outside the heights branch, on purpose. Surfaces and road classes come off BRouter's
-          tags rather than off SRTM, so a route whose heights are missing can still say what it
-          is made of. A recorded ride has neither and shows neither. */}
-      <RouteBreakdown route={chosen} />
+      {/* Immediately under the strip the profile draws, because the road rows carry that
+          strip's colours and a legend a scroll away from its subject is not a legend. It sits
+          outside the heights branch on purpose: surfaces come off BRouter's tags rather than
+          off SRTM, so a route missing its heights can still say what it is made of. */}
+      <RouteBreakdown route={chosen} colour={style.colour} />
+
+      {hasHeights(chosen) && <RouteClimbs route={chosen} />}
 
       <div className="route-actions">
         <button type="button" onClick={() => void save()} disabled={saved === 'saved'}>
