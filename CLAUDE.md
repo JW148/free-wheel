@@ -691,7 +691,21 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   at its *border* box while the layer inside carries 0.7rem of padding, so the outgoing page
   stopped 11 px inside the panel and showed a sliver of chart down the edge. The track was
   translating a full page width the whole time — measured, not guessed. A panel that is dragged
-  sideways also needs `user-select: none`, or the first swipe selects the text it crosses.
+  sideways also needs `user-select: none`, or the first swipe selects the text it crosses. And
+  the gesture must measure the **window**, not the panel: 341.6 px against 366 at a 390 px
+  screen, or the page lags the finger and the release threshold sits 12 px out.
+- **A two-axis gesture cannot test for a tap on one axis.** `.hud-collapse` spans the whole
+  bottom edge and the page dots are painted inside it, so the one thing saying "there is
+  another page" is also the toggle. `wasTap(travelled)` measured only the vertical, so a clean
+  sideways swipe read as a press: it folded the panel instead of paging. Measure the
+  displacement, and **suppress the chevron's click** once a gesture from it turns out to be a
+  drag — that also fixes a vertical drag settling back where it started, which folded the panel
+  on the click and predates the pages entirely.
+- **A page the rider swiped to must never explain itself with a claim about the road.** The
+  navigation page said "No turns ahead on this route" while off route and before the first fix,
+  which is the flat-chart error in another costume: `turnAhead` is null in three states and only
+  one of them is about the route. The map and the callout line may go quiet there because
+  something else on screen is explaining; a page that is the whole surface cannot.
 - **A near-black mark is invisible on the dark basemap.** The main-road mark began as a wider
   dark casing, which worked on light and vanished entirely on dark — every unit test green
   throughout. It is now flanking hairlines in the theme's overlay ink via `line-gap-width`, and

@@ -404,6 +404,36 @@ And one that was the *driver's* fault and worth recording: the page persists acr
 with `--keep` a second run opened on whatever page the first run swiped to and the shot named
 for the graph quietly showed navigation.
 
+### The review caught the one that would have shipped
+
+An adversarial review of those four commits found a bug the driver had walked straight past,
+because the driver swiped from the middle of the panel and a rider would not.
+
+`.hud-collapse` spans the whole bottom edge, and the page dots are painted **inside it**. So the
+one thing on screen saying "there is another page" is also the toggle — and the tap test asked
+`wasTap(drag.travelled)`, the *vertical* travel alone. A clean sideways swipe barely moves down,
+so it read as a press: the page never changed and the chevron's click folded the panel. With a
+few pixels of thumb wobble it did both.
+
+The test measures both axes now, and a gesture from the chevron that turned out to be a drag
+suppresses the click it leaves behind — which also fixes a bug that predates the pages, where a
+vertical drag from the chevron settling back where it started folded the panel on the click.
+
+Three more from the same review:
+
+- **`--hud-x` had an exit that never restored it.** The chevron-tap branch wrote `--hud-p` home
+  and left the track parked at whatever fraction the finger reached, with the dots and
+  `aria-hidden` both claiming a single page.
+- **The navigation page said "No turns ahead on this route" off route and before the first
+  fix.** A claim about the road made out of a missing position, which is the error the flat-chart
+  rule already names. The map and the callout can go quiet there because something else on
+  screen is explaining; a page the rider swiped to cannot.
+- **The gesture measured the panel's border box** while the track moves by the page's content
+  box — 366 against 341.6 at 390 px, so the page lagged the finger by up to 24 px.
+
+The driver now swipes from the dots specifically, and reports both facts: the page changed, and
+the panel is still open.
+
 ## 13 · Not done
 
 - **Street names at turns**, per §9.
