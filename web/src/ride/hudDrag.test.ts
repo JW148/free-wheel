@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { hudAxis, hudPageRelease, hudProgress, hudRelease } from './hudDrag'
+import { wasTap } from './sheetDrag'
 
 /** The panel grows by about this much between the strip and the graph. */
 const RANGE = 170
@@ -89,6 +90,40 @@ describe('hudAxis', () => {
   it('gives a diagonal tie to resizing', () => {
     // The gesture the panel had first, and the one a rider reaches for without looking.
     expect(hudAxis(20, 20)).toBe('resize')
+  })
+})
+
+describe('telling a press from a gesture that started on the chevron', () => {
+  /*
+   * `useHudDrag` asks `wasTap` over both axes, and the bug this pins is that it used to ask
+   * over the vertical alone.
+   *
+   * It matters because of where the affordance is: `.hud-collapse` spans the whole bottom edge
+   * and the page dots are painted inside it, so the one thing on screen saying "there is
+   * another page" is exactly where a rider starts the swipe. Measured vertically, that swipe
+   * is a tap — the chevron's click fires and the panel folds instead of paging.
+   */
+  const displacement = (acrossPx: number, downPx: number) => Math.hypot(acrossPx, downPx)
+
+  it('calls a still finger a press', () => {
+    expect(wasTap(displacement(0, 0))).toBe(true)
+    expect(wasTap(displacement(3, 3))).toBe(true)
+  })
+
+  it('does not call a sideways swipe a press', () => {
+    expect(wasTap(displacement(40, 0))).toBe(false)
+    expect(wasTap(displacement(-40, 2))).toBe(false)
+  })
+
+  it('does not call a downward drag a press', () => {
+    expect(wasTap(displacement(0, 40))).toBe(false)
+  })
+
+  it('is what the vertical measurement got wrong', () => {
+    // The old test. A 40 px sideways swipe has no vertical travel at all, so measuring only
+    // `travelled` said "tap" and handed the gesture to the chevron's click.
+    expect(wasTap(0)).toBe(true)
+    expect(wasTap(displacement(40, 0))).toBe(false)
   })
 })
 

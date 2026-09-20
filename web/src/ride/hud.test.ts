@@ -165,4 +165,13 @@ describe('hudPageAt', () => {
   it('is null when there is no page at all', () => {
     expect(hudPageAt([], 0)).toBeNull()
   })
+
+  it('rounds a fractional index rather than landing between pages', () => {
+    // `pages[0.5]` is `undefined`, which would hide both pages from a screen reader and light
+    // neither dot. Nothing the app writes is fractional; this is so nothing a reader can put
+    // in localStorage is either.
+    expect(hudPageAt(both, 0.4)).toBe('graph')
+    expect(hudPageAt(both, 0.6)).toBe('nav')
+    expect(hudPageAt(both, Number.NaN)).toBe('graph')
+  })
 })

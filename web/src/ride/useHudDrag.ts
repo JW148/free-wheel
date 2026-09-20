@@ -62,6 +62,8 @@ export function useHudDrag({
   const full = useRef<HTMLDivElement | null>(null)
   const range = useRef(0)
   const gesture = useRef<Gesture | null>(null)
+  /** Set when a gesture that started on the chevron turned out to be a drag. See `onPointerUp`. */
+  const suppressClick = useRef(false)
 
   const setProgress = useCallback((p: number) => {
     panel.current?.style.setProperty('--hud-p', String(p))
@@ -172,7 +174,19 @@ export function useHudDrag({
         lastX: event.clientX,
         velocityX: 0,
         fromPage: page,
-        width: panel.current?.getBoundingClientRect().width ?? 0,
+        /*
+         * The *window's* width, not the panel's.
+         *
+         * A page is the layer's content box: the panel's border box less its border and less
+         * 0.7rem of layer padding either side. At 390 px that is 341.6 against the panel's
+         * 366, so measuring the panel makes the track lag the finger by up to 24 px and moves
+         * the half-page release threshold 12 px out. The CSS was careful that the translation
+         * is exactly one page; this is the other half of that.
+         */
+        width:
+          panel.current?.querySelector('.hud-pages')?.getBoundingClientRect().width ??
+          panel.current?.getBoundingClientRect().width ??
+          0,
       }
       panel.current?.setAttribute('data-dragging', 'yes')
       /*
@@ -239,12 +253,34 @@ export function useHudDrag({
       if (!drag || drag.id !== event.pointerId) return
       end(gesture, panel)
 
-      // A press on the chevron is left to the click it is about to produce. Doing it here as
-      // well would toggle twice and land the panel back where it started.
-      if (drag.fromChevron && wasTap(drag.travelled)) {
+      /*
+       * Was this a press, or a gesture that happened to start on the chevron?
+       *
+       * Measured over **both** axes, which it was not: `wasTap(drag.travelled)` looks only at
+       * the vertical, so a clean sideways swipe reads as a tap because it barely moved down.
+       * That matters more than it sounds, because the page dots are painted inside the
+       * chevron's hit strip — they span the full width of the bottom edge — so the one thing
+       * on screen saying "there is another page" is the worst place to start a swipe from.
+       */
+      const moved = !wasTap(Math.hypot(drag.across, drag.travelled))
+
+      // A real press on the chevron is left to the click it is about to produce. Doing it here
+      // as well would toggle twice and land the panel back where it started.
+      if (drag.fromChevron && !moved) {
         setProgress(drag.from === 'full' ? 1 : 0)
+        setPage(drag.fromPage)
         return
       }
+
+      /*
+       * It moved, so the click that is about to arrive is not a press and must not toggle.
+       *
+       * The capture is deliberately on the chevron so its click survives a drag *from* it —
+       * see `onPointerDown`. That is right for a tap and wrong for everything else: without
+       * this, a swipe to the next page also folds the panel, and a vertical drag that settles
+       * back where it started folds it too. The second of those predates the pages.
+       */
+      if (drag.fromChevron) suppressClick.current = true
 
       // A finger that came to rest before letting go was placing the panel, not throwing it.
       const paused = event.timeStamp - drag.lastAt > STALE_MS
@@ -262,11 +298,13 @@ export function useHudDrag({
         return
       }
 
-      // Undecided at release is a press that never travelled, which is a tap — and a tap
-      // anywhere but the chevron deliberately does nothing. `hudRelease` says so too, but
-      // returning here keeps the panel from being written at all.
+      // Undecided at release is a press that travelled less than the axis threshold, which is
+      // a tap — and a tap anywhere but the chevron deliberately does nothing. Both axes are
+      // written home rather than only the one that happens to be in play: a gesture can travel
+      // far enough to write `--hud-x` and still not reach the threshold that commits it.
       if (drag.axis === 'wait') {
         setProgress(drag.from === 'full' ? 1 : 0)
+        setPage(drag.fromPage)
         return
       }
 
@@ -309,7 +347,15 @@ export function useHudDrag({
    * why the chevron stayed a real button and why the pointer path stands aside for a press on
    * it rather than handling the tap itself.
    */
-  const onToggle = useCallback(() => onExpandedChange(!expanded), [expanded, onExpandedChange])
+  const onToggle = useCallback(() => {
+    // The click a drag from the chevron leaves behind. Swallowed once, because the gesture has
+    // already been dealt with — otherwise a swipe to the next page folds the panel on its way.
+    if (suppressClick.current) {
+      suppressClick.current = false
+      return
+    }
+    onExpandedChange(!expanded)
+  }, [expanded, onExpandedChange])
 
   return {
     panel,

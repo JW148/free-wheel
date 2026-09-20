@@ -201,7 +201,12 @@ export default function RideHud({
                     )}
                   </>
                 ) : (
-                  <NavPage turn={turnAhead} next={nextAfter} />
+                  <NavPage
+                    turn={turnAhead}
+                    next={nextAfter}
+                    tracking={tracking}
+                    offRoute={offRoute}
+                  />
                 )}
               </div>
             ))}
@@ -403,15 +408,34 @@ function Figure({
 function NavPage({
   turn,
   next,
+  tracking,
+  offRoute,
 }: {
   turn: { turn: Turn; awayM: number } | null
   /** The one after it, named small, so a junction pair can be seen coming rather than heard. */
   next: Turn | null
+  /** Whether the rider's place on the line is known yet. Without it there is nothing to say. */
+  tracking: boolean
+  offRoute: boolean
 }) {
+  /*
+   * Three reasons there is no turn to show, and only one of them is about the route.
+   *
+   * `turnAhead` is null before the first fix and null while off route, and answering either
+   * with "no turns ahead on this route" is a claim about the road made out of a missing
+   * position — the same error as drawing a flat chart from a track with no heights. The map
+   * and the callout line can go quiet in those states because something else on screen is
+   * already explaining; a page the rider swiped to cannot.
+   */
   if (!turn) {
+    const why = !tracking
+      ? 'Waiting for a fix.'
+      : offRoute
+        ? 'Off route — no turns to give until you are back on it.'
+        : 'No turns ahead on this route.'
     return (
       <div className="hud-nav" data-empty="yes">
-        <p className="hud-nav-none">No turns ahead on this route.</p>
+        <p className="hud-nav-none">{why}</p>
       </div>
     )
   }

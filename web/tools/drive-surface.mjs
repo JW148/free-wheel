@@ -479,6 +479,39 @@ console.log(
 )
 await shot('07-riding-navigation')
 
+/*
+ * The same swipe, started on the page dots.
+ *
+ * They are painted inside the chevron's hit strip — it spans the whole bottom edge — so the
+ * one thing on screen saying "there is another page" is also the toggle. A swipe from there
+ * used to read as a tap, because the tap test measured the vertical alone, and the panel
+ * folded instead of paging. Both facts are checked: it went back a page, and it is still open.
+ */
+const dotsY = await evaluate(`(() => {
+  const box = document.querySelector('.hud-dots')?.getBoundingClientRect()
+  return box ? Math.round(box.top + box.height / 2) : null
+})()`)
+if (dotsY === null) {
+  console.log('  no dots to swipe from')
+} else {
+  await swipeLeft(dotsY, 70, 320)
+  await sleep(900)
+  console.log(
+    '  swipe from the dots: ' +
+      (await evaluate(`(() => {
+        const open = document.querySelector('.hud-collapse')?.getAttribute('aria-expanded')
+        const x = getComputedStyle(document.querySelector('.hud')).getPropertyValue('--hud-x')
+        // Both pages are always laid out, so presence in the DOM says nothing about which one
+        // is up. \`aria-hidden\` is what the page actually sets, and what a reader follows.
+        const shown = [...document.querySelectorAll('.hud-page')].findIndex(
+          (p) => p.getAttribute('aria-hidden') === 'false',
+        )
+        return 'page ' + x.trim() + ', showing index ' + shown + ', panel open ' + open
+      })()`)),
+  )
+  await shot('07b-swiped-from-the-dots')
+}
+
 // Back off the bike, or the dark pass below reloads into a ride in progress.
 await evaluate(`(() => {
   const hold = [...document.querySelectorAll('button')].find((b) => /end ride/i.test(b.textContent))

@@ -96,9 +96,17 @@ export function hudPages(input: { hasElevation: boolean; hasTurns: boolean }): H
   return pages
 }
 
-/** The page to draw, given what the rider last chose and what this ride actually has. */
+/**
+ * The page to draw, given what the rider last chose and what this ride actually has.
+ *
+ * Rounded as well as clamped. The index comes back out of `localStorage`, and a fractional one
+ * lands between the pages rather than on either: `pages[0.5]` is `undefined`, which would have
+ * hidden both pages from a screen reader and lit neither dot. Nothing the app writes is
+ * fractional; this is so nothing a *reader* does can be.
+ */
 export function hudPageAt(pages: HudPage[], index: number): HudPage | null {
-  return pages[Math.min(Math.max(index, 0), pages.length - 1)] ?? null
+  const wanted = Number.isFinite(index) ? Math.round(index) : 0
+  return pages[Math.min(Math.max(wanted, 0), pages.length - 1)] ?? null
 }
 
 /**
