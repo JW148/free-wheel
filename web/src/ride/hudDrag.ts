@@ -67,3 +67,63 @@ export function hudRelease({
 
   return hudProgress({ from, travelledPx, rangePx }) >= SETTLE ? 'full' : 'mini'
 }
+
+/**
+ * Which way a gesture on the panel turned out to be going.
+ *
+ * The panel has two axes now: down to grow it, sideways to change the page. A finger does not
+ * declare which it meant, so the first dozen pixels decide — the same shape `sheetDrag`'s
+ * `pendingVerdict` uses to tell a drag from a scroll, and for the same reason. Committing on
+ * the very first move instead would make every page swipe begin by resizing the panel a few
+ * pixels, which is the one thing it must not do while figures are being read.
+ *
+ * `wait` is not a failure. It is the honest answer until one axis is clearly ahead, and the
+ * caller writes nothing while it holds.
+ */
+export type HudAxis = 'wait' | 'resize' | 'page'
+
+/** Far enough to mean it. The same distance the sheet's body drag waits for. */
+const AXIS_COMMIT_PX = 12
+
+export function hudAxis(acrossPx: number, downPx: number): HudAxis {
+  const across = Math.abs(acrossPx)
+  const down = Math.abs(downPx)
+  if (Math.max(across, down) < AXIS_COMMIT_PX) return 'wait'
+  // A tie goes to resizing, which is the gesture the panel had first and the one a rider
+  // reaches for without looking.
+  return across > down ? 'page' : 'resize'
+}
+
+/**
+ * Which page a sideways release lands on.
+ *
+ * Half a page of travel, or a flick, and it moves. Clamped to the pages that exist, which is
+ * what stops a swipe past the end parking the track in the margin.
+ *
+ * Deliberately not `wasTap`-guarded the way {@link hudRelease} is: by the time this is reached
+ * the gesture has already travelled far enough for {@link hudAxis} to have called it a page
+ * swipe, so a tap cannot arrive here.
+ */
+export function hudPageRelease({
+  from,
+  travelledPx,
+  velocityPxPerS,
+  widthPx,
+  pages,
+}: {
+  from: number
+  /** Positive when the finger moved right, which reveals the page *before* this one. */
+  travelledPx: number
+  velocityPxPerS: number
+  widthPx: number
+  pages: number
+}): number {
+  const flicked = Math.abs(velocityPxPerS) > FLICK_PX_PER_S
+  const dragged = widthPx > 0 && Math.abs(travelledPx) / widthPx >= SETTLE
+  const step = flicked
+    ? -Math.sign(velocityPxPerS)
+    : dragged
+      ? -Math.sign(travelledPx)
+      : 0
+  return Math.min(pages - 1, Math.max(0, from + step))
+}

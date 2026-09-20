@@ -5,6 +5,8 @@ import {
   calloutMatters,
   compactFigures,
   figuresFor,
+  hudPageAt,
+  hudPages,
   CALLOUT_HORIZON_M,
   TURN_HORIZON_M,
 } from './hud'
@@ -111,5 +113,56 @@ describe('calloutFor', () => {
 
   it('takes a turn at zero distance, which is a rider on the junction', () => {
     expect(calloutFor(0, climbAhead, true)).toBe('turn')
+  })
+})
+
+describe('hudPages', () => {
+  it('opens onto the graph, so a rider who never swipes finds what they had', () => {
+    expect(hudPages({ hasElevation: true, hasTurns: true })).toEqual(['graph', 'nav'])
+  })
+
+  it('drops the graph on a track with no surveyed heights', () => {
+    // A flat chart is not "no data", it is a claim that the road ahead is level.
+    expect(hudPages({ hasElevation: false, hasTurns: true })).toEqual(['nav'])
+  })
+
+  it('drops navigation on a route that carries no junctions', () => {
+    // A route saved before the app asked BRouter for turn instructions, or a recorded ride.
+    expect(hudPages({ hasElevation: true, hasTurns: false })).toEqual(['graph'])
+  })
+
+  it('leaves nothing to swipe between when the ride has neither', () => {
+    expect(hudPages({ hasElevation: false, hasTurns: false })).toEqual([])
+  })
+
+  it('never offers a swipe it cannot honour', () => {
+    // One page is not a carousel. The caller reads the length rather than re-deriving it,
+    // which is the whole reason this returns an array.
+    for (const hasElevation of [true, false]) {
+      for (const hasTurns of [true, false]) {
+        expect(hudPages({ hasElevation, hasTurns }).length).toBeLessThanOrEqual(2)
+      }
+    }
+  })
+})
+
+describe('hudPageAt', () => {
+  const both = hudPages({ hasElevation: true, hasTurns: true })
+
+  it('reads the remembered page back', () => {
+    expect(hudPageAt(both, 0)).toBe('graph')
+    expect(hudPageAt(both, 1)).toBe('nav')
+  })
+
+  it('clamps a remembered page this ride does not have', () => {
+    // The page persists across launches, so a rider who left it on navigation and then loads
+    // a route with no junctions must land somewhere real rather than on a blank.
+    expect(hudPageAt(['graph'], 1)).toBe('graph')
+    expect(hudPageAt(['nav'], 5)).toBe('nav')
+    expect(hudPageAt(both, -1)).toBe('graph')
+  })
+
+  it('is null when there is no page at all', () => {
+    expect(hudPageAt([], 0)).toBeNull()
   })
 })

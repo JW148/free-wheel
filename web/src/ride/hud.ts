@@ -69,6 +69,38 @@ export function calloutFor(
   return calloutMatters(ahead, hasElevation) ? 'climb' : null
 }
 
+/** What the opened panel can show. The rider swipes between whichever of these exist. */
+export type HudPage = 'graph' | 'nav'
+
+/**
+ * The pages this ride has, in order.
+ *
+ * Only ever asked of the *opened* panel. The strip keeps its single auto-chosen line, because
+ * one line has room for one thing and `calloutFor` already decides which — a rider folding the
+ * panel away is asking for the map, not for a choice.
+ *
+ * Both pages are conditional on data the ride may not have, and the empty cases are real:
+ * following a recorded track gives heights only where it was on a route, and a route saved
+ * before the app asked BRouter for turn instructions has no junctions at all. A page drawn
+ * from nothing is worse than a missing one — a flat graph is a claim that the road is level.
+ *
+ * Returning an array rather than two booleans is what keeps the swipe honest. With one page
+ * there is nothing to swipe to, and the caller can see that without re-deriving it.
+ */
+export function hudPages(input: { hasElevation: boolean; hasTurns: boolean }): HudPage[] {
+  const pages: HudPage[] = []
+  // The graph first, because it is the one the panel has always opened onto and a rider who
+  // never swipes should find what they had before.
+  if (input.hasElevation) pages.push('graph')
+  if (input.hasTurns) pages.push('nav')
+  return pages
+}
+
+/** The page to draw, given what the rider last chose and what this ride actually has. */
+export function hudPageAt(pages: HudPage[], index: number): HudPage | null {
+  return pages[Math.min(Math.max(index, 0), pages.length - 1)] ?? null
+}
+
 /**
  * The four figures the expanded HUD carries.
  *

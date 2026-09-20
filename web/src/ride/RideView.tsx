@@ -40,6 +40,7 @@ import { waypointRows, type PlanSlot } from './plan'
 const RIDING_ZOOM = 16.5
 
 const HUD_KEY = 'free-wheel.hud.v1'
+const HUD_PAGE_KEY = 'free-wheel.hud-page.v1'
 const COURSE_UP_KEY = 'free-wheel.courseup.v1'
 const VOICE_KEY = 'free-wheel.voice.v1'
 
@@ -186,6 +187,21 @@ export default function RideView({
     }
   })
   /**
+   * Which page the opened panel is on — the elevation graph, or the next turn drawn large.
+   *
+   * Persisted for the same reason the size is: which of the two a rider wants is a property of
+   * how they ride rather than of this ride. Stored as an index and clamped by `hudPages` on
+   * the way out, because the page it names may not exist on the next route — a recorded track
+   * has no junctions to navigate and a route without heights has no graph.
+   */
+  const [hudPage, setHudPage] = useState(() => {
+    try {
+      return Number(localStorage.getItem(HUD_PAGE_KEY)) || 0
+    } catch {
+      return 0
+    }
+  })
+  /**
    * Whether the app speaks the climb ahead.
    *
    * On by default, which is a deliberate choice rather than an oversight. A muted feature is a
@@ -205,10 +221,11 @@ export default function RideView({
       localStorage.setItem(COURSE_UP_KEY, courseUp ? 'on' : 'off')
       localStorage.setItem(VOICE_KEY, voice ? 'on' : 'off')
       localStorage.setItem(HUD_KEY, hudExpanded ? 'full' : 'mini')
+      localStorage.setItem(HUD_PAGE_KEY, String(hudPage))
     } catch {
       /* Private mode. The rail just opens expanded next launch. */
     }
-  }, [courseUp, voice, hudExpanded])
+  }, [courseUp, voice, hudExpanded, hudPage])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -892,6 +909,8 @@ export default function RideView({
             telemetry={telemetry}
             expanded={hudExpanded}
             onExpandedChange={setHudExpanded}
+            page={hudPage}
+            onPageChange={setHudPage}
             speedMps={fix?.speed ?? null}
             fixLabel={FIX_LABEL[fixStatus](fix?.accuracy ?? null, wakeLock.supported)}
             offRouteHint={

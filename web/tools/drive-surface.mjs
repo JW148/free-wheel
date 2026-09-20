@@ -316,13 +316,183 @@ await evaluate(`(() => {
 await sleep(600)
 await shot('04-breakdown')
 
+// ── Riding, stopped just short of a junction ─────────────────────────────────────────────
+
+/*
+ * The turn callout only exists while riding and only inside 400 m of a junction, so a shot of
+ * it has to be *arranged*: parked at the start the strip says nothing, and a fix dropped at
+ * random along the route lands between turns nine times out of ten.
+ *
+ * So the GPX is read for both the track and the junctions it marks, and the fix is walked up
+ * to a few points short of one. `<sym>` sits on the track point the turn happens at, which is
+ * the same indexing `gpx.ts` uses, so the two cannot disagree about which junction this is.
+ */
+console.log('riding up to a junction')
+await send('Browser.grantPermissions', { permissions: ['geolocation'] })
+await click('.drawer-back')
+await sleep(700)
+await click('.route-card-start')
+await sleep(4000)
+
+const ride = await evaluate(`(() => {
+  const plan = JSON.parse(localStorage.getItem('free-wheel.plan.v2') ?? '{}')
+  const gpx = plan.gpx?.[plan.chosen] ?? Object.values(plan.gpx ?? {})[0]
+  if (!gpx) return { track: [], turns: [] }
+  // BRouter writes lon before lat, which is the opposite of the order they are read in.
+  const track = []
+  const turns = []
+  for (const m of gpx.matchAll(/<trkpt lon="([-\\d.]+)" lat="([-\\d.]+)">([\\s\\S]*?)<\\/trkpt>/g)) {
+    const sym = /<sym>([^<]*)<\\/sym>/.exec(m[3])
+    // The ones the app would speak: not straight on, not the finish, and not a slight turn.
+    if (sym && /^(TL|TR|TSHL|TSHR|KL|KR|TU|RN[DL]B\\d+)$/.test(sym[1])) {
+      turns.push({ index: track.length, command: sym[1] })
+    }
+    track.push([Number(m[2]), Number(m[1])])
+  }
+  return { track, turns }
+})()`)
+console.log(`  ${ride.track.length} track points, ${ride.turns.length} speakable junctions`)
+
+const fixAt = async (index, speedMps, heading) => {
+  const [latitude, longitude] = ride.track[Math.min(index, ride.track.length - 1)]
+  await send('Emulation.setGeolocationOverride', {
+    latitude,
+    longitude,
+    accuracy: 6,
+    speed: speedMps,
+    heading,
+  })
+}
+
+// Far enough in that the figures are populated rather than sitting in their empty state, and
+// a junction far enough along that there is road behind the rider for the progress bar.
+const junction = ride.turns.find((t) => t.index > 40) ?? ride.turns.at(-1)
+if (junction) {
+  console.log(`  walking up to a ${junction.command} at point ${junction.index}`)
+  // A few steps rather than a teleport, so `progress.ts` sees movement and `snapToRoute` keeps
+  // its window hint rather than falling back to a global scan.
+  for (const back of [26, 20, 15, 11, 8]) {
+    await fixAt(Math.max(0, junction.index - back), 6.4, 90)
+    await sleep(1100)
+  }
+  await sleep(2500)
+}
+
+/*
+ * The callout on the layer that is actually showing.
+ *
+ * Both layers are in the DOM at all times — the folded one is only `visibility: hidden` — so a
+ * bare `querySelector('.hud-callout')` returns the *expanded* panel's line whichever size the
+ * panel is at. That read the graph page's climb while the strip beside it said "Left in 20 m".
+ */
+const calloutOf = () =>
+  evaluate(`(() => {
+    const layer = document.querySelector('.hud-layer[data-shown="yes"]')
+    return layer?.querySelector('.hud-callout')?.textContent?.trim() ?? null
+  })()`)
+const hudExpanded = () =>
+  evaluate(`document.querySelector('.hud-collapse')?.getAttribute('aria-expanded') === 'true'`)
+const setHud = async (wanted) => {
+  if ((await hudExpanded()) === wanted) return
+  await click('.hud-collapse')
+  await sleep(1400)
+}
+
+await setHud(false)
+console.log('  strip says: ' + (await calloutOf()))
+await shot('05-riding-strip')
+
+await setHud(true)
+await sleep(600)
+console.log('  panel says: ' + (await calloutOf()))
+await shot('06-riding-panel')
+
+/*
+ * Sideways, onto the navigation page.
+ *
+ * A real drag rather than writing the stored page and reloading, because the gesture is half
+ * the feature: `hudAxis` has to call this a page change rather than a resize, and a reload
+ * would end the ride and prove nothing about either.
+ */
+const swipeLeft = async (y, fromX, toX) => {
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: fromX, y })
+  await send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: fromX,
+    y,
+    button: 'left',
+    clickCount: 1,
+  })
+  const steps = 8
+  for (let i = 1; i <= steps; i++) {
+    await send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: Math.round(fromX + ((toX - fromX) * i) / steps),
+      y,
+      button: 'left',
+      buttons: 1,
+    })
+    await sleep(16)
+  }
+  await send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: toX,
+    y,
+    button: 'left',
+    clickCount: 1,
+  })
+}
+
+const panelMid = await evaluate(`(() => {
+  const box = document.querySelector('.hud')?.getBoundingClientRect()
+  return box ? Math.round(box.top + box.height / 2) : 150
+})()`)
+await swipeLeft(panelMid, 320, 70)
+await sleep(900)
+console.log(
+  '  nav page: ' +
+    (await evaluate(
+      `document.querySelector('.hud-nav')?.textContent?.replace(/\\s+/g, ' ').trim() ?? 'not shown'`,
+    )),
+)
+/* The track's offset against the panel's own width. They have to match, or a page peeks. */
+console.log(
+  '  track: ' +
+    (await evaluate(`(() => {
+      const panel = document.querySelector('.hud')
+      const track = document.querySelector('.hud-track')
+      const layer = document.querySelector('.hud-layer[data-layer="full"]')
+      if (!panel || !track || !layer) return 'missing'
+      const style = getComputedStyle(panel)
+      return JSON.stringify({
+        x: style.getPropertyValue('--hud-x').trim(),
+        trackWidth: Math.round(track.getBoundingClientRect().width),
+        layerWidth: Math.round(layer.getBoundingClientRect().width),
+        offset: Math.round(track.getBoundingClientRect().left - layer.getBoundingClientRect().left),
+        selected: String(document.getSelection() ?? '').slice(0, 20),
+      })
+    })()`)),
+)
+await shot('07-riding-navigation')
+
+// Back off the bike, or the dark pass below reloads into a ride in progress.
+await evaluate(`(() => {
+  const hold = [...document.querySelectorAll('button')].find((b) => /end ride/i.test(b.textContent))
+  if (!hold) return 'no end button'
+  for (const type of ['pointerdown', 'pointerup']) {
+    hold.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1 }))
+  }
+  return 'pressed'
+})()`)
+await sleep(600)
+
 // ── The dark theme, where the dash inverts ───────────────────────────────────────────────
 
 console.log('dark chrome')
 await evaluate(`localStorage.setItem('free-wheel.theme.v1', 'dark')`)
 await send('Page.navigate', { url: BASE })
 await sleep(4000)
-await shot('05-dark-map')
+await shot('08-dark-map')
 await click('.sheet-handle')
 await sleep(900)
 await click('.route-card-details')
@@ -334,7 +504,7 @@ await evaluate(`(() => {
   return 'scrolled'
 })()`)
 await sleep(600)
-await shot('06-dark-breakdown')
+await shot('09-dark-breakdown')
 
 ws.close()
 chrome.kill()

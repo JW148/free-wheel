@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hudProgress, hudRelease } from './hudDrag'
+import { hudAxis, hudPageRelease, hudProgress, hudRelease } from './hudDrag'
 
 /** The panel grows by about this much between the strip and the graph. */
 const RANGE = 170
@@ -64,5 +64,77 @@ describe('hudRelease', () => {
 
   it('ignores a gentle drift, which is a placement rather than a throw', () => {
     expect(release({ from: 'mini', travelledPx: 30, velocityPxPerS: 200 })).toBe('mini')
+  })
+})
+
+describe('hudAxis', () => {
+  it('waits until one axis is clearly ahead', () => {
+    // Committing on the first move would make every page swipe begin by resizing the panel a
+    // few pixels, which is the one thing it must not do while figures are being read.
+    expect(hudAxis(0, 0)).toBe('wait')
+    expect(hudAxis(6, 4)).toBe('wait')
+    expect(hudAxis(-8, 8)).toBe('wait')
+  })
+
+  it('calls a sideways drag a page change', () => {
+    expect(hudAxis(20, 4)).toBe('page')
+    expect(hudAxis(-20, -4)).toBe('page')
+  })
+
+  it('calls a downward drag a resize', () => {
+    expect(hudAxis(4, 20)).toBe('resize')
+    expect(hudAxis(-4, -20)).toBe('resize')
+  })
+
+  it('gives a diagonal tie to resizing', () => {
+    // The gesture the panel had first, and the one a rider reaches for without looking.
+    expect(hudAxis(20, 20)).toBe('resize')
+  })
+})
+
+describe('hudPageRelease', () => {
+  const swipe = (over: Partial<Parameters<typeof hudPageRelease>[0]> = {}) =>
+    hudPageRelease({
+      from: 0,
+      travelledPx: 0,
+      velocityPxPerS: 0,
+      widthPx: 360,
+      pages: 2,
+      ...over,
+    })
+
+  it('moves on half a page of travel', () => {
+    // Negative travel is a finger moving left, which drags the *next* page into view.
+    expect(swipe({ travelledPx: -200 })).toBe(1)
+    expect(swipe({ from: 1, travelledPx: 200 })).toBe(0)
+  })
+
+  it('stays put when the finger did not get far enough', () => {
+    expect(swipe({ travelledPx: -100 })).toBe(0)
+    expect(swipe({ from: 1, travelledPx: 100 })).toBe(1)
+  })
+
+  it('moves on a flick, however short', () => {
+    expect(swipe({ travelledPx: -20, velocityPxPerS: -900 })).toBe(1)
+    expect(swipe({ from: 1, travelledPx: 20, velocityPxPerS: 900 })).toBe(0)
+  })
+
+  it('lets a flick beat the distance, because it is the later intent', () => {
+    // Dragged most of the way to the next page and then thrown back again.
+    expect(swipe({ travelledPx: -300, velocityPxPerS: 900 })).toBe(0)
+  })
+
+  it('refuses to swipe off either end', () => {
+    expect(swipe({ from: 0, travelledPx: 300 })).toBe(0)
+    expect(swipe({ from: 1, travelledPx: -300 })).toBe(1)
+  })
+
+  it('has nowhere to go with a single page', () => {
+    expect(swipe({ pages: 1, travelledPx: -300 })).toBe(0)
+    expect(swipe({ pages: 1, velocityPxPerS: -900 })).toBe(0)
+  })
+
+  it('does not divide by a width it has not measured yet', () => {
+    expect(swipe({ widthPx: 0, travelledPx: -300 })).toBe(0)
   })
 })
