@@ -694,13 +694,27 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   sideways also needs `user-select: none`, or the first swipe selects the text it crosses. And
   the gesture must measure the **window**, not the panel: 341.6 px against 366 at a 390 px
   screen, or the page lags the finger and the release threshold sits 12 px out.
-- **A two-axis gesture cannot test for a tap on one axis.** `.hud-collapse` spans the whole
-  bottom edge and the page dots are painted inside it, so the one thing saying "there is
-  another page" is also the toggle. `wasTap(travelled)` measured only the vertical, so a clean
-  sideways swipe read as a press: it folded the panel instead of paging. Measure the
-  displacement, and **suppress the chevron's click** once a gesture from it turns out to be a
-  drag — that also fixes a vertical drag settling back where it started, which folded the panel
-  on the click and predates the pages entirely.
+- **A two-axis gesture cannot test for a tap on one axis.** `wasTap(travelled)` measured only
+  the vertical, so a clean sideways swipe read as a press and folded the panel instead of
+  paging. Measure the displacement, and **suppress `.hud-collapse`'s click** once a gesture
+  from it turns out to be a drag — that also fixes a vertical drag settling back where it
+  started, which folded the panel on the click and predates the pages entirely.
+- **`.hud-collapse` is off screen and must stay in the DOM.** It was a visible chevron on the
+  panel's bottom edge and read as a control on a surface whose whole gesture is a drag. A
+  keyboard, VoiceOver's activation and any synthetic press all arrive there as a click, and
+  none of them can drag, so deleting it would strand the panel at whatever size it was last
+  left. Clipped off-screen rather than `display: none`, which would take it out of the
+  accessibility tree with the pixels. The page dots own the bottom edge now.
+- **The graph page carries no turn line.** It had one, on the argument that a rider staying on
+  the graph would otherwise lose the turn; riding it said otherwise. The graph page is the
+  terrain, and a miniature turn on it competes with the page that does the job properly.
+  Nothing is lost: folded, `calloutFor` still gives the strip the turn over the climb, and
+  folded is where most of a ride is spent.
+- **Every driver that rides must mute the app first.** Headless Chrome has a voice like any
+  other, so a run announces each junction out loud into the room. `drive.mjs`,
+  `drive-surface.mjs` and `onboarding-shots.mjs` all set `free-wheel.voice.v1` to `off` in
+  their reset. None of them is checking the speech — `cues.test.ts` walks a real route for
+  that.
 - **A page the rider swiped to must never explain itself with a claim about the road.** The
   navigation page said "No turns ahead on this route" while off route and before the first fix,
   which is the flat-chart error in another costume: `turnAhead` is null in three states and only

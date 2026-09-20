@@ -434,6 +434,22 @@ Three more from the same review:
 The driver now swipes from the dots specifically, and reports both facts: the page changed, and
 the panel is still open.
 
+### Then it was ridden on a phone, which took three more things off the panel
+
+- **The chevron.** It read as a control on a surface whose whole gesture is a drag — a button
+  saying "press me" in the middle of something you pull. Off the screen, and still in the DOM,
+  because a keyboard, VoiceOver and any synthetic press all reach the toggle as a click and
+  none of them can drag. The page dots take the middle of the bottom edge, which is also where
+  they stop sitting inside somebody else's hit area.
+- **The graph page's turn line.** §12 argued for keeping it. Riding said otherwise: the graph
+  page is the terrain, and a miniature turn on it competes with the page that does the job
+  properly. Folded, `calloutFor` still gives the strip the turn over the climb, and folded is
+  where most of a ride is spent.
+- **The navigation page's left alignment.** Centred across the panel now as well as down it.
+
+And the drivers mute the app before they ride it, because headless Chrome has a voice and a run
+was announcing every junction into the room.
+
 ## 13 · Not done
 
 - **Street names at turns**, per §9.
