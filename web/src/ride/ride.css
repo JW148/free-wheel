@@ -580,9 +580,10 @@
   top: 0;
   left: 0;
   right: 0;
-  /* The bottom is the handle's strip, left clear by both layers so the chevron sits under the
-     content rather than over it. */
-  padding: 0.5rem 0.7rem 1.2rem;
+  /* The bottom used to reserve 1.2rem for the chevron. With that gone it is the page dots'
+     alone — less room than a glyph needed, but not none, or they crowd the progress bar that
+     is the last thing in flow above them. */
+  padding: 0.5rem 0.7rem 1rem;
   /* `visibility` is the part that matters for anything other than looks: it flips at the end
      of the fade out, which takes the hidden layer out of the tab order and off the
      accessibility tree instead of leaving an invisible copy of the panel behind it. Discrete,
@@ -605,6 +606,10 @@
  */
 .hud-layer[data-layer='mini'] {
   opacity: calc(1.05 - var(--hud-p) * 2.1);
+  /* The strip has no pages and so no dots, so it needs none of the room the opened panel
+     leaves for them. Left at the shared padding it was visibly bottom-heavy — the gap the
+     chevron used to fill, with nothing in it. */
+  padding-bottom: 0.55rem;
 }
 
 .hud-layer[data-layer='full'] {
@@ -674,7 +679,11 @@
 .hud-nav {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  /* Centred across the panel as well as down it. Left-aligned, the arrow and two short lines
+     sat against the left edge with a third of the card empty beside them, which reads as the
+     page having lost something rather than as an instruction. */
+  justify-content: center;
+  gap: 1rem;
   /* Fills the page and centres in it. The layer is as tall as the *graph*, which is the taller
      of the two, so the navigation page has slack under it whatever it does — sitting at the
      top leaves a hole, and centring turns the same slack into margin. */
@@ -724,26 +733,29 @@
 /* Nothing inside the horizon. The page keeps its height so the panel does not resize when a
    turn passes, which would be the figures moving under a reader again. */
 .hud-nav[data-empty='yes'] {
-  align-items: flex-start;
-  padding-top: 1.2rem;
+  align-items: center;
+  text-align: center;
 }
 
 /*
- * Two dots, in the strip the chevron owns.
+ * Two dots, centred on the bottom edge, and now the only chrome on it.
  *
- * `pointer-events: none` on purpose. The chevron spans this whole strip and a press here has
- * always toggled the panel; putting a control on top of it would change what that press does
- * depending on where in the strip it landed, which is the kind of thing a gloved hand cannot
- * be asked to aim at. These say "there are two of these" and nothing else.
+ * They were tucked into the right-hand end because the chevron spanned the whole strip and
+ * owned every press in it — which is also how a swipe started on them ended up folding the
+ * panel. With the chevron gone they take the middle, where a page indicator belongs.
+ *
+ * `pointer-events: none` stays. A 5 px dot is not a target to ask a gloved hand for at
+ * 25 km/h, and the swipe is the gesture; these say "there are two of these" and nothing else.
  */
 .hud-dots {
   position: absolute;
-  right: 0.7rem;
-  bottom: 0;
+  left: 0;
+  right: 0;
+  bottom: 0.3rem;
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 1.2rem;
+  justify-content: center;
+  gap: 5px;
   pointer-events: none;
 }
 
@@ -773,40 +785,32 @@
  * would read as one of them. It is a real button, so a tap toggles and a keyboard or VoiceOver
  * has a way in — see `hudDrag.ts` for why a tap *anywhere else* deliberately does nothing.
  */
+/*
+ * The toggle, off screen but still there.
+ *
+ * It was a chevron centred on the bottom edge, and on a real phone it read as a control on a
+ * surface whose whole gesture is a drag — a button saying "press me" in the middle of
+ * something you pull. So it is gone from the screen and not from the app: a keyboard,
+ * VoiceOver's activation and any synthetic press all arrive here as a click, and none of them
+ * can drag, so deleting the button would strand the panel at whatever size it was last left.
+ *
+ * The usual off-screen recipe rather than `display: none`, which would take it out of the
+ * accessibility tree along with the pixels. Nothing else in this app needed one yet.
+ */
 .hud-collapse {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: grid;
-  place-items: center;
-  height: 1.2rem;
-  /* The element rule in `App.css` gives every button 2.75rem of height, a fill and a radius.
-     A handle is none of those, and `min-height` would otherwise win over the height above. */
+  width: 1px;
+  height: 1px;
   min-height: 0;
+  margin: -1px;
   padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
   border: none;
   border-radius: 0;
   background: none;
   box-shadow: none;
-  color: var(--muted);
-  /* The panel below it owns the gesture; this must not have the browser claim it first. */
-  touch-action: none;
-  cursor: inherit;
-}
-
-/* The glyph points the way the panel will move: down to open it onto the graph, up to fold it
-   back to the strip — and it turns with the finger, because it reads `--hud-p` like everything
-   else here rather than a settled state. */
-.hud-collapse svg {
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transform: rotate(calc(180deg * (1 - var(--hud-p))));
+  white-space: nowrap;
 }
 
 .hud-figures {

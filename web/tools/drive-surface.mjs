@@ -162,6 +162,10 @@ await evaluate(`(async () => {
   // so without this a second run opens on whatever page the *first* run swiped to, and the
   // shot named for the graph quietly shows navigation instead.
   localStorage.removeItem('free-wheel.hud-page.v1')
+  // Muted. This script rides, and riding is when the app talks — headless Chrome has a voice
+  // like any other, so a run announces every junction out loud into whatever room it is in.
+  // Nothing here is checking the speech: \`cues.test.ts\` walks a real route for that.
+  localStorage.setItem('free-wheel.voice.v1', 'off')
   return 'cleared'
 })()`)
 

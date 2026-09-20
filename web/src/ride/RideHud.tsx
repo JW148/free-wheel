@@ -187,15 +187,17 @@ export default function RideHud({
                 {name === 'graph' ? (
                   <>
                     {tracking && <RideProfile geometry={geometry} progress={progress} />}
-                    {/* The turn keeps its line here as well as having a page of its own. The
-                        page is the *large* version for a rider who asked for it; taking the
-                        line away would mean anyone who stays on the graph loses the turn
-                        entirely, which is a worse panel than the one before there were
-                        pages. Above the climb, because it is the nearer of the two and the
-                        one with a deadline. */}
-                    {tracking && turnAhead && (
-                      <TurnCallout turn={turnAhead.turn} awayM={turnAhead.awayM} />
-                    )}
+                    {/*
+                     * No turn line here. It had one, on the argument that a rider who stays on
+                     * the graph would otherwise lose the turn entirely — which sounded right
+                     * and was wrong on a real phone. The graph page is the terrain; a small
+                     * turn line on it is the navigation page in miniature, competing with the
+                     * page that does the job properly.
+                     *
+                     * Nothing is actually lost. Folded, the strip still shows the turn when
+                     * one is close, because `calloutFor` picks it over the climb — and folded
+                     * is where most of a ride is spent.
+                     */}
                     {tracking && (
                       <Callout ahead={ahead} rest={rest} grade={progress.grade} />
                     )}
@@ -258,18 +260,25 @@ export default function RideHud({
           )}
         </div>
 
-        {/* The handle, and the only thing on the panel a press means something by. A tap
-            toggles; a drag from it is a drag like any other, because it sits in the strip of
-            room both layers leave along the bottom edge rather than over either of them. */}
+        {/*
+         * The toggle, kept for everything that is not a finger.
+         *
+         * It used to be a visible chevron on the bottom edge and it read as a control on a
+         * surface whose whole gesture is a drag — a button saying "press me" in the middle of
+         * something you pull. Gone from the screen.
+         *
+         * Not gone from the app. A keyboard, VoiceOver's activation and any synthetic press
+         * all arrive as a click, and the drag is reachable by none of them, so removing the
+         * button outright would leave the panel stuck at whatever size it was last left at for
+         * anyone not using a touchscreen. Off-screen and still real is the whole fix.
+         */}
         <button
           type="button"
           className="hud-collapse"
           onClick={hud.onToggle}
           aria-expanded={expanded}
           aria-label={expanded ? 'Hide the elevation graph' : 'Show the elevation graph'}
-        >
-          <ChevronIcon />
-        </button>
+        />
       </div>
 
       {offRoute && (
@@ -560,11 +569,3 @@ function useTicker(active: boolean): void {
   }, [active])
 }
 
-/** Points down to fold the panel away, up to bring it back. Rotated by CSS. */
-function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m6 9.5 6 6 6-6" />
-    </svg>
-  )
-}

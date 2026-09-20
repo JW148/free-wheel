@@ -428,6 +428,9 @@ await send('Page.addScriptToEvaluateOnNewDocument', {
     // last run would put yesterday's route on today's picture, and the shortcut row that leads
     // to Setup is the plan card's *empty* state, so it would not even be reachable.
     localStorage.removeItem('free-wheel.plan.v2')
+    // Muted. This script rides, and riding is when the app talks — headless Chrome has a voice
+    // like any other, so a run announces climbs and junctions out loud into the room.
+    localStorage.setItem('free-wheel.voice.v1', 'off')
   `,
 })
 

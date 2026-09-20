@@ -247,6 +247,9 @@ await sleep(1500)
 await evaluate(`(async () => {
   for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister()
   for (const k of await caches.keys()) await caches.delete(k)
+  // Muted. This script rides, and riding is when the app talks — headless Chrome has a voice
+  // like any other, so a run announces climbs and junctions out loud into the room.
+  localStorage.setItem('free-wheel.voice.v1', 'off')
   return 'cleared'
 })()`)
 
