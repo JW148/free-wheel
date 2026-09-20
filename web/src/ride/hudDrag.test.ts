@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { hudProgress, hudRelease } from './hudDrag'
+import { hudAxis, hudPageRelease, hudProgress, hudRelease } from './hudDrag'
+import { wasTap } from './sheetDrag'
 
 /** The panel grows by about this much between the strip and the graph. */
 const RANGE = 170
@@ -64,5 +65,111 @@ describe('hudRelease', () => {
 
   it('ignores a gentle drift, which is a placement rather than a throw', () => {
     expect(release({ from: 'mini', travelledPx: 30, velocityPxPerS: 200 })).toBe('mini')
+  })
+})
+
+describe('hudAxis', () => {
+  it('waits until one axis is clearly ahead', () => {
+    // Committing on the first move would make every page swipe begin by resizing the panel a
+    // few pixels, which is the one thing it must not do while figures are being read.
+    expect(hudAxis(0, 0)).toBe('wait')
+    expect(hudAxis(6, 4)).toBe('wait')
+    expect(hudAxis(-8, 8)).toBe('wait')
+  })
+
+  it('calls a sideways drag a page change', () => {
+    expect(hudAxis(20, 4)).toBe('page')
+    expect(hudAxis(-20, -4)).toBe('page')
+  })
+
+  it('calls a downward drag a resize', () => {
+    expect(hudAxis(4, 20)).toBe('resize')
+    expect(hudAxis(-4, -20)).toBe('resize')
+  })
+
+  it('gives a diagonal tie to resizing', () => {
+    // The gesture the panel had first, and the one a rider reaches for without looking.
+    expect(hudAxis(20, 20)).toBe('resize')
+  })
+})
+
+describe('telling a press from a gesture that started on the chevron', () => {
+  /*
+   * `useHudDrag` asks `wasTap` over both axes, and the bug this pins is that it used to ask
+   * over the vertical alone.
+   *
+   * It matters because of where the affordance is: `.hud-collapse` spans the whole bottom edge
+   * and the page dots are painted inside it, so the one thing on screen saying "there is
+   * another page" is exactly where a rider starts the swipe. Measured vertically, that swipe
+   * is a tap — the chevron's click fires and the panel folds instead of paging.
+   */
+  const displacement = (acrossPx: number, downPx: number) => Math.hypot(acrossPx, downPx)
+
+  it('calls a still finger a press', () => {
+    expect(wasTap(displacement(0, 0))).toBe(true)
+    expect(wasTap(displacement(3, 3))).toBe(true)
+  })
+
+  it('does not call a sideways swipe a press', () => {
+    expect(wasTap(displacement(40, 0))).toBe(false)
+    expect(wasTap(displacement(-40, 2))).toBe(false)
+  })
+
+  it('does not call a downward drag a press', () => {
+    expect(wasTap(displacement(0, 40))).toBe(false)
+  })
+
+  it('is what the vertical measurement got wrong', () => {
+    // The old test. A 40 px sideways swipe has no vertical travel at all, so measuring only
+    // `travelled` said "tap" and handed the gesture to the chevron's click.
+    expect(wasTap(0)).toBe(true)
+    expect(wasTap(displacement(40, 0))).toBe(false)
+  })
+})
+
+describe('hudPageRelease', () => {
+  const swipe = (over: Partial<Parameters<typeof hudPageRelease>[0]> = {}) =>
+    hudPageRelease({
+      from: 0,
+      travelledPx: 0,
+      velocityPxPerS: 0,
+      widthPx: 360,
+      pages: 2,
+      ...over,
+    })
+
+  it('moves on half a page of travel', () => {
+    // Negative travel is a finger moving left, which drags the *next* page into view.
+    expect(swipe({ travelledPx: -200 })).toBe(1)
+    expect(swipe({ from: 1, travelledPx: 200 })).toBe(0)
+  })
+
+  it('stays put when the finger did not get far enough', () => {
+    expect(swipe({ travelledPx: -100 })).toBe(0)
+    expect(swipe({ from: 1, travelledPx: 100 })).toBe(1)
+  })
+
+  it('moves on a flick, however short', () => {
+    expect(swipe({ travelledPx: -20, velocityPxPerS: -900 })).toBe(1)
+    expect(swipe({ from: 1, travelledPx: 20, velocityPxPerS: 900 })).toBe(0)
+  })
+
+  it('lets a flick beat the distance, because it is the later intent', () => {
+    // Dragged most of the way to the next page and then thrown back again.
+    expect(swipe({ travelledPx: -300, velocityPxPerS: 900 })).toBe(0)
+  })
+
+  it('refuses to swipe off either end', () => {
+    expect(swipe({ from: 0, travelledPx: 300 })).toBe(0)
+    expect(swipe({ from: 1, travelledPx: -300 })).toBe(1)
+  })
+
+  it('has nowhere to go with a single page', () => {
+    expect(swipe({ pages: 1, travelledPx: -300 })).toBe(0)
+    expect(swipe({ pages: 1, velocityPxPerS: -900 })).toBe(0)
+  })
+
+  it('does not divide by a width it has not measured yet', () => {
+    expect(swipe({ widthPx: 0, travelledPx: -300 })).toBe(0)
   })
 })

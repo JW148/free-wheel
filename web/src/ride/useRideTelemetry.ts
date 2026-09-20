@@ -13,6 +13,7 @@ import {
   type RideProgress,
   type RouteGeometry,
 } from './progress'
+import { nextTurn, turnsAlong, type Turn } from './turns'
 import { airDensity, estimatePowerW, ewma } from './power'
 import { cdaOf, crrOf, totalMassKg, type RiderSetup } from './rider'
 import {
@@ -63,6 +64,10 @@ const MAX_ACCEL_MPS2 = 0.8
 export interface RideTelemetry {
   geometry: RouteGeometry | null
   climbs: Gradient[]
+  /** Every junction on the route. Empty where the route carries no turn instructions. */
+  turns: Turn[]
+  /** The next junction that asks the rider to do something, and how far off it is. */
+  turnAhead: { turn: Turn; awayM: number } | null
   progress: RideProgress | null
   /** The next climb, or the one being ridden. */
   ahead: GradientAhead | null
@@ -232,6 +237,25 @@ export function useRideTelemetry(input: {
     [climbs, progress],
   )
 
+  /**
+   * The junctions, and the next one.
+   *
+   * Lives here rather than being worked out twice, because three surfaces want it and they
+   * must agree: the riding strip draws it, the speech announces it, and both key off the same
+   * distance along the same geometry. An empty list is the honest answer for a recorded ride
+   * or a route saved before the app asked BRouter for turn instructions — `turnsAlong` returns
+   * null there, and null flattens to nothing to say rather than to a wrong instruction.
+   */
+  const turns = useMemo(
+    () => (route && geometry ? (turnsAlong(route, geometry) ?? []) : []),
+    [route, geometry],
+  )
+  const turnAhead = useMemo(() => {
+    if (!progress) return null
+    const turn = nextTurn(turns, progress.position.alongM)
+    return turn ? { turn, awayM: turn.atM - progress.position.alongM } : null
+  }, [turns, progress])
+
   const etaS = useMemo(() => {
     if (!progress || !route || !geometry) return null
     return etaSeconds({
@@ -252,6 +276,8 @@ export function useRideTelemetry(input: {
   return {
     geometry,
     climbs,
+    turns,
+    turnAhead,
     progress,
     ahead,
     rest,

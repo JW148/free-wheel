@@ -47,7 +47,9 @@ export default function RoutePanel() {
       const collected: RouteResult[] = []
       for (const route of ref.routes) {
         setStatus(`routing ${route.id}…`)
-        const outcome = await engine().route(route.profile, route.lonLats)
+        // `timode ?? 0` rather than the app's default: a reference file generated before the
+        // corpus ran both modes has no `timode`, and every entry in it is mode 0.
+        const outcome = await engine().route(route.profile, route.lonLats, route.timode ?? 0)
         const result: RouteResult = outcome.ok
           ? {
               ...route,

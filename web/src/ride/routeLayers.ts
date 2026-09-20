@@ -7,6 +7,7 @@ import type {
 } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import { profileById } from './profiles'
+import { sliceAlong, type RouteGeometry } from './progress'
 
 /**
  * The route lines and the rider's position, drawn on top of the basemap.
@@ -26,6 +27,8 @@ const POSITION_SOURCE = 'position'
 const TRAVELLED_SOURCE = 'travelled'
 /** The climb coming up, drawn as a halo around the route. */
 const FOCUS_SOURCE = 'focus'
+/** The stretches worth flagging: unpaved, and on a main road. See `ways.ts`. */
+const WAYS_SOURCE = 'route-ways'
 const RIDER_ARROW = 'rider-arrow'
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
@@ -92,6 +95,7 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
   map.addSource(POSITION_SOURCE, { type: 'geojson', data: EMPTY })
   map.addSource(TRAVELLED_SOURCE, { type: 'geojson', data: EMPTY })
   map.addSource(FOCUS_SOURCE, { type: 'geojson', data: EMPTY })
+  map.addSource(WAYS_SOURCE, { type: 'geojson', data: EMPTY })
 
   // The climb halo goes *under* the casing, so it reads as an aura around the route rather
   // than a wash over it. Above the line, even blurred, it desaturates the colour that
@@ -153,8 +157,74 @@ export function ensureRouteLayers(map: MapLibreMap, theme: 'dark' | 'light' = 'd
     },
   })
 
+  /*
+   * A main road, drawn as a pair of hairlines hugging the route on both sides.
+   *
+   * This started as extra weight *under* the route — a wider, darker casing, on the reasoning
+   * that a heavier line reads as a bigger road. On the light theme it worked. On the dark one
+   * it vanished completely, because the casing colour is `#06141b` and so is most of the dark
+   * basemap: a near-black mark on a near-black map says nothing at all. The unit tests were
+   * green throughout; driving the app in both themes is what found it.
+   *
+   * So it uses the theme's overlay ink like the other two marks, and `line-gap-width` to put
+   * it *beside* the line rather than under it. That is what road casings are drawn with, which
+   * is the right association: the route looks like it has picked up the edges of a wider road.
+   * It cannot be confused with the climb halo, which is blurred, centred and much wider.
+   *
+   * Above the line rather than below, and that is arithmetic rather than taste: at z16 the
+   * casing is 13 px against the line's 8, so flanks sitting at a radius of 4.25 to 6.25 would
+   * be painted over by a casing reaching 6.5.
+   *
+   * Only on the chosen or lone route — see `setMarkedRuns`. Three routes each wearing their
+   * own caution marks is a map nobody can read, and "does this put me on the A23" is a
+   * question about the route you have picked.
+   */
+  map.addLayer({
+    id: 'route-mainroad',
+    type: 'line',
+    source: WAYS_SOURCE,
+    filter: ['==', ['get', 'mark'], 'main'],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: {
+      'line-color': OVERLAY[theme].halo,
+      'line-opacity': 0.75,
+      // The gap is the chosen route line's own width plus a hair, so the flanks sit just
+      // outside the colour without a gap of basemap showing between.
+      'line-gap-width': ['interpolate', ['linear'], ['zoom'], 10, 4.4, 16, 8.4],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.2, 16, 2],
+    },
+  })
+
+  // Not paved, stitched down the middle of the route in the theme's overlay ink.
+  //
+  // Achromatic, and that is the rule rather than a preference — the same one the climb halo
+  // and the travelled grey follow. Six route hues at C >= 45 already fill the usable circle
+  // under the ΔE >= 16 clearance floor, so a seventh would have to thread a needle that is
+  // already full. A dash in black or white is a *lightness* effect: it needs no clearance and
+  // it works over a line of any colour.
+  //
+  // Narrower than the line so the profile colour survives either side of it. Over the line
+  // rather than under, because under a 6.8px stroke it would not be visible at all.
+  map.addLayer({
+    id: 'route-unpaved',
+    type: 'line',
+    source: WAYS_SOURCE,
+    filter: ['==', ['get', 'mark'], 'unpaved'],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: {
+      'line-color': OVERLAY[theme].halo,
+      'line-opacity': 0.85,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.4, 16, 2.8],
+      // Units are multiples of the line width, not pixels. At 2.8px this is a 5.6px mark and
+      // a 5.6px gap: coarse enough to read as broken at a glance, fine enough that a 40 m
+      // stretch still shows three of them.
+      'line-dasharray': [2, 2],
+    },
+  })
+
   // What has been ridden, painted over the route in neutral grey. Above the line so it covers
-  // it, below the rider so it never covers them.
+  // it, below the rider so it never covers them — and above the dashes, because a road behind
+  // you has stopped being a road you are deciding about.
   map.addLayer({
     id: 'route-travelled',
     type: 'line',
@@ -270,7 +340,7 @@ export function setPositionEmphasis(map: MapLibreMap, riding: boolean): void {
   }
 }
 
-/** Repaints the two overlays for a palette change, if they exist yet. */
+/** Repaints the achromatic overlays for a palette change, if they exist yet. */
 export function applyOverlayTheme(map: MapLibreMap, theme: 'dark' | 'light'): void {
   if (map.getLayer('route-travelled')) {
     map.setPaintProperty('route-travelled', 'line-color', OVERLAY[theme].travelled)
@@ -278,6 +348,11 @@ export function applyOverlayTheme(map: MapLibreMap, theme: 'dark' | 'light'): vo
   if (map.getLayer('route-focus')) {
     map.setPaintProperty('route-focus', 'line-color', OVERLAY[theme].halo)
     map.setPaintProperty('route-focus', 'line-opacity', OVERLAY[theme].haloOpacity)
+  }
+  // Both marks are the halo's ink — white on the dark map, near-black on the light one — so
+  // they have to turn over with it. Left behind, the dash is white on a white road.
+  for (const id of ['route-unpaved', 'route-mainroad']) {
+    if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', OVERLAY[theme].halo)
   }
 }
 
@@ -584,6 +659,43 @@ export function setTravelled(map: MapLibreMap, coords: [number, number][]): void
 /** The stretch to draw a halo around — the climb coming up. Empty clears it. */
 export function setFocus(map: MapLibreMap, coords: [number, number][]): void {
   setLine(map, FOCUS_SOURCE, coords)
+}
+
+/**
+ * The marked stretches of the chosen route: where it is unpaved, and where it is a main road.
+ *
+ * Pure, so the geometry can be checked without a map. Takes the runs already measured by
+ * `ways.ts` and cuts the route at them with the same `sliceAlong` the travelled overlay uses,
+ * which is what keeps a dash ending exactly where the rider's grey ends rather than a vertex
+ * either side of it.
+ */
+export function markFeatures(
+  geometry: RouteGeometry,
+  marks: { fromM: number; toM: number; mark: string }[],
+): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: marks
+      .map((mark) => ({ mark, coords: sliceAlong(geometry, mark.fromM, mark.toM) }))
+      .filter(({ coords }) => coords.length >= 2)
+      .map(({ mark, coords }) => ({
+        type: 'Feature' as const,
+        properties: { mark: mark.mark },
+        geometry: { type: 'LineString' as const, coordinates: coords },
+      })),
+  }
+}
+
+/**
+ * Draws the marks, or clears them.
+ *
+ * Cleared whenever there is no single route to describe: three candidates with nothing chosen,
+ * a route with no tags because it came off a recorded ride or an older save, or no route at
+ * all. That is the same nullability `plan.chosen` has everywhere else, and the same answer —
+ * say nothing rather than pick one.
+ */
+export function setMarkedRuns(map: MapLibreMap, features: FeatureCollection | null): void {
+  map.getSource<GeoJSONSource>(WAYS_SOURCE)?.setData(features ?? EMPTY)
 }
 
 function setLine(map: MapLibreMap, source: string, coords: [number, number][]): void {

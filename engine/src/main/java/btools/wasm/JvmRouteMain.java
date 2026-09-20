@@ -14,6 +14,11 @@ import java.util.List;
  * filesystem, then records each route's GPX byte length and CRC-32. The browser replays the
  * same cases out of OPFS and must produce identical numbers.
  * <p>
+ * Every case runs twice, once per turn instruction mode: {@code 0}, the plain track, and
+ * {@code 9}, the one carrying {@code <brouter:voicehint>} and {@code <brouter:way>}. The app
+ * asks for 9, so 9 is the format that has to be covered. 0 stays because it is what any other
+ * BRouter client would produce, and a divergence there is worth catching too.
+ * <p>
  * Writes:
  * <ul>
  *   <li>{@code web/public/engine/jvm-routes.json} — the corpus plus expected length/CRC</li>
@@ -25,6 +30,9 @@ public final class JvmRouteMain {
 
   private JvmRouteMain() {
   }
+
+  /** The two output modes every case is run at. See the class comment. */
+  private static final int[] MODES = {0, 9};
 
   private static final class RouteCase {
     final String id;
@@ -80,6 +88,13 @@ public final class JvmRouteMain {
       "0.2196,51.4465|1.0789,51.2798",
       "~70 km entirely inside E0_N50; proves the second tile stands alone"));
 
+    // W5_N55, which every other case misses and every driver script uses. Edinburgh is the
+    // tile the browser harnesses import, so this is the one corpus case that can be checked
+    // against a *running app* in minutes rather than against a 215 MB import.
+    cases.add(new RouteCase("edinburgh-short", "trekking",
+      "-3.218000,55.941500|-3.180300,55.904000",
+      "~8 km across Edinburgh, inside W5_N55; the tile the drivers run on"));
+
     if (!gpxDir.exists() && !gpxDir.mkdirs()) {
       throw new IOException("could not create " + gpxDir);
     }
@@ -92,39 +107,46 @@ public final class JvmRouteMain {
     json.append("  \"routes\": [\n");
 
     int failures = 0;
-    for (int i = 0; i < cases.size(); i++) {
-      RouteCase c = cases.get(i);
+    int written = 0;
+    int total = cases.size() * MODES.length;
+    for (RouteCase c : cases) {
+      for (int timode : MODES) {
+        // Mode 0 keeps the bare id, so the nine original entries are still recognisable by the
+        // names they have carried since Phase 1.
+        String id = timode == 0 ? c.id : c.id + "-ti" + timode;
 
-      long t0 = System.nanoTime();
-      String gpx = Router.routeIn(profileDir, segmentDir, c.profile, c.lonLats);
-      double ms = (System.nanoTime() - t0) / 1_000_000.0;
+        long t0 = System.nanoTime();
+        String gpx = Router.routeIn(profileDir, segmentDir, c.profile, c.lonLats, timode);
+        double ms = (System.nanoTime() - t0) / 1_000_000.0;
 
-      boolean ok = !gpx.startsWith("error:");
-      if (!ok) {
-        failures++;
-        System.err.println("FAILED " + c.id + ": " + gpx);
-      } else {
-        PrintWriter w = new PrintWriter(new File(gpxDir, c.id + ".gpx"), StandardCharsets.UTF_8);
-        try {
-          w.print(gpx);
-        } finally {
-          w.close();
+        boolean ok = !gpx.startsWith("error:");
+        if (!ok) {
+          failures++;
+          System.err.println("FAILED " + id + ": " + gpx);
+        } else {
+          PrintWriter w = new PrintWriter(new File(gpxDir, id + ".gpx"), StandardCharsets.UTF_8);
+          try {
+            w.print(gpx);
+          } finally {
+            w.close();
+          }
         }
+
+        System.out.printf("%-24s %-10s %8.1f ms  %s%n", id, c.profile, ms,
+          ok ? Router.utf8Length(gpx) + " bytes, crc " + Router.crc32Utf8(gpx) : gpx);
+
+        json.append("    {\"id\": ").append(quote(id))
+          .append(", \"profile\": ").append(quote(c.profile))
+          .append(", \"lonLats\": ").append(quote(c.lonLats))
+          .append(", \"note\": ").append(quote(c.note))
+          .append(", \"timode\": ").append(timode)
+          .append(", \"ok\": ").append(ok)
+          .append(", \"gpxLength\": ").append(ok ? Router.utf8Length(gpx) : -1)
+          .append(", \"gpxCrc32\": ").append(ok ? Router.crc32Utf8(gpx) : 0)
+          .append(", \"jvmMs\": ").append(Math.round(ms * 10) / 10.0)
+          .append(", \"tiles\": ").append(strings(tilesFor(c.lonLats)))
+          .append("}").append(++written < total ? "," : "").append("\n");
       }
-
-      System.out.printf("%-18s %-10s %8.1f ms  %s%n", c.id, c.profile, ms,
-        ok ? Router.utf8Length(gpx) + " bytes, crc " + Router.crc32Utf8(gpx) : gpx);
-
-      json.append("    {\"id\": ").append(quote(c.id))
-        .append(", \"profile\": ").append(quote(c.profile))
-        .append(", \"lonLats\": ").append(quote(c.lonLats))
-        .append(", \"note\": ").append(quote(c.note))
-        .append(", \"ok\": ").append(ok)
-        .append(", \"gpxLength\": ").append(ok ? Router.utf8Length(gpx) : -1)
-        .append(", \"gpxCrc32\": ").append(ok ? Router.crc32Utf8(gpx) : 0)
-        .append(", \"jvmMs\": ").append(Math.round(ms * 10) / 10.0)
-        .append(", \"tiles\": ").append(strings(tilesFor(c.lonLats)))
-        .append("}").append(i < cases.size() - 1 ? "," : "").append("\n");
     }
 
     json.append("  ]\n}");

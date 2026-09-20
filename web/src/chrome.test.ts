@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { GRADE_BANDS } from './ride/gradeScale'
+import { ROUTE_PALETTE } from './ride/profiles'
+import { ROAD_COLOURS } from './ride/ways'
 import { deltaE2000 } from './map/colour'
 
 /**
@@ -188,6 +190,88 @@ describe.each(THEMES)('%s chrome', (theme) => {
   it('separates every gradient band from the panel it is drawn on', () => {
     for (const band of GRADE_BANDS) {
       expect(contrast(band.colour, on('card')), `${band.label} on the panel`).toBeGreaterThanOrEqual(3)
+    }
+  })
+})
+
+/**
+ * The surface strip's four colours.
+ *
+ * Drawn on the same panel as the gradient bands, an inch below them, so they answer to the
+ * same contrast window: 3:1 on white and on `#11212d` at once, which confines every one to a
+ * relative luminance of roughly 0.14 to 0.30. That window is about 2:1 wide, so four classes
+ * cannot be separated by lightness and separate by hue at a held lightness instead.
+ *
+ * The three floors below are not all the same number, and the differences are the argument.
+ */
+describe('the surface strip', () => {
+  const swatches = Object.entries(ROAD_COLOURS)
+
+  it('reads on both themes, being graphical rather than text', () => {
+    for (const [role, colour] of swatches) {
+      expect(contrast(colour, '#ffffff'), `${role} on the light card`).toBeGreaterThanOrEqual(3)
+      expect(contrast(colour, '#11212d'), `${role} on the dark card`).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  /*
+   * The four cells are read by comparing them, at about 13 px wide by 16 tall, so this is the
+   * floor that matters most — and after the re-sweep it is the one with real room. The worst
+   * pair is `path` against `main` at ΔE 38.2.
+   *
+   * The floor is 30 rather than the 18 it started at, because 18 no longer describes this
+   * palette: the first set scraped 27.4 by holding all four at one lightness, and the fix was
+   * chroma rather than lightness. A floor well under the measured worst is a floor that would
+   * let the whole gain be given back one edit at a time without failing.
+   */
+  it('keeps every pair of cells clearly apart', () => {
+    for (let i = 0; i < swatches.length; i++) {
+      for (let j = i + 1; j < swatches.length; j++) {
+        expect(
+          deltaE2000(swatches[i][1], swatches[j][1]),
+          `${swatches[i][0]} against ${swatches[j][0]}`,
+        ).toBeGreaterThanOrEqual(30)
+      }
+    }
+  })
+
+  /*
+   * Against the gradient bands, and this floor is 13 rather than the 18 above. That is a
+   * deliberate trade and it is worth stating so it does not become folklore.
+   *
+   * The warm arc inside the contrast window is already occupied — `very steep`, `brutal`,
+   * `mtb` and `recorded` all live there — and a red for `main` clearing 15 from all of them
+   * does not exist. A cube sweep returns a dusty rose at L* 60.6, fifteen points lighter than
+   * the other three cells, which reads as one pale outlier rather than as a warning. What is
+   * being risked at 13.1 is confusing a 10 px strip cell with an area chart's fill: two
+   * different objects an inch apart, never adjacent, and the two bands it comes nearest —
+   * `brutal` and `very steep` — mean "be careful", which is what the cell means too.
+   */
+  it('stays clear of the gradient bands drawn just above it', () => {
+    for (const [role, colour] of swatches) {
+      for (const band of GRADE_BANDS) {
+        expect(
+          deltaE2000(colour, band.colour),
+          `${role} against ${band.label}`,
+        ).toBeGreaterThanOrEqual(13)
+      }
+    }
+  })
+
+  /*
+   * And against the route colours, at 11 — the weakest of the three floors, because it guards
+   * the weakest confusion. A route colour appears as a line on the map and as a swatch beside
+   * a name; a strip cell is a band in a chart. They are never side by side and never mean the
+   * same kind of thing. Worst measured is `main` against `mtb` at ΔE 12.0.
+   */
+  it('stays clear of the route line colours', () => {
+    for (const [role, colour] of swatches) {
+      for (const profile of ROUTE_PALETTE) {
+        expect(
+          deltaE2000(colour, profile.colour),
+          `${role} against the ${profile.id} route`,
+        ).toBeGreaterThanOrEqual(11)
+      }
     }
   })
 })

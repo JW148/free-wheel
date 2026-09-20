@@ -5,6 +5,8 @@ import { routeGeometry } from './progress'
 import { gradeColour } from './gradeScale'
 import { formatDistance } from './gpx'
 import type { ParsedRoute } from './gpx'
+import SurfaceStrip from './SurfaceStrip'
+import { ROAD_LABELS, SURFACE_LABELS, type WayRun } from './ways'
 
 /**
  * The route's elevation, as an area chart.
@@ -35,12 +37,22 @@ export default function ElevationProfile({
   route,
   colour = NEUTRAL,
   label,
+  runs,
 }: {
   route: ParsedRoute
   /** The colour of this route's line on the map, so the two are obviously the same thing. */
   colour?: string
   /** The profile's name, for the heading. Omitted when there is only ever one route. */
   label?: string
+  /**
+   * What the route is made of, if it can say.
+   *
+   * Drawn as a strip beneath the chart, and folded into this component rather than placed
+   * beside it because the two have to share a cursor. Dragging the profile is how a rider asks
+   * about a point on the route, and the answer has become "this steep, on this road" — two
+   * charts with two cursors would be two questions.
+   */
+  runs?: WayRun[] | null
 }) {
   const svg = useRef<SVGSVGElement | null>(null)
   const [cursor, setCursor] = useState<number | null>(null)
@@ -88,6 +100,18 @@ export default function ElevationProfile({
           Math.abs(p.distanceM - cursor) < Math.abs(best.distanceM - cursor) ? p : best,
         )
 
+  // The run the finger is over, named. Not the nearest: a run is an interval and the finger
+  // is inside exactly one of them, which is the run to report.
+  const run = cursor === null ? null : runs?.find((r) => cursor >= r.fromM && cursor <= r.toM)
+  const underCursor = run
+    ? // The surface only where it is known. "Cycle path, not recorded" reads as a fault in
+      // the app rather than as a gap in the map, and the table below is where that gap is
+      // stated properly with a number next to it.
+      run.surface === 'unknown'
+      ? ROAD_LABELS[run.road]
+      : `${ROAD_LABELS[run.road]}, ${SURFACE_LABELS[run.surface].toLowerCase()}`
+    : null
+
   return (
     <div>
       <p className="section-label">
@@ -96,6 +120,10 @@ export default function ElevationProfile({
           <span className="elevation-readout">
             {' · '}
             {formatDistance(at.distanceM)} at {Math.round(at.elevM)} m
+            {/* The road under that point, where the route can say. This is the half of the
+                question a height alone never answered: 8 km in at 85 m is a fact, and 8 km in
+                at 85 m on a gravel track is a decision. */}
+            {underCursor && ` · ${underCursor}`}
           </span>
         )}
       </p>
@@ -191,6 +219,8 @@ export default function ElevationProfile({
           </>
         )}
       </svg>
+
+      {runs && <SurfaceStrip runs={runs} totalM={totalDistanceM} cursorM={cursor} />}
 
       <p className="elevation-summary">
         <span>{Math.round(minElevM)} m</span>

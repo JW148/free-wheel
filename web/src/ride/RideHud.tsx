@@ -3,7 +3,9 @@ import type { GradientAhead } from './climbs'
 import { formatAway, formatClock, formatElapsed, formatPower, formatSpeed } from './format'
 import { formatDistance } from './gpx'
 import { formatGrade, gradeColour } from './gradeScale'
-import { calloutMatters, compactFigures, figuresFor, type FigureKey } from './hud'
+import { calloutFor, compactFigures, figuresFor, hudPageAt, hudPages, type FigureKey } from './hud'
+import { nextTurn, turnLabel, type Turn } from './turns'
+import TurnGlyph from './TurnGlyph'
 import type { RideTelemetry } from './useRideTelemetry'
 import RideProfile, { RouteOverview } from './RideProfile'
 import HoldButton from './HoldButton'
@@ -64,6 +66,8 @@ export default function RideHud({
   onEnd,
   expanded,
   onExpandedChange,
+  page,
+  onPageChange,
 }: {
   telemetry: RideTelemetry
   speedMps: number | null
@@ -83,11 +87,21 @@ export default function RideHud({
    */
   controls: React.ReactNode
   onEnd: () => void
-  /** Whether the panel is showing the graph. Owned by `RideView`, which persists it. */
+  /** Whether the panel is open at all. Owned by `RideView`, which persists it. */
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
+  /**
+   * Which page the opened panel is on. Persisted like {@link expanded}, and for the same
+   * reason: which of the two a rider wants is a preference, not a per-ride decision.
+   */
+  page: number
+  onPageChange: (page: number) => void
 }) {
   const { progress, geometry, climbs, record, ahead, rest, powerW, arrivalAt, offRoute } = telemetry
+  // Off route, the next junction describes a road the rider has left. Drawing it there would
+  // point at a turning that is not in front of them, which is worse than the blank the
+  // off-route banner already puts on screen.
+  const turnAhead = offRoute ? null : telemetry.turnAhead
   // The elapsed clock has to move on its own. Everything else on this panel is refreshed by a
   // fix arriving, but a rider stopped at a level crossing gets no fixes worth reporting and
   // the one number that must keep counting is the one that would stop.
@@ -111,7 +125,27 @@ export default function RideHud({
    * says what it is waiting for.
    */
   const tracking = hasRoute && progress !== null
-  const hud = useHudDrag({ expanded, onExpandedChange })
+  const strip = calloutFor(turnAhead?.awayM ?? null, ahead, hasElevation)
+
+  /*
+   * What the opened panel can show, and which of those the rider is on.
+   *
+   * `page` is remembered across launches, so it can name a page this ride does not have — a
+   * rider who left it on navigation and then loaded a recorded track with no junctions. The
+   * clamp is what stops that being a blank panel.
+   */
+  const turns = telemetry.turns
+  const pages = hudPages({ hasElevation, hasTurns: turns.length > 0 })
+  const shownPage = hudPageAt(pages, page)
+  const nextAfter = turnAhead ? nextTurn(turns, turnAhead.turn.atM) : null
+
+  const hud = useHudDrag({
+    expanded,
+    onExpandedChange,
+    page: Math.max(0, pages.indexOf(shownPage ?? 'graph')),
+    pages: pages.length,
+    onPageChange,
+  })
 
   return (
     <>
@@ -132,20 +166,78 @@ export default function RideHud({
         >
           <Figures keys={figures} value={value} />
 
-          {/* The lookahead is a chart of heights, so a track without any renders as a flat
-              band — which is not "no data", it is a claim that the road ahead is level. The
-              overview bar survives, because progress along the line is still true. */}
-          {tracking && hasElevation && <RideProfile geometry={geometry} progress={progress} />}
+          {/*
+           * The pages, side by side on a track that `--hud-x` slides.
+           *
+           * Both are always laid out, which is what keeps the panel's measured height steady
+           * across a swipe: the layer is as tall as the taller page and nothing jumps when
+           * one replaces the other. The cost is slack under the shorter one, which is cheap
+           * next to a panel that changes height under a moving finger.
+           */}
+          <div className="hud-pages">
+          <div className="hud-track">
+            {pages.map((name) => (
+              <div
+                className="hud-page"
+                key={name}
+                // The page off screen is still laid out, so it has to be taken off the
+                // accessibility tree by hand or a screen reader reads both.
+                aria-hidden={name !== shownPage}
+              >
+                {name === 'graph' ? (
+                  <>
+                    {tracking && <RideProfile geometry={geometry} progress={progress} />}
+                    {/*
+                     * No turn line here. It had one, on the argument that a rider who stays on
+                     * the graph would otherwise lose the turn entirely — which sounded right
+                     * and was wrong on a real phone. The graph page is the terrain; a small
+                     * turn line on it is the navigation page in miniature, competing with the
+                     * page that does the job properly.
+                     *
+                     * Nothing is actually lost. Folded, the strip still shows the turn when
+                     * one is close, because `calloutFor` picks it over the climb — and folded
+                     * is where most of a ride is spent.
+                     */}
+                    {tracking && (
+                      <Callout ahead={ahead} rest={rest} grade={progress.grade} />
+                    )}
+                  </>
+                ) : (
+                  <NavPage
+                    turn={turnAhead}
+                    next={nextAfter}
+                    tracking={tracking}
+                    offRoute={offRoute}
+                  />
+                )}
+              </div>
+            ))}
+            </div>
+          </div>
+
+          {/* Under the pages, because progress along the line is true whichever one is up —
+              and it is the one thing on the panel that never stops being relevant. */}
           {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
 
-          {tracking && hasElevation && (
-            <Callout ahead={ahead} rest={rest} grade={progress.grade} />
-          )}
+          {/* Kept unconditional on the turns, which it briefly was not. Without heights there
+              is no graph page, and this line is the only thing that says why — a rider left
+              with a single page and no explanation would read it as the app having lost one. */}
           {hasRoute && !hasElevation && (
             <p className="hud-callout">
               <span className="hud-callout-mark" style={{ '--tint': 'currentColor' } as React.CSSProperties} />
               No surveyed heights on this track, so no gradients or power.
             </p>
+          )}
+
+          {/* Two dots, because a swipe with no affordance is a swipe nobody makes. Quiet and
+              not a control: the chevron owns this strip and a press here toggles the panel,
+              which is what it did before there were pages. */}
+          {pages.length > 1 && (
+            <div className="hud-dots" aria-hidden="true">
+              {pages.map((name) => (
+                <span key={name} data-on={name === shownPage ? 'yes' : 'no'} />
+              ))}
+            </div>
           )}
         </div>
 
@@ -158,23 +250,35 @@ export default function RideHud({
         >
           <Figures keys={mini} value={value} compact />
           {tracking && <RouteOverview geometry={geometry} progress={progress} climbs={climbs} />}
-          {tracking && calloutMatters(ahead, hasElevation) && (
+          {/* One line, and `calloutFor` decides which. The strip's budget is one thing at a
+              time, and text appearing on it is itself the signal. */}
+          {tracking && strip === 'turn' && turnAhead && (
+            <TurnCallout turn={turnAhead.turn} awayM={turnAhead.awayM} />
+          )}
+          {tracking && strip === 'climb' && (
             <Callout ahead={ahead} rest={null} grade={progress.grade} />
           )}
         </div>
 
-        {/* The handle, and the only thing on the panel a press means something by. A tap
-            toggles; a drag from it is a drag like any other, because it sits in the strip of
-            room both layers leave along the bottom edge rather than over either of them. */}
+        {/*
+         * The toggle, kept for everything that is not a finger.
+         *
+         * It used to be a visible chevron on the bottom edge and it read as a control on a
+         * surface whose whole gesture is a drag — a button saying "press me" in the middle of
+         * something you pull. Gone from the screen.
+         *
+         * Not gone from the app. A keyboard, VoiceOver's activation and any synthetic press
+         * all arrive as a click, and the drag is reachable by none of them, so removing the
+         * button outright would leave the panel stuck at whatever size it was last left at for
+         * anyone not using a touchscreen. Off-screen and still real is the whole fix.
+         */}
         <button
           type="button"
           className="hud-collapse"
           onClick={hud.onToggle}
           aria-expanded={expanded}
           aria-label={expanded ? 'Hide the elevation graph' : 'Show the elevation graph'}
-        >
-          <ChevronIcon />
-        </button>
+        />
       </div>
 
       {offRoute && (
@@ -298,6 +402,90 @@ function Figure({
 }
 
 /**
+ * The next turn, at the size the panel actually has room for.
+ *
+ * The callout line is 32 px of arrow beside a sentence, which is right for a strip whose whole
+ * budget is one line. Opened, the panel has the height of a chart to spend, and the first
+ * report from looking at it was the obvious one: the arrow is too small to read at speed. So
+ * this is the other half of the trade — the rider swipes to say "I am navigating", and gets an
+ * arrow four times the area and a distance in the same type as the figures above it.
+ *
+ * **Never blank.** A turn is a point on a road and most of a ride is between two of them, so
+ * with nothing inside the horizon this says how far the next one is, in the same shape. A
+ * panel a rider swiped to and found empty is a panel they do not swipe to twice.
+ */
+function NavPage({
+  turn,
+  next,
+  tracking,
+  offRoute,
+}: {
+  turn: { turn: Turn; awayM: number } | null
+  /** The one after it, named small, so a junction pair can be seen coming rather than heard. */
+  next: Turn | null
+  /** Whether the rider's place on the line is known yet. Without it there is nothing to say. */
+  tracking: boolean
+  offRoute: boolean
+}) {
+  /*
+   * Three reasons there is no turn to show, and only one of them is about the route.
+   *
+   * `turnAhead` is null before the first fix and null while off route, and answering either
+   * with "no turns ahead on this route" is a claim about the road made out of a missing
+   * position — the same error as drawing a flat chart from a track with no heights. The map
+   * and the callout line can go quiet in those states because something else on screen is
+   * already explaining; a page the rider swiped to cannot.
+   */
+  if (!turn) {
+    const why = !tracking
+      ? 'Waiting for a fix.'
+      : offRoute
+        ? 'Off route — no turns to give until you are back on it.'
+        : 'No turns ahead on this route.'
+    return (
+      <div className="hud-nav" data-empty="yes">
+        <p className="hud-nav-none">{why}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="hud-nav">
+      <TurnGlyph kind={turn.turn.kind} />
+      <div className="hud-nav-text">
+        <p className="hud-nav-distance">{formatAway(turn.awayM)}</p>
+        <p className="hud-nav-label">{turnLabel(turn.turn)}</p>
+        {next && (
+          <p className="hud-nav-next">
+            then {turnLabel(next).toLowerCase()} in {formatAway(next.atM - turn.turn.atM)}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One line about the next thing the hands will do.
+ *
+ * Built from the same `.hud-callout` row as the climb, with the arrow standing in for the
+ * tint bar — same height, same gap, so the two callouts are interchangeable in the strip's
+ * single slot rather than two different-sized lines swapping places.
+ *
+ * Untinted, deliberately. The climb callout's bar carries the gradient colour because severity
+ * is the thing it is reporting; a turn has no severity, and a colour here would be the second
+ * palette on a panel that already reads by hue.
+ */
+function TurnCallout({ turn, awayM }: { turn: Turn; awayM: number }) {
+  return (
+    <p className="hud-callout hud-callout-turn">
+      <TurnGlyph kind={turn.kind} />
+      <strong>{turnLabel(turn)}</strong> in {formatAway(awayM)}
+    </p>
+  )
+}
+
+/**
  * One line about the next thing the legs will notice.
  *
  * Precedence, and it is the whole design: being *on* a climb beats a climb ahead, which beats
@@ -381,11 +569,3 @@ function useTicker(active: boolean): void {
   }, [active])
 }
 
-/** Points down to fold the panel away, up to bring it back. Rotated by CSS. */
-function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m6 9.5 6 6 6-6" />
-    </svg>
-  )
-}

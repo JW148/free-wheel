@@ -26,6 +26,7 @@ this for where the work actually stands.
 | **Phase 13** — three quirks off the ride screen | 🟡 The riding HUD is dragged between its two sizes like the plan sheet (`--hud-p`, a centred chevron on the bottom edge); the sheet reopens on the view it was put away on; Saved's detail lost its second back arrow. 718 tests green, driven at 390 px. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 14** — the first run shows the app | 🟡 The walkthrough's six pixel glyphs are replaced by six rectangles clipped out of the running app — a real route over a real basemap, planned and ridden by a headless browser, at roughly life size. New tool `web/tools/onboarding-shots.mjs`; pictures committed to `web/public/onboarding/`. 715 tests green, driven at 390 x 844 and at 375 x 667. **Not yet ridden, not yet on a physical iPhone** |
 | **Phase 15** — stops along the way | 🟡 A plan is an ordered list of points that routes on every edit. A tap goes where it costs least — beside the line it is a stop, past the finish it extends — so there is no via mode; above two points one profile runs, because a stop changes the question three cards were answering. Make a loop, a named stop off the search, and a tap precedence that no longer eats the gesture. 743 tests, driven at 390 x 844 in both themes against a real basemap and a real `.rd5`. **Not yet ridden, not yet on a physical iPhone** |
+| **Phase 16** — the road, and the turns | 🟡 `turnInstructionMode = 9` makes BRouter write out what it already knew: the surface, road class and cycle-network membership of every metre, and the command at every junction. A strip and a breakdown in the sheet, two achromatic marks on the map, spoken and drawn turn-by-turn. Corpus runs both modes, 20 entries, verified byte-identical against the running app. 839 tests, driven at 390 x 844 in both themes against a real basemap and a real `.rd5`. **Not yet ridden, not yet on a physical iPhone** |
 | **Spike 2** — OPFS durability | ⏸ Deliberately deferred by the user |
 
 Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
@@ -33,23 +34,42 @@ Detail lives in `docs/spike-1-results.md`, `docs/phase-1-progress.md`,
 `docs/phase-5-progress.md`, `docs/phase-6-progress.md`, `docs/phase-7-progress.md`,
 `docs/phase-8-progress.md`, `docs/phase-9-progress.md`, `docs/phase-10-progress.md`,
 `docs/phase-11-progress.md`, `docs/phase-12-progress.md`, `docs/phase-13-progress.md`,
-`docs/phase-14-progress.md`, `docs/phase-15-progress.md`. Each
+`docs/phase-14-progress.md`, `docs/phase-15-progress.md`, `docs/phase-16-progress.md`. Each
 records what was measured, and — more usefully — where the original plan turned out to be
 wrong.
 
 ### The headline results, so they are not lost
 
 - **BRouter compiles to WasmGC unmodified.** 1.22 MB / 399 KB gzip.
-- **GPX is byte-identical to the JVM on 9/9 reference routes**, including three that cross a
-  tile seam. This is the regression net; keep it green.
+- **GPX is byte-identical to the JVM on 20/20 reference routes** — ten cases at two output
+  modes, including three that cross a tile seam. This is the regression net; keep it green.
+  One case, `edinburgh-short`, sits in the tile the driver scripts import, so
+  `web/tools/drive-parity.mjs` can check the running app against the JVM in about a minute
+  instead of needing a 215 MB import.
+- **The `.rd5` tiles carry surface, road class and cycle-network membership**, and BRouter
+  computes them on every route whether or not anyone asks. `turnInstructionMode = 9` is the
+  only mode that writes them out, along with the turn command at each junction.
 - **On an iPhone:** 76 km route in 4.5 s (2.7× the desktop JVM). 150 km extrapolates to ~18 s.
 - **JSC's floating point matches HotSpot bit-for-bit**, which is what makes byte-identical GPX
   viable at all.
 
 ## Where to pick up
 
-**The next action is a ride, and it is now overdue in four directions.** Phases 7 through 15
+**The next action is a ride, and it is now overdue in five directions.** Phases 7 through 16
 have all been built and none of them has been on a road.
+
+Phase 16 is the newest and it is the first one that changes what the app *says*. Turn-by-turn
+speaks now, and the whole design is a set of judgements about how often — 165 utterances over
+a four-hour reference route, one every 83 seconds, with slight turns drawn but never spoken.
+Every one of those numbers was chosen at a desk. §11 of `docs/phase-16-progress.md` lists what
+a road decides; the first two are whether that rate is right, and whether suppressing slight
+turns loses a fork on an unfamiliar lane. It will feel like the app failing to mention
+something rather than like a setting, so it needs listening for deliberately.
+
+Phase 16 also puts two new marks on the route line, and one of them — a dashed centreline in
+black or white by theme — is a lightness effect over a saturated line, which is the
+arrangement most likely to disappear in daylight on a theme that has still never been
+outdoors.
 
 Phase 15 is the newest and the one with the sharpest desk-versus-road question. A plan can now
 hold stops, and the way you add one is to tap the map beside the line — which means tapping
@@ -325,8 +345,9 @@ They exist so a fixture can be pulled onto a test device without re-downloading 
 3. Re-derive elapsed time on resume — iOS suspends timers when backgrounded, so any
    ride-duration display computed by accumulating ticks will drift. Nothing currently shows
    elapsed time, which is why this has not bitten yet.
-4. Turn-by-turn, if the ride shows it is wanted. BRouter already computes voice hints;
-   `FormatGpx` emits them under several `turnInstructionMode` values.
+4. ~~Turn-by-turn~~ — done in phase 16. What is left of it is street names at the turns, which
+   would come from the basemap archive at the turn's coordinate rather than from the `.rd5`
+   tiles, and is a decision rather than a task. See §12 of `docs/phase-16-progress.md`.
 5. Spike 2 (durability) whenever the user wants it. Note their reasoning was "256 GB phone",
    which reduces but does not eliminate the risk: WebKit also evicts under overall system
    storage pressure, not only quota exhaustion.

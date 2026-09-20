@@ -1,9 +1,12 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { DEFAULT_PROFILES, PROFILES, profileById } from './profiles'
 import { waypointRows } from './plan'
 import type { Plan } from './useRoute'
 import { formatDistance, formatDuration, hasHeights } from './gpx'
+import { routeGeometry } from './progress'
+import { wayRuns } from './ways'
 import ElevationProfile from './ElevationProfile'
+import RouteBreakdown from './RouteBreakdown'
 import RouteClimbs from './RouteClimbs'
 import { putEntry, routeEntry } from './library'
 import { gpxFilename, shareGpx } from './share'
@@ -610,6 +613,13 @@ function RouteDetail({
     }
   }
 
+  // Null for a recorded ride and for anything saved before the app started asking BRouter for
+  // tags. Both flow through as "nothing to draw" rather than as an empty strip.
+  const runs = useMemo(() => {
+    const geometry = routeGeometry(chosen)
+    return geometry ? wayRuns(chosen, geometry) : null
+  }, [chosen])
+
   return (
     <>
       <div className="drawer-head">
@@ -653,16 +663,21 @@ function RouteDetail({
           recorded without one has none at all — and an elevation chart drawn from zeros is a
           flat road, which is a claim about the terrain rather than an absence of one. */}
       {hasHeights(chosen) ? (
-        <>
-          <ElevationProfile route={chosen} colour={style.colour} label={style.plain} />
-          <RouteClimbs route={chosen} />
-        </>
+        <ElevationProfile route={chosen} colour={style.colour} label={style.plain} runs={runs} />
       ) : (
         <p className="warn">
           This track carries no surveyed heights, so there is no elevation profile and no climb
           list. Distance is measured from the track itself.
         </p>
       )}
+
+      {/* Immediately under the strip the profile draws, because the road rows carry that
+          strip's colours and a legend a scroll away from its subject is not a legend. It sits
+          outside the heights branch on purpose: surfaces come off BRouter's tags rather than
+          off SRTM, so a route missing its heights can still say what it is made of. */}
+      <RouteBreakdown route={chosen} colour={style.colour} />
+
+      {hasHeights(chosen) && <RouteClimbs route={chosen} />}
 
       <div className="route-actions">
         <button type="button" onClick={() => void save()} disabled={saved === 'saved'}>

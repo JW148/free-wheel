@@ -9,14 +9,17 @@ import { useHeading } from './useHeading'
 import { useRideTelemetry } from './useRideTelemetry'
 import { useAnnouncer } from './useAnnouncer'
 import type { Rider } from './useRider'
-import { sliceAlong, splitWaypoints } from './progress'
+import { routeGeometry, sliceAlong, splitWaypoints } from './progress'
 import { riddenPrefix } from './stitch'
+import { markedRuns, wayRuns } from './ways'
 import {
   boundsOf,
   drawnRoutes,
   mapTapAction,
+  markFeatures,
   routeAt,
   setFocus,
+  setMarkedRuns,
   setPosition,
   setPositionEmphasis,
   setRoutes,
@@ -37,6 +40,7 @@ import { waypointRows, type PlanSlot } from './plan'
 const RIDING_ZOOM = 16.5
 
 const HUD_KEY = 'free-wheel.hud.v1'
+const HUD_PAGE_KEY = 'free-wheel.hud-page.v1'
 const COURSE_UP_KEY = 'free-wheel.courseup.v1'
 const VOICE_KEY = 'free-wheel.voice.v1'
 
@@ -183,6 +187,21 @@ export default function RideView({
     }
   })
   /**
+   * Which page the opened panel is on — the elevation graph, or the next turn drawn large.
+   *
+   * Persisted for the same reason the size is: which of the two a rider wants is a property of
+   * how they ride rather than of this ride. Stored as an index and clamped by `hudPages` on
+   * the way out, because the page it names may not exist on the next route — a recorded track
+   * has no junctions to navigate and a route without heights has no graph.
+   */
+  const [hudPage, setHudPage] = useState(() => {
+    try {
+      return Number(localStorage.getItem(HUD_PAGE_KEY)) || 0
+    } catch {
+      return 0
+    }
+  })
+  /**
    * Whether the app speaks the climb ahead.
    *
    * On by default, which is a deliberate choice rather than an oversight. A muted feature is a
@@ -202,10 +221,11 @@ export default function RideView({
       localStorage.setItem(COURSE_UP_KEY, courseUp ? 'on' : 'off')
       localStorage.setItem(VOICE_KEY, voice ? 'on' : 'off')
       localStorage.setItem(HUD_KEY, hudExpanded ? 'full' : 'mini')
+      localStorage.setItem(HUD_PAGE_KEY, String(hudPage))
     } catch {
       /* Private mode. The rail just opens expanded next launch. */
     }
-  }, [courseUp, voice, hudExpanded])
+  }, [courseUp, voice, hudExpanded, hudPage])
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -231,6 +251,11 @@ export default function RideView({
             offRoute: telemetry.offRoute,
             offRouteSince: telemetry.offRouteSince,
             routeVersion,
+            turns: telemetry.turns,
+            // The fix's own speed, not the smoothed one the power model uses: this only
+            // decides how many seconds of warning to give, and a lagging estimate on a
+            // descent gives that warning late, which is the one direction that costs.
+            speedMps: fix?.speed ?? null,
           }
         : null,
     [
@@ -239,6 +264,8 @@ export default function RideView({
       telemetry.climbs,
       telemetry.offRoute,
       telemetry.offRouteSince,
+      telemetry.turns,
+      fix?.speed,
       routeVersion,
     ],
   )
@@ -493,6 +520,39 @@ export default function RideView({
     }
     if (drawn.length === 0) lastFitted.current = null
   }, [map, styleReady, suspended, plan.routes, plan.chosen, plan.stale, plan.framing, riding])
+
+  /*
+   * ── What the chosen route is made of ─────────────────────────────────────────────────
+   *
+   * The stretches worth flagging: where it leaves the tarmac, and where it puts the rider on a
+   * main road. Both come off the tags BRouter already wrote into the GPX — see `ways.ts`.
+   *
+   * Only ever the *one* route. Three candidates each wearing their own dashes and caution
+   * weights is a map nobody can read, and "does this put me on the A23" is a question you ask
+   * about the route you have picked, not about three you are weighing. So this is drawn for a
+   * chosen route, or for a lone one, and for nothing else — which is `describable` below, and
+   * is the same nullability `plan.chosen` has everywhere: say nothing rather than pick one.
+   *
+   * An older saved route and a recorded ride both arrive with no tags at all, and get nothing
+   * rather than an empty claim.
+   */
+  const ids = Object.keys(plan.routes)
+  const describableId = plan.chosen ?? (ids.length === 1 ? ids[0] : null)
+  const describable = describableId ? plan.routes[describableId] : undefined
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady || suspended) return
+    if (!describable) {
+      setMarkedRuns(instance, null)
+      return
+    }
+    const geometry = routeGeometry(describable)
+    const runs = geometry && wayRuns(describable, geometry)
+    setMarkedRuns(
+      instance,
+      geometry && runs ? markFeatures(geometry, markedRuns(runs)) : null,
+    )
+  }, [map, styleReady, suspended, describable])
 
   // ── Progress and the climb ahead, on the map ──────────────────────────────────────────
   // Quantised to 25 m so the two GeoJSON sources are not rebuilt on every fix. At 25 km/h that
@@ -849,6 +909,8 @@ export default function RideView({
             telemetry={telemetry}
             expanded={hudExpanded}
             onExpandedChange={setHudExpanded}
+            page={hudPage}
+            onPageChange={setHudPage}
             speedMps={fix?.speed ?? null}
             fixLabel={FIX_LABEL[fixStatus](fix?.accuracy ?? null, wakeLock.supported)}
             offRouteHint={

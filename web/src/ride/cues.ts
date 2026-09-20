@@ -1,4 +1,5 @@
 import type { Gradient } from './climbs'
+import { spokenTurn, turnToAnnounce, type Turn } from './turns'
 
 /**
  * What to say out loud, and when.
@@ -17,6 +18,9 @@ import type { Gradient } from './climbs'
  * says nothing at all — so the bar for speaking is high and every cue below earns it by
  * changing what the rider does in the next minute:
  *
+ * - **A turn** is the one cue that is useless a second late, and the only one the rider cannot
+ *   work out by looking at the road. It is also the one that strains the rule hardest, because
+ *   there are so many: see the budget note below.
  * - **A climb coming up** changes your gear and your effort.
  * - **The top of a climb** tells you to stop paying for it. Only for climbs hard enough that
  *   the rider was rationing; nobody needs to be told they have crested a bridge.
@@ -27,6 +31,20 @@ import type { Gradient } from './climbs'
  *
  * Deliberately *not* here: distance ticks every kilometre, speed, power, and anything the
  * screen already shows continuously. If it does not change a decision, it is noise.
+ *
+ * ## The turn budget
+ *
+ * Turns are where this principle either holds or collapses. The London to Brighton reference
+ * route has 322 junctions over 95 km. Announcing each of them twice, the way a car satnav
+ * does, is 644 utterances on a four-hour ride — about one every twenty seconds, which is an
+ * app that gets muted inside the first hour.
+ *
+ * Three rules bring it down, and they all live in `turns.ts` so they can be tested by
+ * advancing a number. One utterance per turn rather than a prepare and a now. `C` — BRouter's
+ * "ignore that turning" — is never spoken, and that is 37 of the 322 gone on its own. And two
+ * turns arriving together are chained into one sentence, which matters more than the count
+ * suggests: `useAnnouncer` cancels rather than queues, so an unchained staggered crossroads
+ * means hearing half of "left" and then "right".
  *
  * ## Why this is pure
  *
@@ -39,7 +57,27 @@ export interface Cue {
   /** Unique per event, so a cue is spoken once. Not a message — two climbs can share words. */
   key: string
   text: string
+  /**
+   * Other events this cue has already answered for, to be marked said alongside {@link key}.
+   *
+   * Exists for one case and it is a real bug it was written to fix: a chained pair spoken as
+   * "left, then right" keyed only on the *first* junction, so the second was found again on
+   * the next fix and announced on its own a few seconds later. That is the exact failure
+   * chaining exists to prevent, and worse than not chaining at all — `useAnnouncer` cancels
+   * rather than queues, so the repeat arrives while the first sentence is still speaking.
+   */
+  covers?: string[]
 }
+
+/**
+ * A junction's key.
+ *
+ * One function, because the cue that speaks a chained pair has to suppress its partner using
+ * exactly the key the partner would have generated — including the rounding, which is there so
+ * a key is stable as `alongM` creeps past on successive fixes.
+ */
+const turnKey = (routeVersion: number, atM: number) =>
+  `turn:${routeVersion}:${Math.round(atM)}`
 
 export interface CueInput {
   alongM: number
@@ -57,6 +95,18 @@ export interface CueInput {
   offRouteSince: number | null
   /** Bumped whenever the route is replaced, so cues from the old route cannot block new ones. */
   routeVersion: number
+  /**
+   * The junctions, measured along the route. Empty where the route cannot describe them — an
+   * older save, or a recorded ride, both of which are followed without turn instructions.
+   */
+  turns: Turn[]
+  /**
+   * Ground speed, m/s, or null when the fix carries none.
+   *
+   * Only turns use it, and only to decide how far ahead to speak. Everything else here is
+   * answered in metres because it is about the road rather than about the rider.
+   */
+  speedMps: number | null
 }
 
 /**
@@ -94,6 +144,40 @@ export function cueFor(input: CueInput, said: ReadonlySet<string>): Cue | null {
   // Off route first: it invalidates everything else that could be said about the route.
   const offKey = `off:${routeVersion}:${offRouteSince ?? 0}`
   if (offRoute && unsaid(offKey)) return { key: offKey, text: 'Off route.' }
+
+  /*
+   * Turns next, and above arrival and the climbs, for two reasons.
+   *
+   * A missed turn *creates* the off-route the app is about to announce, so it is the cue whose
+   * lateness costs the most. And it is the only one with a deadline: a climb announced thirty
+   * seconds late is still a climb coming up, where a turn announced thirty seconds late is a
+   * rider on the wrong road being told to turn.
+   *
+   * Silent while off route, because `turns` still describes the road the rider has left. That
+   * falls out of the ordering above rather than needing a guard: off-route is announced first,
+   * and once a reroute lands, `routeVersion` retires every key this branch made.
+   */
+  if (!offRoute) {
+    const announce = turnToAnnounce(input.turns, alongM, input.speedMps)
+    if (announce) {
+      // Versioned so the same junction on a stitched route is a new instruction rather than
+      // one already given.
+      const key = turnKey(routeVersion, announce.turn.atM)
+      if (unsaid(key)) {
+        return {
+          key,
+          text: spokenTurn(
+            announce.turn,
+            announce.then,
+            spokenDistance(announce.turn.atM - alongM),
+          ),
+          // The chained partner is spoken *inside* this sentence, so it must be marked said
+          // too. Without this it is announced again on its own a few seconds later.
+          covers: announce.then ? [turnKey(routeVersion, announce.then.atM)] : undefined,
+        }
+      }
+    }
+  }
 
   // Versioned like everything else: a reroute produces a new finish to count down to, and
   // without the version a route replaced after arriving would never announce its own.
