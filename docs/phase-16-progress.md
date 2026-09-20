@@ -450,6 +450,29 @@ the panel is still open.
 And the drivers mute the app before they ride it, because headless Chrome has a voice and a run
 was announcing every junction into the room.
 
+### And then the arrow, which was never centred in its own box
+
+Riding it again produced one more: the words beside the turn read as floating above it, on the
+callout line and worse on the navigation page.
+
+Nothing in the layout was wrong. Both places are a flex row with `align-items: center`, and
+both centred the glyph's **box** against the words exactly. The arrow inside that box was the
+part that was off: the family is anchored at the stem's base, so every figure runs from y=21
+up to wherever its head lands, and the *ink* therefore sits low by a different amount for each
+kind — 1 unit of 24 for a straight-on arrow, 3.34 for a right turn, and 4.5 for a sharp one,
+whose head folds back down beside its own stem. A fifth of the glyph, which is 6 px on the
+callout line and 13 on the navigation page.
+
+So each shape now declares the vertical extent of what it actually draws and the drawing is
+translated to put the middle of that extent on the middle of the box. Per kind rather than one
+constant for the family, because the error spans 1 to 4.5 and a single shift would leave both
+ends of the set wrong in opposite directions. The cost is that the stem's base moves slightly
+as the turn changes, which nothing on the panel shares an edge with — where sitting a sixth of
+a glyph away from the words it belongs to is visible every time.
+
+`TurnGlyph.test.ts` renders every kind and measures the ink out of the markup rather than
+trusting the declared spans, which is the one thing the arrangement is fragile about.
+
 ## 13 · Not done
 
 - **Street names at turns**, per §9.
