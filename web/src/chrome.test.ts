@@ -215,8 +215,14 @@ describe('the surface strip', () => {
   })
 
   /*
-   * The four cells are read by comparing them, so this is the floor that matters most, and it
-   * is the one with the most room: the worst pair is `path` against `road` at ΔE 27.4.
+   * The four cells are read by comparing them, at about 13 px wide by 16 tall, so this is the
+   * floor that matters most — and after the re-sweep it is the one with real room. The worst
+   * pair is `path` against `main` at ΔE 38.2.
+   *
+   * The floor is 30 rather than the 18 it started at, because 18 no longer describes this
+   * palette: the first set scraped 27.4 by holding all four at one lightness, and the fix was
+   * chroma rather than lightness. A floor well under the measured worst is a floor that would
+   * let the whole gain be given back one edit at a time without failing.
    */
   it('keeps every pair of cells clearly apart', () => {
     for (let i = 0; i < swatches.length; i++) {
@@ -224,7 +230,7 @@ describe('the surface strip', () => {
         expect(
           deltaE2000(swatches[i][1], swatches[j][1]),
           `${swatches[i][0]} against ${swatches[j][0]}`,
-        ).toBeGreaterThanOrEqual(18)
+        ).toBeGreaterThanOrEqual(30)
       }
     }
   })

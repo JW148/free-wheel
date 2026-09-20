@@ -65,33 +65,57 @@ export interface WayRun {
  * C <= 15.4 stroke ceiling that governs the basemap does not apply. That ceiling exists to stop
  * a route *line* being mistaken for a road, and nothing on a panel is on the map.
  *
- * What does apply is the same contrast window the gradient bands live in, and it is narrow. A
- * band has to clear 3:1 against `#ffffff` and against `#11212d` at once, which confines every
- * one to a relative luminance of roughly 0.14 to 0.30 — about 2:1 wide. Four classes cannot be
- * separated by lightness inside that, so they separate by hue at a held lightness. Three of
- * these sit at L* 45.5 to 45.9 and the fourth at 45.9, which is what makes the strip read as
- * one object rather than as one pale cell and three dark ones.
+ * What does apply is the same contrast window the gradient bands live in: 3:1 against
+ * `#ffffff` and against `#11212d` at once, which confines every cell to a relative luminance
+ * of roughly 0.148 to 0.289.
  *
- * Found by sweeping the RGB cube rather than by picking. Measured:
+ * ## The first set held lightness constant, and that was the wrong lever
  *
- * - contrast 3.11 to 3.18 on `#11212d`, 5.20 to 5.28 on white
- * - worst pair among these four: ΔE 27.4, `path` against `road`
+ * It borrowed "read by hue at held lightness" from `gradeScale.ts`, where it is right because
+ * a gradient scale is a *severity ramp*. Road class is four categories rather than a ramp, and
+ * the four sat at L* 45.5 to 45.9 with a worst pair of ΔE 27.4 — `path` against `road`, two
+ * near-neutrals.
+ *
+ * The obvious fix was to let lightness vary, and a sweep says that buys **at most 1.6 ΔE**:
+ * the best fixed-lightness set scores 38.48 against 38.55 for the best free one. Lightness was
+ * never the constraint, because the contrast window is only about 2:1 wide to begin with.
+ *
+ * What was being given away was **chroma**. `path` went from C 20.4 to 56.6, and `cyclepath`
+ * from a teal at h 170 to a green at h 145 — the teal had been sitting next to the blue-grey
+ * `road`. Worst pair is now ΔE 38.2 against 27.4, and every pair clears what the old *best*
+ * non-`main` pair managed. `road` stays the quiet one at C 19.9 on purpose: it is most of a
+ * typical route, and 60% of the strip shouting is a strip nobody reads.
+ *
+ * ## Measured
+ *
+ * | | hex | on white | on `#11212d` | L* | C | h |
+ * |---|---|---|---|---|---|---|
+ * | cyclepath | `#008133` | 5.01 | 3.27 | 46.9 | 58.4 | 145 |
+ * | path | `#9a6200` | 5.10 | 3.22 | 46.5 | 56.6 | 73 |
+ * | road | `#627999` | 4.45 | 3.69 | 50.2 | 19.9 | 270 |
+ * | main | `#d80050` | 5.20 | 3.15 | 45.9 | 75.4 | 15 |
+ *
+ * - worst pair among these four: **ΔE 38.2**, `path` against `main`
  * - worst against the six gradient bands: **ΔE 13.1**, `main` against `brutal`
- * - worst against the route colours: ΔE 12.0, `main` against `mtb`
+ * - worst against the route colours: ΔE 11.1, `cyclepath` against `gravel`
  *
  * That 13.1 is below the 15 this started out wanting, and it is deliberate. The warm arc at
  * this luminance is already occupied by `very steep`, `brutal`, `mtb` and `recorded`, and a
  * red clearing 15 from all of them does not exist — the search returns a dusty rose at L* 60.6,
- * 15 points lighter than its neighbours, which is a pale outlier rather than a warning. The
- * confusion being risked is between a 10 px strip cell and an area chart's fill, two different
- * objects an inch apart that are never adjacent and never mean the same thing, and the two
- * bands it is nearest are both "be careful" like the cell itself. `chrome.test.ts` holds all
- * of these at the numbers above, so the trade stays visible rather than becoming folklore.
+ * a pale outlier rather than a warning, and a true orange-red peaks at ΔE 12.7 against the
+ * bands and fails outright. Crimson at h 15 is the only red available. The confusion being
+ * risked is between a 16 px strip cell and an area chart's fill, two different objects an inch
+ * apart that are never adjacent, and the two bands it comes nearest both mean "be careful"
+ * like the cell itself. `chrome.test.ts` holds every number above, so the trade stays visible
+ * rather than becoming folklore.
  */
 export const ROAD_COLOURS: Record<RoadClass, string> = {
-  cyclepath: '#007b60',
-  path: '#7e694b',
-  road: '#5d6c8a',
+  cyclepath: '#008133',
+  path: '#9a6200',
+  road: '#627999',
+  // Unchanged through the re-sweep. It is the cell with the least room to move, its 13.1
+  // against `brutal` is already the most a red can manage, and there is a hairline margin to
+  // lose by touching it.
   main: '#d80050',
 }
 
