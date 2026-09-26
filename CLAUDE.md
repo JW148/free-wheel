@@ -951,7 +951,11 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   on rough ground performs the gesture continuously, and WebKit offers a page no way to decline
   the "Undo Typing" alert — there is no cancellable event. The only lever is an empty undo
   stack, so a finished ride saves itself under its generated name and renaming happens in the
-  library. `RideView` also refuses `beforeinput` with `inputType: 'historyUndo'` while riding,
+  library. **Unmounting a field does not empty the stack**: WebKit keeps the typing after the
+  element has gone, so a destination typed into search before Start brought the alert back.
+  `clearUndoStack` (`src/ride/undoStack.ts`) empties it as a ride begins, by inserting and
+  removing an iframe — a frame detaching is the one path by which WebKit clears the page's undo
+  stack. `RideView` also refuses `beforeinput` with `inputType: 'historyUndo'` while riding,
   which does not stop the alert but stops it quietly reverting something off screen. The user's
   own escape hatch is Settings → Accessibility → Touch → Shake to Undo.
 - **A recorded ride is not BRouter GPX, and must not be read as if it were.** It carries no

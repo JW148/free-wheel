@@ -33,6 +33,7 @@ import RideHud from './RideHud'
 import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 import SearchScreen from '../search/SearchScreen'
+import { clearUndoStack } from './undoStack'
 import { places } from '../search/searchStore'
 import { waypointRows, type PlanSlot } from './plan'
 
@@ -649,19 +650,23 @@ export default function RideView({
    * Shake-to-undo is a system gesture, and a bike on cobbles performs it continuously: the
    * ride reported an "Undo Typing" alert appearing every few seconds. WebKit gives a page no
    * way to decline the alert — the only lever is to have nothing undoable in the document, so
-   * the riding screen now carries no text field at all (see `RideSummary.tsx`).
+   * the riding screen carries no text field at all (see `RideSummary.tsx`).
    *
-   * This is the second half of that: if an earlier edit *is* still on WebKit's undo stack —
-   * a name typed in the library, a weight typed in Setup, in this same page load — then
-   * shaking would silently revert it. Refusing `historyUndo` while riding means the worst
-   * outcome is an alert that does nothing, rather than an alert that quietly edits something
-   * the rider cannot see.
+   * That was not enough on its own. Unmounting a field does not take its typing off WebKit's
+   * undo stack, so a destination typed into the search screen before Start brought the alert
+   * straight back. `clearUndoStack` empties the stack as the ride begins, which covers the
+   * search, a name typed in the library and a weight typed in Setup alike.
+   *
+   * Refusing `historyUndo` stays as the backstop: if anything does reach the stack mid-ride,
+   * the worst outcome is an alert that does nothing, rather than one that quietly edits
+   * something the rider cannot see.
    *
    * A rider who genuinely wants the alert gone can turn Shake to Undo off in Settings →
    * Accessibility → Touch. Nothing in a web app can do it for them.
    */
   useEffect(() => {
     if (!riding) return
+    clearUndoStack()
     const refuse = (event: Event) => {
       const type = (event as InputEvent).inputType
       if (type === 'historyUndo' || type === 'historyRedo') event.preventDefault()
