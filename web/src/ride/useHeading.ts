@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { angleGap } from './geo'
+import { workload } from './workload'
 
 /**
  * Which way the rider is pointing, for turning the map to match.
@@ -85,6 +86,7 @@ export function useHeading(active: boolean, courseDeg: number | null) {
     }
 
     const onOrientation = (event: DeviceOrientationEvent) => {
+      workload.count('orientation')
       const raw = readHeading(event as WebkitDeviceOrientationEvent)
       if (raw === null) return
 
@@ -105,9 +107,11 @@ export function useHeading(active: boolean, courseDeg: number | null) {
 
       const smoothed =
         ((Math.atan2(vector.current.x, vector.current.y) * 180) / Math.PI + 360) % 360
-      setCompass((current) =>
-        current === null || angleGap(current, smoothed) >= DEADBAND_DEG ? smoothed : current,
-      )
+      setCompass((current) => {
+        if (current !== null && angleGap(current, smoothed) < DEADBAND_DEG) return current
+        workload.count('heading')
+        return smoothed
+      })
     }
 
     window.addEventListener('deviceorientation', onOrientation)

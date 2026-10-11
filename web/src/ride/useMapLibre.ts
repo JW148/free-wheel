@@ -7,6 +7,7 @@ import { basemapStyle, layerRole, pathFilter, sourceIdFor, type MapTheme, type P
 import { archiveToOpen, mountPlan, type MapOutcome } from '../map/archiveChoice'
 import { sharedEngine } from '../engine/engineClient'
 import { ensureRouteLayers } from './routeLayers'
+import { workload } from './workload'
 
 /** Re-exported so a caller of {@link useMapLibre} does not have to know where it lives. */
 export type { MapOutcome }
@@ -229,6 +230,8 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
         created.addControl(new AttributionControl({ compact: true }), 'bottom-left')
 
         created.on('error', (e) => setError(e.error?.message ?? 'map error'))
+        // One increment per frame drawn: the number a battery complaint turns on. See `workload.ts`.
+        created.on('render', () => workload.count('frames'))
         created.once('load', () => {
           ensureRouteLayers(created, themeRef.current)
           setStyleReady(true)

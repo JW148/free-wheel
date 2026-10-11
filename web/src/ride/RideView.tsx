@@ -36,6 +36,7 @@ import SearchScreen from '../search/SearchScreen'
 import { clearUndoStack } from './undoStack'
 import { places } from '../search/searchStore'
 import { waypointRows, type PlanSlot } from './plan'
+import { workload } from './workload'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -227,6 +228,20 @@ export default function RideView({
       /* Private mode. The rail just opens expanded next launch. */
     }
   }, [courseUp, voice, hudExpanded, hudPage])
+
+  /*
+   * The meter's ride, and its count of this screen's renders. No dependency list on the second,
+   * on purpose: it runs after every commit of this component, which is the thing being counted.
+   * Only while riding, because that is the cost the counter exists to explain.
+   */
+  useEffect(() => {
+    if (!riding) return
+    workload.startRide()
+    return () => workload.endRide()
+  }, [riding])
+  useEffect(() => {
+    if (riding) workload.count('renders')
+  })
 
   // Riding implies following, and implies not editing.
   const following = riding || follow
@@ -622,12 +637,14 @@ export default function RideView({
         : null
 
     if (locked && fix) {
+      workload.count('camera')
       instance.easeTo({
         center: [fix.lon, fix.lat],
         ...(bearing === null ? {} : { bearing }),
         duration: 700,
       })
     } else if (bearing !== null) {
+      workload.count('camera')
       instance.easeTo({ bearing, duration: 400 })
     }
   }, [map, styleReady, suspended, fix, following, followPaused, courseUp, heading.heading])

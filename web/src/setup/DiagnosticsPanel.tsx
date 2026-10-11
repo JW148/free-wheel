@@ -6,6 +6,15 @@ import { environmentNotes } from '../spike/runSpike'
 import { formatBytes } from '../engine/tiles'
 import RoutePanel from '../engine/RoutePanel'
 import SpikePanel from '../spike/SpikePanel'
+import { copyText, sendReport } from '../spike/report'
+import {
+  COUNTERS,
+  COUNTER_LABELS,
+  WINDOW_S,
+  workload,
+  workloadMarkdown,
+  type WorkloadSnapshot,
+} from '../ride/workload'
 
 /**
  * What to look at when something is wrong.
@@ -93,9 +102,76 @@ export default function DiagnosticsPanel({ basemap }: { basemap: ReturnType<type
         </p>
       </section>
 
+      <WorkloadSection notes={notes} />
+
       <RoutePanel />
 
       <SpikePanel notes={notes} />
     </>
+  )
+}
+
+/**
+ * How hard the last ride made the phone work.
+ *
+ * The riding screen has no way into Setup, on purpose, so this is read *after* a ride: the live
+ * rates are whatever is happening now, and the last ride's figures are kept until the next one
+ * starts. Mid-ride, the same numbers are on `window.freeWheelWorkload` for Safari's Web
+ * Inspector. Polled once a second for the reason `sourceStats` is — see `workload.ts`.
+ */
+function WorkloadSection({ notes }: { notes: Record<string, string> }) {
+  const [snapshot, setSnapshot] = useState<WorkloadSnapshot>(() => workload.snapshot())
+  const [sent, setSent] = useState<string | null>(null)
+
+  useEffect(() => {
+    const poll = setInterval(() => setSnapshot(workload.snapshot()), 1000)
+    return () => clearInterval(poll)
+  }, [])
+
+  const ride = snapshot.lastRide
+  return (
+    <section>
+      <h2>Ride workload</h2>
+      <dl className="env">
+        {COUNTERS.map((counter) => (
+          <div key={counter}>
+            <dt>{COUNTER_LABELS[counter]}</dt>
+            <dd>
+              {Math.round(snapshot.perMinute[counter])}/min now
+              {ride ? ` · ${Math.round(ride.perMinute[counter])}/min last ride` : ''}
+            </dd>
+          </div>
+        ))}
+        {ride && (
+          <div>
+            <dt>last ride</dt>
+            <dd>
+              {Math.round(ride.durationS / 60)} min, {ride.totals.frames} frames,{' '}
+              {ride.totals.fixes} fixes
+            </dd>
+          </div>
+        )}
+      </dl>
+      <p className="setup-footer">
+        "Now" is the last {WINDOW_S} seconds. A map at rest draws nothing, so frames per minute
+        while riding is roughly how often the camera moved, and it is the figure the battery
+        follows.
+      </p>
+      <div className="actions">
+        <button
+          onClick={async () => {
+            const md = workloadMarkdown(workload.snapshot(), { ...notes, build: __BUILD_ID__ })
+            try {
+              setSent(`Sent → ${await sendReport(md)}`)
+            } catch {
+              setSent((await copyText(md)) ? 'Copied' : 'Could not send or copy')
+            }
+          }}
+        >
+          Send report
+        </button>
+        {sent && <p className="meta">{sent}</p>}
+      </div>
+    </section>
   )
 }
