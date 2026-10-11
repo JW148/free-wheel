@@ -30,15 +30,22 @@ import RouteSheet from './RouteSheet'
 import LayersSheet from './LayersSheet'
 import SavedScreen from '../library/SavedScreen'
 import RideHud from './RideHud'
+import GlanceView from './GlanceView'
+import type { RideView as RideViewKind } from './rider'
 import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 import SearchScreen from '../search/SearchScreen'
 import { clearUndoStack } from './undoStack'
 import { places } from '../search/searchStore'
 import { waypointRows, type PlanSlot } from './plan'
+import { workload } from './workload'
+import { cameraStep } from './camera'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
+
+/** The riding map's resolution ceiling. See the effect that applies it. */
+const RIDING_MAX_PIXEL_RATIO = 2
 
 const HUD_KEY = 'free-wheel.hud.v1'
 const HUD_PAGE_KEY = 'free-wheel.hud-page.v1'
@@ -203,6 +210,15 @@ export default function RideView({
     }
   })
   /**
+   * Which of the two riding views is up: the map, or the glance view.
+   *
+   * Set from the rider's saved preference every time a ride starts, and flipped by the button
+   * on each view. The flip is deliberately not saved: a rider who brings the map up to work out
+   * one roundabout has not changed their mind about how they like to ride, and the next ride
+   * should open the way they chose in Setup.
+   */
+  const [rideView, setRideView] = useState<RideViewKind>(rider.setup.rideView)
+  /**
    * Whether the app speaks the climb ahead.
    *
    * On by default, which is a deliberate choice rather than an oversight. A muted feature is a
@@ -228,11 +244,41 @@ export default function RideView({
     }
   }, [courseUp, voice, hudExpanded, hudPage])
 
+  /*
+   * The meter's ride, and its count of this screen's renders. No dependency list on the second,
+   * on purpose: it runs after every commit of this component, which is the thing being counted.
+   * Only while riding, because that is the cost the counter exists to explain.
+   */
+  useEffect(() => {
+    if (!riding) return
+    workload.startRide()
+    return () => workload.endRide()
+  }, [riding])
+  useEffect(() => {
+    if (riding) workload.count('renders')
+  })
+
+  /**
+   * The glance view is up, so the map behind it is hidden and must not be written to.
+   *
+   * MapLibre draws a frame only when something asks it to — a camera move, a `setData`, a tile
+   * landing — so the way to make a hidden map cost nothing is to stop asking. Every riding
+   * effect that writes to the map returns early on this, and runs again the moment it clears,
+   * which is what brings the marker, the ridden line and the camera back up to date in one go.
+   * The planning-screen effects need no guard: nothing on the plan changes during a ride except
+   * a reroute, and that is one frame nobody sees.
+   *
+   * The compass stands down too. The glance view takes its direction from the route, so a
+   * sensor firing sixty times a second into a handler would be work with no reader — and it
+   * resumes, with the permission already granted, the moment the map comes back.
+   */
+  const glancing = riding && rideView === 'glance'
+
   // Riding implies following, and implies not editing.
   const following = riding || follow
   const { fix, status: fixStatus, error: fixError, locateOnce } = useGeolocation(following)
   const wakeLock = useWakeLock(riding)
-  const heading = useHeading(following, fix?.heading ?? null)
+  const heading = useHeading(following && !glancing, fix?.heading ?? null, fix?.speed ?? null)
   const telemetry = useRideTelemetry({ riding, route: plan.route, fix, rider: rider.setup })
 
   /**
@@ -565,7 +611,7 @@ export default function RideView({
     : null
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady || suspended) return
+    if (!instance || !styleReady || suspended || glancing) return
     const geometry = telemetry.geometry
     if (!riding || !geometry || travelledM === null) {
       setTravelled(instance, [])
@@ -582,55 +628,129 @@ export default function RideView({
     // fix as the remaining distance ticks down, but the *stretch being highlighted* only
     // changes when the climb does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, styleReady, suspended, riding, telemetry.geometry, travelledM, climbSpan])
+  }, [map, styleReady, suspended, glancing, riding, telemetry.geometry, travelledM, climbSpan])
+
+  // ── The rider's marker ────────────────────────────────────────────────────────────────
+  // Its own effect, so the arrow can turn without the camera moving. `heading.heading` only
+  // changes on a real turn now — the GPS course while moving, and a dead-banded, rate-limited
+  // compass when not — so this runs about once a fix rather than sixty times a second.
+  //
+  // The arrow is drawn only while following. On the planning screen a heading arrow implies a
+  // live orientation the rider is not being given, and the plain dot says "you are here"
+  // without claiming to know which way you face.
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady || suspended || glancing || !fix) return
+    setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
+  }, [map, styleReady, suspended, glancing, fix, following, heading.heading])
 
   // ── The camera ────────────────────────────────────────────────────────────────────────
   /**
-   * One effect, and it has to be one.
+   * One effect, one `easeTo`, and at most one per fix — and usually none.
    *
-   * Recentring and rotating were two effects, both listing `heading.heading` in their
-   * dependencies, so both ran in the same commit. `easeTo` calls `stop()` on whatever
-   * animation is in flight and defaults its target centre to the map's *current* centre — so
-   * the rotation cancelled the recentre before its first frame, and with course-up on the map
-   * turned to face the right way and then never followed the rider. `centreOnMe` lost its ease
-   * to the same collision.
+   * Recentring and rotating were once two effects, both listing the heading in their
+   * dependencies, so both ran in the same commit. `easeTo` calls `stop()` on whatever animation
+   * is in flight and defaults its target centre to the map's *current* centre — so the rotation
+   * cancelled the recentre before its first frame. `cameraStep` returns both halves of a move
+   * together for that reason.
    *
-   * The bearing goes back to north when course-up is off or the ride has ended — but
-   * deliberately **not** while following is merely paused. Panning to look at what is up ahead
-   * should not spin the map to north-up under your thumb and then spin it back twelve seconds
-   * later.
+   * After that it listed the heading itself, and that was the battery. A compass on a handlebar
+   * mount changes several times a second, so the map was restarting a 700 ms animation
+   * continuously — with course-up off, too, where the heading had nothing to rotate — and even
+   * on GPS alone it was easing for 700 ms of every second. The heading is now read through a ref,
+   * so the compass cannot schedule a camera move at all; the fix decides when, and `cameraStep`
+   * decides whether. See `camera.ts`.
+   *
+   * `force` is the moments the rider asked for the camera — a ride starting, follow resuming,
+   * course-up being switched — where the box and the deadband would make a button look broken.
    */
+  const headingNow = useRef(heading.heading)
+  headingNow.current = heading.heading
+  const cameraMode = useRef<{ locked: boolean; courseUp: boolean } | null>(null)
+  /**
+   * Set while the glance view is up, so the first move after it is a jump rather than an ease.
+   * The rider may be kilometres from where the map was left, and a 700 ms flight across a city
+   * is a second of full-rate frames to arrive somewhere a cut would have reached in one.
+   */
+  const cameraJump = useRef(false)
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady || suspended) return
-
-    // The arrow is drawn only while following. On the planning screen a heading arrow implies
-    // a live orientation the rider is not being given, and the plain dot says "you are here"
-    // without claiming to know which way you face.
-    if (fix) setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
+    if (glancing) {
+      // Forgetting the mode makes the next run a forced one, which is the recentre the rider
+      // is owed on coming back to the map.
+      cameraMode.current = null
+      cameraJump.current = true
+      return
+    }
 
     const locked = following && !followPaused
-    const turning = locked && courseUp && heading.heading !== null
-    const northUp = !courseUp || !following
+    const was = cameraMode.current
+    cameraMode.current = { locked, courseUp }
+    const force = locked && (was === null || !was.locked || was.courseUp !== courseUp)
+
+    const canvas = instance.getCanvas()
+    const move = cameraStep({
+      following,
+      paused: followPaused,
+      courseUp,
+      heading: headingNow.current,
+      bearingNow: instance.getBearing(),
+      dot: fix ? instance.project([fix.lon, fix.lat]) : null,
+      viewport: { width: canvas.clientWidth, height: canvas.clientHeight },
+      force,
+      animating: instance.isMoving(),
+    })
+    if (!move) return
 
     // MapLibre 6 normalises a target bearing against the current one (`_normalizeBearing`), so
     // it already turns the short way round; nothing here has to do that arithmetic.
-    const bearing = turning
-      ? heading.heading!
-      : northUp && instance.getBearing() !== 0
-        ? 0
-        : null
-
-    if (locked && fix) {
+    workload.count('camera')
+    const jump = cameraJump.current
+    cameraJump.current = false
+    if (move.centre && fix) {
       instance.easeTo({
         center: [fix.lon, fix.lat],
-        ...(bearing === null ? {} : { bearing }),
-        duration: 700,
+        ...(move.bearing === null ? {} : { bearing: move.bearing }),
+        duration: jump ? 0 : 700,
       })
-    } else if (bearing !== null) {
-      instance.easeTo({ bearing, duration: 400 })
+    } else if (move.bearing !== null) {
+      instance.easeTo({ bearing: move.bearing, duration: 400 })
     }
-  }, [map, styleReady, suspended, fix, following, followPaused, courseUp, heading.heading])
+  }, [map, styleReady, suspended, glancing, fix, following, followPaused, courseUp])
+
+  /**
+   * Draws the riding map at no more than 2× the CSS pixel, and puts it back when the ride ends.
+   *
+   * An iPhone is 3×, so a full-resolution map is 2.25 times the pixels of a 2× one — on every
+   * frame, for the whole ride, for street detail glanced at from arm's length on a moving bike
+   * where the difference cannot be seen. Planning keeps full resolution: that is where the rider
+   * reads small labels from a phone held still. `null` hands the ratio back to
+   * `devicePixelRatio`, which is MapLibre's own documented way to clear the override even though
+   * its type says `number`.
+   *
+   * **And symbols stop fading while riding.** The rider's arrow is a symbol layer, so every fix's
+   * `setData` re-runs symbol placement, and MapLibre then animates the result in over its
+   * `fadeDuration` — 300 ms of continuous frames, once a second, for a marker that is drawn with
+   * `icon-allow-overlap` and could not have faded anything anyway. Measured in the headless
+   * driver after the camera stopped moving, it was most of what was left: ~1,100 frames a minute
+   * riding in a straight line against 60 standing still with the plain dot. The duration is only
+   * a constructor option, so this writes the private field it is read from on each frame, guarded
+   * so that a MapLibre which renames it costs the fade again rather than throwing. Labels pop
+   * instead of fading in on the riding screen; planning keeps the fade.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady || !riding) return
+    instance.setPixelRatio(Math.min(window.devicePixelRatio || 1, RIDING_MAX_PIXEL_RATIO))
+    const internals = instance as unknown as { _fadeDuration?: number }
+    const fade = internals._fadeDuration
+    if (typeof fade === 'number') internals._fadeDuration = 0
+    return () => {
+      instance.setPixelRatio(null as unknown as number)
+      if (typeof fade === 'number') internals._fadeDuration = fade
+    }
+  }, [map, styleReady, riding])
 
   /**
    * Grows the rider's marker for the road and shrinks it again for the planning screen.
@@ -771,6 +891,7 @@ export default function RideView({
   const startRiding = useCallback(async () => {
     if (suspended) return
     setRiding(true)
+    setRideView(rider.setup.rideView)
     setFollowPaused(false)
     lastRerouteAt.current = 0
     // Ride can be started from inside the drawer, which covers the map it is about to lock
@@ -788,7 +909,7 @@ export default function RideView({
       zoom: RIDING_ZOOM,
       duration: 900,
     })
-  }, [locateOnce, map, suspended, courseUp, heading, announcer, voice])
+  }, [locateOnce, map, suspended, courseUp, heading, announcer, voice, rider.setup.rideView])
 
   /**
    * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
@@ -905,6 +1026,25 @@ export default function RideView({
     />
   )
 
+  if (glancing) {
+    return (
+      <div className="ride" data-riding="yes" data-view="glance" style={bar.style}>
+        <div ref={container} className="ride-map" />
+        <GlanceView
+          telemetry={telemetry}
+          fix={fix}
+          heading={heading.heading}
+          speedMps={fix?.speed ?? null}
+          rerouting={rerouting || plan.routing !== null}
+          onReroute={() => void reroute()}
+          onShowMap={() => setRideView('map')}
+          problem={problem}
+        />
+        {summary}
+      </div>
+    )
+  }
+
   if (riding) {
     return (
       <div className="ride" data-riding="yes" style={bar.style}>
@@ -964,6 +1104,14 @@ export default function RideView({
                     aria-label={followPaused ? 'Resume following me' : 'Recentre on me'}
                   >
                     <TargetIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setRideView('glance')}
+                    aria-label="Switch to the glance view"
+                  >
+                    <GlanceIcon />
                   </button>
                 </div>
               </>
@@ -1311,6 +1459,19 @@ function LayersIcon() {
       <path d="M12 3 3 8l9 5 9-5-9-5z" />
       <path d="M3 12l9 5 9-5" />
       <path d="M3 16l9 5 9-5" />
+    </svg>
+  )
+}
+
+/**
+ * The glance view in miniature: a line to follow, bending away ahead, from the rider's arrow.
+ * The same drawing the view itself is, so the button names what it opens.
+ */
+function GlanceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 14V9.5Q12 6 8.5 6H5" />
+      <path d="M12 15.5l3.5 6-3.5-1.8-3.5 1.8z" fill="currentColor" />
     </svg>
   )
 }

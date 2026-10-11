@@ -135,6 +135,34 @@
   box-shadow: var(--lift-panel);
 }
 
+/*
+ * Riding, everything over the map is solid instead.
+ *
+ * A backdrop filter over a WebGL canvas is recomputed on every frame the map draws: the blur has
+ * to read the pixels under it, and those pixels just changed. On the planning screen the map is
+ * mostly still and the blur is the right trade. On the riding screen the map moves for the
+ * whole ride, the HUD is the biggest surface on it, and the phone that reported 1% a minute was
+ * paying for a 20 px blur under the panel, three buttons and the map credit on every one of
+ * those frames. `--panel-solid` is the panel's own colour without the alpha, so the panel looks
+ * the same with nothing showing through it — which on a glance at speed is what you want anyway.
+ *
+ * Not the off-route alert, which is a `.panel` wearing `--bad-bg`: that tint is translucent on
+ * the dark theme and was designed over the blur. It is on screen only while lost, which is the
+ * one time the rider is looking at the screen rather than glancing at it.
+ */
+.ride[data-riding='yes'] .panel:not(.hud-alert),
+.ride[data-riding='yes'] .icon-button,
+.ride[data-riding='yes'] .maplibregl-ctrl-attrib {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ride[data-riding='yes'] .panel:not(.hud-alert),
+.ride[data-riding='yes'] .icon-button:not([data-active='yes']),
+.ride[data-riding='yes'] .maplibregl-ctrl-attrib {
+  background: var(--panel-solid);
+}
+
 /* ── The hint, and what used to be the stats rail ───────────────────────────────────────
    The three route figures moved onto the route cards, where they are what the choice is made
    *on*. What is left at the top of the screen is one sentence about the next tap — so the rail
@@ -378,6 +406,12 @@
  * as a recording indicator anywhere else, which is the argument for it — nobody has to be told
  * what it means. Green rather than red: nothing here is being recorded *against* the rider, and
  * the same dot appears on the walkthrough's location card.
+ *
+ * **Three breaths, then still.** It used to pulse for the whole ride, and an infinite animation
+ * is a screen that can never go idle: the compositor redraws at the display's full rate for as
+ * long as it runs, on a ride that drained the battery at 1% a minute. The pulse is what makes
+ * the bar read as a state the moment it appears; after that the elapsed time beside it ticks
+ * once a second, and that is the live signal for the rest of the ride.
  */
 .ride-live {
   flex: none;
@@ -387,7 +421,7 @@
   margin-right: 0.15rem;
   border-radius: 50%;
   background: var(--good-fill);
-  animation: ride-pulse 2.4s ease-in-out infinite;
+  animation: ride-pulse 2.4s ease-in-out 3;
 }
 
 @keyframes ride-pulse {
@@ -3047,4 +3081,278 @@
 
 .maplibregl-ctrl-bottom-right {
   display: none; /* nothing is registered there now, and an empty container still takes space */
+}
+
+/* ── The glance view ────────────────────────────────────────────────────────────────────
+   The riding screen with the map taken away: see `GlanceView.tsx` for why. Black in both
+   themes, and nothing here transitions or animates — every one of those is a compositor frame
+   on a screen that exists to draw as few as possible. The tone does the work instead:
+   `far` is the resting state and dims everything, `near` lights the turn, `off` is the only
+   state with a colour. */
+
+/* The map stays mounted behind the glance view so the way back is instant, but it must not
+   be composited: `visibility` keeps its size (so no resize on return) and takes it out of
+   painting, where an opaque layer on top would still leave WebKit compositing the canvas. */
+.ride[data-view='glance'] .ride-map {
+  visibility: hidden;
+}
+
+/* MapLibre's controls opt back into visibility and sit above the glance layer, so the map's
+   credit would float over the figures. The glance view carries its own line instead: what it
+   draws is still OpenStreetMap's data, and that is what the licence asks to be credited. */
+.ride[data-view='glance'] .maplibregl-control-container {
+  display: none;
+}
+
+.glance {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 1.4rem) 1.6rem var(--safe-bottom);
+  background: var(--glance-ground);
+  color: var(--glance-lit);
+  --glance-ink: var(--glance-lit);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.glance[data-tone='far'],
+.glance[data-tone='waiting'] {
+  --glance-ink: var(--glance-dim);
+}
+
+.glance[data-tone='off'] {
+  --glance-ink: var(--glance-off);
+}
+
+.glance-cue {
+  display: grid;
+  grid-template-columns: 5.6rem 1fr;
+  align-items: center;
+  column-gap: 1rem;
+  color: var(--glance-ink);
+}
+
+.glance-glyph {
+  display: grid;
+  place-items: center;
+}
+
+.glance .glance-glyph .turn-glyph {
+  width: 5.6rem;
+  height: 5.6rem;
+  stroke: currentColor;
+  /* The same thinning as the navigation page's large glyph, and for the same reason. */
+  stroke-width: 1.7;
+}
+
+.glance .turn-glyph-ghost {
+  stroke: var(--glance-faint);
+}
+
+.glance-distance {
+  margin: 0;
+  font-size: 4.6rem;
+  font-weight: 700;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+
+.glance-distance small {
+  margin-left: 0.15rem;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.glance-words {
+  margin: 0.4rem 0 0;
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.glance-then {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 1rem 0 0;
+  padding: 0.45rem 0.9rem 0.45rem 0.7rem;
+  border: 1.5px solid var(--glance-faint);
+  border-radius: var(--r-pill);
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--glance-dim);
+}
+
+.glance .glance-then .turn-glyph {
+  width: 1.5rem;
+  height: 1.5rem;
+  stroke: currentColor;
+}
+
+.glance-reroute {
+  color: var(--glance-off);
+  border-color: var(--glance-off);
+}
+
+.glance-reroute:disabled {
+  color: var(--glance-dim);
+  border-color: var(--glance-faint);
+}
+
+.glance-road {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin: 0.5rem 0;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.glance-ridden {
+  stroke: var(--glance-faint);
+  stroke-width: 10;
+}
+
+.glance-ahead {
+  stroke: var(--glance-ink);
+  stroke-width: 10;
+}
+
+/* Off route the line is the route, not the instruction, so it is drawn quiet and the colour
+   goes on the way back to it. */
+.glance[data-tone='off'] .glance-ahead {
+  stroke: var(--glance-dim);
+}
+
+.glance-rejoin {
+  stroke: var(--glance-off);
+  stroke-width: 4;
+  stroke-dasharray: 2 12;
+}
+
+.glance-turn circle {
+  fill: var(--glance-ground);
+  stroke: var(--glance-ink);
+  stroke-width: 4;
+}
+
+.glance-turn text {
+  fill: var(--glance-ink);
+  stroke: none;
+  font-size: 22px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.glance-rider {
+  fill: var(--glance-rider);
+  stroke: var(--glance-ground);
+  stroke-width: 3;
+}
+
+.glance-callout,
+.glance-problem {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 4.2rem 0.8rem 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--glance-dim);
+}
+
+.glance-problem {
+  color: var(--glance-off);
+}
+
+.glance-callout i {
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+}
+
+.glance-map {
+  position: absolute;
+  right: 1.4rem;
+  bottom: calc(var(--safe-bottom) + 4.6rem);
+  display: grid;
+  place-items: center;
+  width: 3.3rem;
+  height: 3.3rem;
+  padding: 0;
+  border: 1.5px solid var(--glance-faint);
+  border-radius: var(--r-large);
+  background: none;
+  box-shadow: none;
+  color: var(--glance-dim);
+}
+
+.glance-map svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.glance-foot {
+  margin-top: 0.4rem;
+}
+
+.glance-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--glance-faint);
+  overflow: hidden;
+}
+
+.glance-bar span {
+  display: block;
+  height: 100%;
+  background: var(--glance-dim);
+}
+
+.glance-figures {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.85rem 0 0;
+}
+
+/* Value then unit on one line. `dt` first in the markup, as every figure block is, and
+   `row-reverse` puts the value before its label. */
+.glance-figures div {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.glance-figures dd {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--glance-dim);
+}
+
+.glance-credit {
+  margin: 0.55rem 0 0;
+  font-size: 0.66rem;
+  color: var(--glance-dim);
+  text-align: center;
+}
+
+.glance-figures dt {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--glance-dim);
 }

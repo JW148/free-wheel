@@ -18,6 +18,11 @@ describe('the walkthrough', () => {
     expect(SLIDES.filter((s) => s.bikes)).toHaveLength(1)
   })
 
+  it('asks which view to ride in exactly once, and not on the card about the bike', () => {
+    expect(SLIDES.filter((s) => s.views)).toHaveLength(1)
+    expect(SLIDES.filter((s) => s.views && s.bikes)).toHaveLength(0)
+  })
+
   it('shows a different screen on every card', () => {
     expect(new Set(SLIDES.map((s) => s.shot)).size).toBe(SLIDES.length)
   })

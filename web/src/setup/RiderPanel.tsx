@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MASS_LIMITS, POSITIONS, TYRES, cdaOf, crrOf, totalMassKg } from '../ride/rider'
+import { MASS_LIMITS, POSITIONS, RIDE_VIEWS, TYRES, cdaOf, crrOf, totalMassKg } from '../ride/rider'
 import { DEFAULT_PROFILES, profileById } from '../ride/profiles'
 import { estimatePowerW } from '../ride/power'
 import { requestPersistence } from '../ride/library'
@@ -156,6 +156,32 @@ export default function RiderPanel({ rider }: { rider: Rider }) {
       </p>
 
       <h2>On the road</h2>
+      {/*
+        Cards, like the riding position, because the note is the whole choice: nobody can pick
+        between "Full map" and "Glance" without being told what each one costs.
+      */}
+      <h3>Which view a ride opens on</h3>
+      <div className="option-grid" role="radiogroup" aria-label="Which view a ride opens on">
+        {RIDE_VIEWS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            role="radio"
+            aria-checked={setup.rideView === option.id}
+            className="option-card"
+            data-selected={setup.rideView === option.id ? 'yes' : 'no'}
+            onClick={() => update({ rideView: option.id })}
+          >
+            <span className="option-label">{option.label}</span>
+            <span className="option-note">{option.note}</span>
+          </button>
+        ))}
+      </div>
+      <p className="setup-footer">
+        The button in the corner swaps between them during a ride. This only decides which one
+        you start on.
+      </p>
+
       <div className="setup-group">
         <label className="setup-row switch-row">
           <span className="setup-row-text">

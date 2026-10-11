@@ -38,7 +38,30 @@ export interface RiderSetup {
    * phone costs battery and seconds.
    */
   autoReroute: boolean
+  /**
+   * Which of the two riding views Start opens on: the full map, or the glance view.
+   *
+   * The map by default, because it is the one that explains itself. The glance view is the one
+   * a rider chooses on purpose — on the first run, or in *You and the bike* — because it spends
+   * far less battery and they want to leave it on. Either way the map button flips between them
+   * mid-ride, and that flip is not saved: a rider who checks the map at one junction has not
+   * changed how they like to ride.
+   */
+  rideView: RideView
 }
+
+/**
+ * The two riding views, as Setup and the walkthrough offer them.
+ *
+ * The note is the trade, said once in the same words in both places: the map shows everything
+ * and costs battery to do it, the glance view shows the next turn and very nearly nothing else.
+ */
+export const RIDE_VIEWS = [
+  { id: 'map', label: 'Full map', note: 'Every street, for when you need the detail' },
+  { id: 'glance', label: 'Glance', note: 'The next turn on black. Far easier on the battery' },
+] as const
+
+export type RideView = (typeof RIDE_VIEWS)[number]['id']
 
 /**
  * Drag area by riding position, m².
@@ -95,6 +118,7 @@ export const DEFAULT_RIDER: RiderSetup = {
   tyres: 'allroad',
   style: DEFAULT_PROFILES[0],
   autoReroute: true,
+  rideView: 'map',
 }
 
 /** Sanity bounds. Not validation for its own sake — a zero mass divides the model by zero. */
@@ -136,6 +160,9 @@ export function migrateRider(raw: unknown): RiderSetup {
       : DEFAULT_RIDER.style,
     autoReroute:
       typeof stored.autoReroute === 'boolean' ? stored.autoReroute : DEFAULT_RIDER.autoReroute,
+    rideView: RIDE_VIEWS.some((v) => v.id === stored.rideView)
+      ? (stored.rideView as RideView)
+      : DEFAULT_RIDER.rideView,
   }
 }
 

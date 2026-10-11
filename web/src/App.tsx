@@ -3,6 +3,7 @@ import RideView from './ride/RideView'
 import SetupView from './setup/SetupView'
 import Onboarding from './onboarding/Onboarding'
 import { DEFAULT_BIKE, bikeFor, hasOnboarded, type BikeChoice } from './onboarding/slides'
+import type { RideView as RideViewKind } from './ride/rider'
 import { useMapLibre } from './ride/useMapLibre'
 import { useRider } from './ride/useRider'
 import { sharedEngine } from './engine/engineClient'
@@ -144,8 +145,9 @@ export default function App() {
    * tyres reset.
    */
   const finishOnboarding = useCallback(
-    (bike: BikeChoice | null) => {
+    (bike: BikeChoice | null, rideView: RideViewKind | null) => {
       if (bike) rider.update({ style: bike.profile, position: bike.position, tyres: bike.tyres })
+      if (rideView) rider.update({ rideView })
       setWalkthrough(null)
     },
     [rider],
@@ -182,6 +184,7 @@ export default function App() {
           // describes it. On the first run there is nothing to report and the default is a
           // better opening guess than an empty row.
           bike={walkthrough === 'again' ? (bikeFor(rider.setup)?.id ?? null) : DEFAULT_BIKE.id}
+          rideView={rider.setup.rideView}
           again={walkthrough === 'again'}
           onDone={finishOnboarding}
         />

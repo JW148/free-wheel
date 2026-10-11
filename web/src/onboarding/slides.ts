@@ -10,7 +10,7 @@ import type { ProfileId } from '../ride/profiles'
  */
 
 /**
- * The six pictures, by name.
+ * The seven pictures, by name.
  *
  * Each is `public/onboarding/<name>.webp`, and each is a rectangle clipped out of the running
  * app by `tools/onboarding-shots.mjs` — a real route over a real basemap, planned and ridden by
@@ -19,9 +19,9 @@ import type { ProfileId } from '../ride/profiles'
  * ride screen already knowing what they are looking at, and a picture of a screen that does not
  * exist teaches the opposite. Regenerate rather than retouch.
  */
-export type ShotName = 'plan' | 'regions' | 'routes' | 'compare' | 'ride' | 'follow'
+export type ShotName = 'plan' | 'regions' | 'routes' | 'compare' | 'ride' | 'glance' | 'follow'
 
-export const SHOTS: ShotName[] = ['plan', 'regions', 'routes', 'compare', 'ride', 'follow']
+export const SHOTS: ShotName[] = ['plan', 'regions', 'routes', 'compare', 'ride', 'glance', 'follow']
 
 export interface Slide {
   shot: ShotName
@@ -41,6 +41,8 @@ export interface Slide {
   body: string
   /** Shows the bike chips. Exactly one card does. */
   bikes?: true
+  /** Shows the two riding views to choose between. Exactly one card does. */
+  views?: true
   /** Shows the location reassurance, and turns the button into the permission prompt. */
   location?: true
 }
@@ -89,6 +91,16 @@ export const SLIDES: Slide[] = [
     body:
       'Speed, the next climb, how far to go and when you arrive — and a voice that tells ' +
       'you about the hill before you see it.',
+  },
+  {
+    shot: 'glance',
+    alt: 'The glance view: the next turn and its distance in large type, and the road ahead drawn as one line on a black screen.',
+    focus: 'top',
+    title: 'Two ways to ride',
+    // Three lines at 390 px, like the bike card's two: any longer and the chips under it are
+    // pushed off the bottom of the card on a phone this size.
+    body: 'Full map shows every street. Glance shows just the next turn, and saves battery. Which should a ride open on?',
+    views: true,
   },
   {
     shot: 'follow',

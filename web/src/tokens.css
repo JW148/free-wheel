@@ -99,6 +99,12 @@
   --panel: rgb(255 255 255 / 92%);
   --panel-strong: rgb(255 255 255 / 94%);
   --panel-row: #f6f5f1;
+  /**
+   * `--panel` with nothing showing through, for the riding screen, which drops the backdrop
+   * blur because it costs a pass on every frame of a map that never stops moving. The same
+   * colour as the panel at full strength, so the riding chrome reads as the same surface.
+   */
+  --panel-solid: #ffffff;
   /** The map, dimmed behind an expanded sheet. */
   --scrim: rgb(18 33 43 / 25%);
 
@@ -131,6 +137,27 @@
   --mode-faint: rgb(255 255 255 / 50%);
   /** A quiet button *on* it, where `--fill` would be invisible. */
   --mode-fill: rgb(255 255 255 / 20%);
+
+  /*
+   * The glance view, which does not invert either, and for a reason that has nothing to do with
+   * taste.
+   *
+   * It exists to spend less battery than the map, and an iPhone's OLED panel spends nothing on a
+   * black pixel — so its ground is true black on the light theme too, never `--slate-900`, which
+   * lights every pixel a little. For the same reason almost nothing on it is drawn at full
+   * strength: `--glance-dim` is what the screen looks like between turns, which is most of a
+   * ride, and `--glance-lit` is kept for the turn that is coming up. Defined once, here, and not
+   * re-mapped in the dark block; `chrome.test.ts` holds the contrast of both.
+   */
+  --glance-ground: #000000;
+  --glance-lit: #f2f4f3;
+  --glance-dim: #7d8784;
+  /** The ridden stretch, the progress track and the hairlines. Furniture, not information. */
+  --glance-faint: #3a4341;
+  /** Off route: the one state with a colour. The dark theme's `--bad`, which is tuned for black. */
+  --glance-off: #da7c87;
+  /** The rider. The same green as the live dot: the phone is doing something for you. */
+  --glance-rider: #5a9e63;
 
   /*
    * Four shadows, and no fifth.
@@ -200,6 +227,7 @@
   --panel: rgb(17 33 45 / 72%);
   --panel-strong: rgb(17 33 45 / 82%);
   --panel-row: rgb(37 55 69 / 55%);
+  --panel-solid: var(--slate-800);
   --scrim: rgb(6 20 27 / 45%);
 
   /* A shade lighter than the light theme's, because the page under it is darker and the

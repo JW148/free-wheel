@@ -427,7 +427,12 @@ await send('Page.addScriptToEvaluateOnNewDocument', {
     // --keep reuses the profile for its OPFS, not for its state: a plan left over from the
     // last run would put yesterday's route on today's picture, and the shortcut row that leads
     // to Setup is the plan card's *empty* state, so it would not even be reachable.
-    localStorage.removeItem('free-wheel.plan.v2')
+    //
+    // Top frame only. This script runs on every new document, and starting a ride inserts and
+    // removes an iframe (\`clearUndoStack\`) — a document of the same origin, so without the
+    // guard the ride deleted its own plan the moment it started, and the riding pictures were
+    // taken of a rider with no route and no fix.
+    if (window === window.top) localStorage.removeItem('free-wheel.plan.v2')
     // Muted. This script rides, and riding is when the app talks — headless Chrome has a voice
     // like any other, so a run announces climbs and junctions out loud into the room.
     localStorage.setItem('free-wheel.voice.v1', 'off')
@@ -644,7 +649,20 @@ console.log(`  ${track.length} track points`)
 /* `speed` and `heading` are newer additions to the override; an older Chrome rejects the whole
    call rather than ignoring them, which would leave the rider stranded at the start. */
 let withMotion = true
-const fixAt = async (index, speedMps, heading) => {
+/*
+ * The course is the track's own, from the point before to this one. It used to be a constant 96°,
+ * which was harmless while the arrow followed the compass and wrong once the GPS course took over
+ * at speed: the onboarding pictures showed a rider heading east down a road running south.
+ */
+const courseAt = (index) => {
+  const i = Math.max(1, Math.min(index, track.length - 1))
+  const [lat1, lon1] = track[i - 1].map((d) => (d * Math.PI) / 180)
+  const [lat2, lon2] = track[i].map((d) => (d * Math.PI) / 180)
+  const y = Math.sin(lon2 - lon1) * Math.cos(lat2)
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1)
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360
+}
+const fixAt = async (index, speedMps, heading = courseAt(index)) => {
   const [latitude, longitude] = track[Math.min(index, track.length - 1)]
   const params = { latitude, longitude, accuracy: 6 }
   if (withMotion) {
@@ -663,7 +681,7 @@ if (track.length > 40) {
   // A fifth of the way along, in a few steps, so `progress.ts` sees movement rather than a
   // teleport and the recorded distance is a real sum of real legs.
   for (const fraction of [0.02, 0.06, 0.1, 0.14, 0.18, 0.2]) {
-    await fixAt(Math.floor(track.length * fraction), 6.4, 96)
+    await fixAt(Math.floor(track.length * fraction), 6.4)
     await sleep(1200)
   }
 }
@@ -690,7 +708,33 @@ await shot('ride', { x: 0, y: 0, width: 390, height: 600 })
 await setHud(false)
 await shot('follow', { x: 0, y: 130, width: 390, height: 600 })
 
-console.log(FULL ? `\nwhole screens in ${OUT}` : `\nsix pictures in ${OUT}`)
+/*
+ * The glance view, which is card six now and pushes location to seven.
+ *
+ * Taken on the approach to a real turn rather than wherever the rider happens to be: between
+ * turns the glance view is deliberately dim and says "keep going", which is the right screen to
+ * ride with and the wrong one to explain. So the fix is walked forward a few points at a time
+ * until the view is lit and a real turn — not a bear left, which barely bends the line — is
+ * drawn on it, which is the picture the card's words are about.
+ */
+await click('[aria-label="Switch to the glance view"]')
+await sleep(1500)
+const glanceLit = () =>
+  evaluate(`document.querySelector('.glance')?.dataset.tone === 'near' && !!document.querySelector('.glance-turn') &&
+    /^(Left|Right|Sharp left|Sharp right|\\d+\\w\\w exit)$/.test(document.querySelector('.glance-words')?.textContent ?? '')`)
+let walked = Math.floor(track.length * 0.2)
+for (let step = 0; step < 200 && !(await glanceLit()); step++) {
+  walked += 2
+  await fixAt(walked, 6.4)
+  await sleep(1100)
+}
+if (!(await glanceLit())) console.log('  (never reached a lit turn; the glance shot is between turns)')
+await sleep(1200)
+// Twenty pixels down: the cue still clears the top edge, and the rider's arrow — the
+// other end of the line — stops being cut in half by the bottom one.
+await shot('glance', { x: 0, y: 20, width: 390, height: 600 })
+
+console.log(FULL ? `\nwhole screens in ${OUT}` : `\nseven pictures in ${OUT}`)
 
 ws.close()
 chrome.kill()

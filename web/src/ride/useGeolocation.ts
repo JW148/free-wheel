@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { workload } from './workload'
 
 export interface Fix {
   lon: number
@@ -48,6 +49,7 @@ export function useGeolocation(active: boolean) {
   }, [])
 
   const receive = useCallback((p: GeolocationPosition) => {
+    workload.count('fixes')
     setStatus('tracking')
     setError(null)
     setFix({
