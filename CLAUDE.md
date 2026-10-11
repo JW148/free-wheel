@@ -937,7 +937,8 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   effect, the heading is read through a ref, and `camera.ts` decides: a lazy follow that only
   recentres once the dot leaves a box in the middle, course-up turning only past a 12° deadband,
   the GPS course preferred over the compass above 2.5 m/s, and the arrow redrawn only on an 8°
-  change at most twice a second.
+  change at most twice a second. Riding also drops the backdrop blur, caps the map at 2× and
+  turns off MapLibre's symbol fade, which alone was 300 ms of frames after every fix.
   `workload.ts` counts frames, compass events and camera moves, and `tools/drive-ride-load.mjs`
   measures them — check it before and after anything that touches the riding map. Figures in
   `docs/phase-17-progress.md`.

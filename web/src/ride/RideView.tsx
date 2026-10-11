@@ -42,6 +42,9 @@ import { cameraStep } from './camera'
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
 
+/** The riding map's resolution ceiling. See the effect that applies it. */
+const RIDING_MAX_PIXEL_RATIO = 2
+
 const HUD_KEY = 'free-wheel.hud.v1'
 const HUD_PAGE_KEY = 'free-wheel.hud-page.v1'
 const COURSE_UP_KEY = 'free-wheel.courseup.v1'
@@ -672,6 +675,39 @@ export default function RideView({
       instance.easeTo({ bearing: move.bearing, duration: 400 })
     }
   }, [map, styleReady, suspended, fix, following, followPaused, courseUp])
+
+  /**
+   * Draws the riding map at no more than 2× the CSS pixel, and puts it back when the ride ends.
+   *
+   * An iPhone is 3×, so a full-resolution map is 2.25 times the pixels of a 2× one — on every
+   * frame, for the whole ride, for street detail glanced at from arm's length on a moving bike
+   * where the difference cannot be seen. Planning keeps full resolution: that is where the rider
+   * reads small labels from a phone held still. `null` hands the ratio back to
+   * `devicePixelRatio`, which is MapLibre's own documented way to clear the override even though
+   * its type says `number`.
+   *
+   * **And symbols stop fading while riding.** The rider's arrow is a symbol layer, so every fix's
+   * `setData` re-runs symbol placement, and MapLibre then animates the result in over its
+   * `fadeDuration` — 300 ms of continuous frames, once a second, for a marker that is drawn with
+   * `icon-allow-overlap` and could not have faded anything anyway. Measured in the headless
+   * driver after the camera stopped moving, it was most of what was left: ~1,100 frames a minute
+   * riding in a straight line against 60 standing still with the plain dot. The duration is only
+   * a constructor option, so this writes the private field it is read from on each frame, guarded
+   * so that a MapLibre which renames it costs the fade again rather than throwing. Labels pop
+   * instead of fading in on the riding screen; planning keeps the fade.
+   */
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady || !riding) return
+    instance.setPixelRatio(Math.min(window.devicePixelRatio || 1, RIDING_MAX_PIXEL_RATIO))
+    const internals = instance as unknown as { _fadeDuration?: number }
+    const fade = internals._fadeDuration
+    if (typeof fade === 'number') internals._fadeDuration = 0
+    return () => {
+      instance.setPixelRatio(null as unknown as number)
+      if (typeof fade === 'number') internals._fadeDuration = fade
+    }
+  }, [map, styleReady, riding])
 
   /**
    * Grows the rider's marker for the road and shrinks it again for the planning screen.

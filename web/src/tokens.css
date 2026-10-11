@@ -99,6 +99,12 @@
   --panel: rgb(255 255 255 / 92%);
   --panel-strong: rgb(255 255 255 / 94%);
   --panel-row: #f6f5f1;
+  /**
+   * `--panel` with nothing showing through, for the riding screen, which drops the backdrop
+   * blur because it costs a pass on every frame of a map that never stops moving. The same
+   * colour as the panel at full strength, so the riding chrome reads as the same surface.
+   */
+  --panel-solid: #ffffff;
   /** The map, dimmed behind an expanded sheet. */
   --scrim: rgb(18 33 43 / 25%);
 
@@ -200,6 +206,7 @@
   --panel: rgb(17 33 45 / 72%);
   --panel-strong: rgb(17 33 45 / 82%);
   --panel-row: rgb(37 55 69 / 55%);
+  --panel-solid: var(--slate-800);
   --scrim: rgb(6 20 27 / 45%);
 
   /* A shade lighter than the light theme's, because the page under it is darker and the

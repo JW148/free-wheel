@@ -135,6 +135,34 @@
   box-shadow: var(--lift-panel);
 }
 
+/*
+ * Riding, everything over the map is solid instead.
+ *
+ * A backdrop filter over a WebGL canvas is recomputed on every frame the map draws: the blur has
+ * to read the pixels under it, and those pixels just changed. On the planning screen the map is
+ * mostly still and the blur is the right trade. On the riding screen the map moves for the
+ * whole ride, the HUD is the biggest surface on it, and the phone that reported 1% a minute was
+ * paying for a 20 px blur under the panel, three buttons and the map credit on every one of
+ * those frames. `--panel-solid` is the panel's own colour without the alpha, so the panel looks
+ * the same with nothing showing through it — which on a glance at speed is what you want anyway.
+ *
+ * Not the off-route alert, which is a `.panel` wearing `--bad-bg`: that tint is translucent on
+ * the dark theme and was designed over the blur. It is on screen only while lost, which is the
+ * one time the rider is looking at the screen rather than glancing at it.
+ */
+.ride[data-riding='yes'] .panel:not(.hud-alert),
+.ride[data-riding='yes'] .icon-button,
+.ride[data-riding='yes'] .maplibregl-ctrl-attrib {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ride[data-riding='yes'] .panel:not(.hud-alert),
+.ride[data-riding='yes'] .icon-button:not([data-active='yes']),
+.ride[data-riding='yes'] .maplibregl-ctrl-attrib {
+  background: var(--panel-solid);
+}
+
 /* ── The hint, and what used to be the stats rail ───────────────────────────────────────
    The three route figures moved onto the route cards, where they are what the choice is made
    *on*. What is left at the top of the screen is one sentence about the next tap — so the rail
@@ -378,6 +406,12 @@
  * as a recording indicator anywhere else, which is the argument for it — nobody has to be told
  * what it means. Green rather than red: nothing here is being recorded *against* the rider, and
  * the same dot appears on the walkthrough's location card.
+ *
+ * **Three breaths, then still.** It used to pulse for the whole ride, and an infinite animation
+ * is a screen that can never go idle: the compositor redraws at the display's full rate for as
+ * long as it runs, on a ride that drained the battery at 1% a minute. The pulse is what makes
+ * the bar read as a state the moment it appears; after that the elapsed time beside it ticks
+ * once a second, and that is the live signal for the rest of the ride.
  */
 .ride-live {
   flex: none;
@@ -387,7 +421,7 @@
   margin-right: 0.15rem;
   border-radius: 50%;
   background: var(--good-fill);
-  animation: ride-pulse 2.4s ease-in-out infinite;
+  animation: ride-pulse 2.4s ease-in-out 3;
 }
 
 @keyframes ride-pulse {

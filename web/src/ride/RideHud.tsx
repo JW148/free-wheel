@@ -306,8 +306,10 @@ export default function RideHud({
         <span className="ride-status-text">
           {/* "As a user I wasn't clear exactly when I was in navigation mode." The bar is now
               ink-filled rather than a white panel, which is the difference a glance actually
-              catches, and it says the word. The dot pulses because the alternative — a static
-              badge — is indistinguishable from a label. */}
+              catches, and it says the word. The dot pulses as the ride starts, because a static
+              badge is indistinguishable from a label — and then rests, because an animation that
+              never ends keeps the screen compositing for the whole ride. What says "live" after
+              that is the elapsed time beside it, ticking every second. */}
           <span className="ride-live" aria-hidden="true" />
           {record ? (
             <>

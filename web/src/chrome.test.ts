@@ -129,6 +129,20 @@ describe.each(THEMES)('%s chrome', (theme) => {
   })
 
   /*
+   * The riding screen's panels are solid — the blur costs a pass on every frame of a map that
+   * never stops — so the HUD's figures, notes and gradient bands are read on `--panel-solid`
+   * rather than on a translucent panel over a blur. It is the card's colour by design; this is
+   * the net under that, should either one move.
+   */
+  it('reads the riding panel, which is solid', () => {
+    expect(contrast(on('ink'), on('panel-solid'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(on('muted'), on('panel-solid'))).toBeGreaterThanOrEqual(4.5)
+    for (const band of GRADE_BANDS) {
+      expect(contrast(band.colour, on('panel-solid')), band.label).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  /*
    * `--faint` is deliberately quieter: timestamps, a footnote, the chevron on a row. 3:1 is the
    * large-text and non-text floor, and that is what it is for — it must never carry a sentence
    * that changes what the rider does.
@@ -329,7 +343,7 @@ describe('the two themes', () => {
       'mode', 'mode-ink', 'mode-muted', 'mode-faint', 'mode-fill',
       'hairline', 'edge', 'edge-strong',
       'good', 'good-bg', 'good-fill', 'bad', 'bad-bg',
-      'panel', 'panel-strong', 'panel-row', 'scrim',
+      'panel', 'panel-strong', 'panel-row', 'panel-solid', 'scrim',
       'lift-button', 'lift-panel', 'lift-sheet', 'lift-row',
     ]
     for (const role of ROLES) {
