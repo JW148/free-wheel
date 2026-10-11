@@ -137,6 +137,16 @@ describe('cameraStep', () => {
     ).toBeNull()
   })
 
+  // Start zooms to street level over 900 ms; the first fix's recentre used to stop it part way,
+  // and the ride ran at the overview's zoom.
+  it('waits for a move already in flight rather than cutting it short', () => {
+    expect(cameraStep({ ...riding, dot: { x: 0, y: 0 }, animating: true })).toBeNull()
+    expect(cameraStep({ ...riding, force: true, animating: true })).toEqual({
+      centre: true,
+      bearing: null,
+    })
+  })
+
   it('does nothing without a fix or a heading to act on', () => {
     expect(cameraStep({ ...riding, dot: null, courseUp: true, heading: null, force: true })).toBeNull()
   })

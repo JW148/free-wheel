@@ -659,6 +659,7 @@ export default function RideView({
       dot: fix ? instance.project([fix.lon, fix.lat]) : null,
       viewport: { width: canvas.clientWidth, height: canvas.clientHeight },
       force,
+      animating: instance.isMoving(),
     })
     if (!move) return
 

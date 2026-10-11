@@ -137,6 +137,13 @@ export interface CameraMove {
  * The bearing goes back to north when course-up is off or nothing is being followed — but
  * deliberately **not** while following is merely paused. Panning to look up the road should not
  * spin the map under the rider's thumb and spin it back twelve seconds later.
+ *
+ * **Nothing interrupts a move already in flight**, unless forced. `easeTo` stops whatever is
+ * animating and keeps the zoom it had reached, so Start's 900 ms zoom to street level was being
+ * cut short by the first fix's recentre — measured in the headless driver, the ride ran the
+ * whole way at z8.5, the overview the plan was framed at. Recentre's zoom-in had the same
+ * exposure. The next fix catches up; a second's lag on a camera that already lags by design is
+ * invisible.
  */
 export function cameraStep({
   following,
@@ -147,6 +154,7 @@ export function cameraStep({
   dot,
   viewport,
   force,
+  animating = false,
 }: {
   following: boolean
   paused: boolean
@@ -157,7 +165,10 @@ export function cameraStep({
   dot: { x: number; y: number } | null
   viewport: { width: number; height: number }
   force: boolean
+  /** Whether the map is already moving — a zoom from Start or Recentre, or the last follow. */
+  animating?: boolean
 }): CameraMove | null {
+  if (animating && !force) return null
   const locked = following && !paused
   const northUp = !courseUp || !following
 
