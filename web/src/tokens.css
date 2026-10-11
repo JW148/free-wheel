@@ -139,6 +139,27 @@
   --mode-fill: rgb(255 255 255 / 20%);
 
   /*
+   * The glance view, which does not invert either, and for a reason that has nothing to do with
+   * taste.
+   *
+   * It exists to spend less battery than the map, and an iPhone's OLED panel spends nothing on a
+   * black pixel — so its ground is true black on the light theme too, never `--slate-900`, which
+   * lights every pixel a little. For the same reason almost nothing on it is drawn at full
+   * strength: `--glance-dim` is what the screen looks like between turns, which is most of a
+   * ride, and `--glance-lit` is kept for the turn that is coming up. Defined once, here, and not
+   * re-mapped in the dark block; `chrome.test.ts` holds the contrast of both.
+   */
+  --glance-ground: #000000;
+  --glance-lit: #f2f4f3;
+  --glance-dim: #7d8784;
+  /** The ridden stretch, the progress track and the hairlines. Furniture, not information. */
+  --glance-faint: #3a4341;
+  /** Off route: the one state with a colour. The dark theme's `--bad`, which is tuned for black. */
+  --glance-off: #da7c87;
+  /** The rider. The same green as the live dot: the phone is doing something for you. */
+  --glance-rider: #5a9e63;
+
+  /*
    * Four shadows, and no fifth.
    *
    * The dark app had none — a slate panel separates from a slate map by being lighter. On

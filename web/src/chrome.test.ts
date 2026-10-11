@@ -106,6 +106,25 @@ function contrast(one: string, two: string): number {
 
 const THEMES = ['light', 'dark'] as const
 
+describe('the glance view', () => {
+  const glance = (name: string) => hexOf(name, 'light')
+
+  /*
+   * The glance view is black in both themes, and dim between turns on purpose — so the dim ink
+   * is the one that has to stay readable, since that is what the screen shows for most of a
+   * ride. The faint ink only draws furniture (the ridden line, the progress track), so it is
+   * held to nothing but being visible at all. Read from the `:root` block alone, because these
+   * tokens are deliberately not re-mapped for the dark theme.
+   */
+  it('reads the glance view, which is black in both themes', () => {
+    for (const ink of ['glance-lit', 'glance-dim', 'glance-off', 'glance-rider'] as const) {
+      expect(contrast(glance(ink), glance('glance-ground')), ink).toBeGreaterThanOrEqual(4.5)
+    }
+    expect(contrast(glance('glance-lit'), glance('glance-dim'))).toBeGreaterThanOrEqual(2.5)
+    expect(contrast(glance('glance-faint'), glance('glance-ground'))).toBeGreaterThanOrEqual(1.8)
+  })
+})
+
 describe.each(THEMES)('%s chrome', (theme) => {
   const on = (name: string) => hexOf(name, theme)
 

@@ -147,6 +147,12 @@ describe('kilocaloriesFrom', () => {
 })
 
 describe('migrateRider', () => {
+  it('keeps a ride view it knows and falls back to the map otherwise', () => {
+    expect(migrateRider({ rideView: 'glance' }).rideView).toBe('glance')
+    expect(migrateRider({ rideView: 'hologram' }).rideView).toBe('map')
+    expect(migrateRider({}).rideView).toBe('map')
+  })
+
   it('hands back the default when there is nothing stored', () => {
     expect(migrateRider(null)).toEqual(DEFAULT_RIDER)
     expect(migrateRider('nonsense')).toEqual(DEFAULT_RIDER)

@@ -164,7 +164,7 @@ const FAKES = `
   window.cancelAnimationFrame = (id) => clearTimeout(id)
   ;(() => {
     const SPEED = 5.5
-    const ride = (window.__ride = { walking: false, compass: false, alongM: 0, path: null })
+    const ride = (window.__ride = { walking: false, compass: false, alongM: 0, path: null, offsetM: 0 })
     const rad = (d) => (d * Math.PI) / 180
     const metres = (a, b) => {
       const x = rad(b[0] - a[0]) * Math.cos(rad((a[1] + b[1]) / 2))
@@ -193,7 +193,14 @@ const FAKES = `
       if (i <= 0) i = 1
       const a = p.pts[i - 1], b = p.pts[i]
       const t = Math.min(1, (ride.alongM - p.cum[i - 1]) / Math.max(1e-6, p.cum[i] - p.cum[i - 1]))
-      return { lon: a[0] + (b[0] - a[0]) * t, lat: a[1] + (b[1] - a[1]) * t, heading: bearing(a, b) }
+      // offsetM pushes the fix square off the route to the rider's right, to put them off it.
+      const h = bearing(a, b)
+      const lat = a[1] + (b[1] - a[1]) * t
+      return {
+        lon: a[0] + (b[0] - a[0]) * t + (Math.cos(rad(h)) * ride.offsetM) / (111320 * Math.cos(rad(lat))),
+        lat: lat - (Math.sin(rad(h)) * ride.offsetM) / 111320,
+        heading: h,
+      }
     }
     ride.here = here
     const position = () => {
@@ -355,6 +362,30 @@ await click('.hud-collapse')
 await sleep(800)
 await shot('load-03-riding-folded-light')
 
+/*
+ * The glance view, against the map scenarios above. The map is still mounted behind it, so the
+ * number that matters is `frames`: zero is the claim that a hidden map costs nothing, and
+ * anything else is a map effect that forgot to stand down.
+ */
+await scenario('glance view, GPS + jittery compass', async () => {
+  await click('[aria-label="Switch to the glance view"]')
+})
+await shot('load-06-glance-light')
+await scenario('glance view, stopped, jittery compass', async () => {
+  await evaluate(`(window.__ride.walking = false, 'ok')`)
+})
+await evaluate(`(window.__ride.walking = true, 'ok')`)
+await sleep(3000)
+await shot('load-07-glance-moving-light')
+await evaluate(`(window.__ride.offsetM = 90, 'ok')`)
+await sleep(9000)
+await shot('load-10-glance-off-route-light')
+await evaluate(`(window.__ride.offsetM = 0, 'ok')`)
+await sleep(6000)
+await click('[aria-label="Show the map"]')
+await sleep(1500)
+await shot('load-08-back-to-map-light')
+
 console.log('riding, dark')
 await startRide('dark')
 await evaluate(`(window.__ride.compass = true, 'ok')`)
@@ -363,6 +394,9 @@ await shot('load-04-riding-dark')
 await click('.hud-collapse')
 await sleep(800)
 await shot('load-05-riding-folded-dark')
+await click('[aria-label="Switch to the glance view"]')
+await sleep(3000)
+await shot('load-09-glance-dark')
 
 console.log('\n| scenario | ' + Object.keys(results[0]).slice(1).join(' | ') + ' |')
 console.log('|---|' + Object.keys(results[0]).slice(1).map(() => '---').join('|') + '|')

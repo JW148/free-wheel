@@ -30,6 +30,8 @@ import RouteSheet from './RouteSheet'
 import LayersSheet from './LayersSheet'
 import SavedScreen from '../library/SavedScreen'
 import RideHud from './RideHud'
+import GlanceView from './GlanceView'
+import type { RideView as RideViewKind } from './rider'
 import RideSummarySheet from './RideSummary'
 import { useRouteSheet } from './useRouteSheet'
 import SearchScreen from '../search/SearchScreen'
@@ -208,6 +210,15 @@ export default function RideView({
     }
   })
   /**
+   * Which of the two riding views is up: the map, or the glance view.
+   *
+   * Set from the rider's saved preference every time a ride starts, and flipped by the button
+   * on each view. The flip is deliberately not saved: a rider who brings the map up to work out
+   * one roundabout has not changed their mind about how they like to ride, and the next ride
+   * should open the way they chose in Setup.
+   */
+  const [rideView, setRideView] = useState<RideViewKind>(rider.setup.rideView)
+  /**
    * Whether the app speaks the climb ahead.
    *
    * On by default, which is a deliberate choice rather than an oversight. A muted feature is a
@@ -247,11 +258,27 @@ export default function RideView({
     if (riding) workload.count('renders')
   })
 
+  /**
+   * The glance view is up, so the map behind it is hidden and must not be written to.
+   *
+   * MapLibre draws a frame only when something asks it to — a camera move, a `setData`, a tile
+   * landing — so the way to make a hidden map cost nothing is to stop asking. Every riding
+   * effect that writes to the map returns early on this, and runs again the moment it clears,
+   * which is what brings the marker, the ridden line and the camera back up to date in one go.
+   * The planning-screen effects need no guard: nothing on the plan changes during a ride except
+   * a reroute, and that is one frame nobody sees.
+   *
+   * The compass stands down too. The glance view takes its direction from the route, so a
+   * sensor firing sixty times a second into a handler would be work with no reader — and it
+   * resumes, with the permission already granted, the moment the map comes back.
+   */
+  const glancing = riding && rideView === 'glance'
+
   // Riding implies following, and implies not editing.
   const following = riding || follow
   const { fix, status: fixStatus, error: fixError, locateOnce } = useGeolocation(following)
   const wakeLock = useWakeLock(riding)
-  const heading = useHeading(following, fix?.heading ?? null, fix?.speed ?? null)
+  const heading = useHeading(following && !glancing, fix?.heading ?? null, fix?.speed ?? null)
   const telemetry = useRideTelemetry({ riding, route: plan.route, fix, rider: rider.setup })
 
   /**
@@ -584,7 +611,7 @@ export default function RideView({
     : null
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady || suspended) return
+    if (!instance || !styleReady || suspended || glancing) return
     const geometry = telemetry.geometry
     if (!riding || !geometry || travelledM === null) {
       setTravelled(instance, [])
@@ -601,7 +628,7 @@ export default function RideView({
     // fix as the remaining distance ticks down, but the *stretch being highlighted* only
     // changes when the climb does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, styleReady, suspended, riding, telemetry.geometry, travelledM, climbSpan])
+  }, [map, styleReady, suspended, glancing, riding, telemetry.geometry, travelledM, climbSpan])
 
   // ── The rider's marker ────────────────────────────────────────────────────────────────
   // Its own effect, so the arrow can turn without the camera moving. `heading.heading` only
@@ -613,9 +640,9 @@ export default function RideView({
   // without claiming to know which way you face.
   useEffect(() => {
     const instance = map.current
-    if (!instance || !styleReady || suspended || !fix) return
+    if (!instance || !styleReady || suspended || glancing || !fix) return
     setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
-  }, [map, styleReady, suspended, fix, following, heading.heading])
+  }, [map, styleReady, suspended, glancing, fix, following, heading.heading])
 
   // ── The camera ────────────────────────────────────────────────────────────────────────
   /**
@@ -640,9 +667,22 @@ export default function RideView({
   const headingNow = useRef(heading.heading)
   headingNow.current = heading.heading
   const cameraMode = useRef<{ locked: boolean; courseUp: boolean } | null>(null)
+  /**
+   * Set while the glance view is up, so the first move after it is a jump rather than an ease.
+   * The rider may be kilometres from where the map was left, and a 700 ms flight across a city
+   * is a second of full-rate frames to arrive somewhere a cut would have reached in one.
+   */
+  const cameraJump = useRef(false)
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady || suspended) return
+    if (glancing) {
+      // Forgetting the mode makes the next run a forced one, which is the recentre the rider
+      // is owed on coming back to the map.
+      cameraMode.current = null
+      cameraJump.current = true
+      return
+    }
 
     const locked = following && !followPaused
     const was = cameraMode.current
@@ -666,16 +706,18 @@ export default function RideView({
     // MapLibre 6 normalises a target bearing against the current one (`_normalizeBearing`), so
     // it already turns the short way round; nothing here has to do that arithmetic.
     workload.count('camera')
+    const jump = cameraJump.current
+    cameraJump.current = false
     if (move.centre && fix) {
       instance.easeTo({
         center: [fix.lon, fix.lat],
         ...(move.bearing === null ? {} : { bearing: move.bearing }),
-        duration: 700,
+        duration: jump ? 0 : 700,
       })
     } else if (move.bearing !== null) {
       instance.easeTo({ bearing: move.bearing, duration: 400 })
     }
-  }, [map, styleReady, suspended, fix, following, followPaused, courseUp])
+  }, [map, styleReady, suspended, glancing, fix, following, followPaused, courseUp])
 
   /**
    * Draws the riding map at no more than 2× the CSS pixel, and puts it back when the ride ends.
@@ -849,6 +891,7 @@ export default function RideView({
   const startRiding = useCallback(async () => {
     if (suspended) return
     setRiding(true)
+    setRideView(rider.setup.rideView)
     setFollowPaused(false)
     lastRerouteAt.current = 0
     // Ride can be started from inside the drawer, which covers the map it is about to lock
@@ -866,7 +909,7 @@ export default function RideView({
       zoom: RIDING_ZOOM,
       duration: 900,
     })
-  }, [locateOnce, map, suspended, courseUp, heading, announcer, voice])
+  }, [locateOnce, map, suspended, courseUp, heading, announcer, voice, rider.setup.rideView])
 
   /**
    * The rail, in visual order top to bottom. An array rather than seven hand-written buttons so
@@ -983,6 +1026,25 @@ export default function RideView({
     />
   )
 
+  if (glancing) {
+    return (
+      <div className="ride" data-riding="yes" data-view="glance" style={bar.style}>
+        <div ref={container} className="ride-map" />
+        <GlanceView
+          telemetry={telemetry}
+          fix={fix}
+          heading={heading.heading}
+          speedMps={fix?.speed ?? null}
+          rerouting={rerouting || plan.routing !== null}
+          onReroute={() => void reroute()}
+          onShowMap={() => setRideView('map')}
+          problem={problem}
+        />
+        {summary}
+      </div>
+    )
+  }
+
   if (riding) {
     return (
       <div className="ride" data-riding="yes" style={bar.style}>
@@ -1042,6 +1104,14 @@ export default function RideView({
                     aria-label={followPaused ? 'Resume following me' : 'Recentre on me'}
                   >
                     <TargetIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setRideView('glance')}
+                    aria-label="Switch to the glance view"
+                  >
+                    <GlanceIcon />
                   </button>
                 </div>
               </>
@@ -1389,6 +1459,19 @@ function LayersIcon() {
       <path d="M12 3 3 8l9 5 9-5-9-5z" />
       <path d="M3 12l9 5 9-5" />
       <path d="M3 16l9 5 9-5" />
+    </svg>
+  )
+}
+
+/**
+ * The glance view in miniature: a line to follow, bending away ahead, from the rider's arrow.
+ * The same drawing the view itself is, so the button names what it opens.
+ */
+function GlanceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 14V9.5Q12 6 8.5 6H5" />
+      <path d="M12 15.5l3.5 6-3.5-1.8-3.5 1.8z" fill="currentColor" />
     </svg>
   )
 }
