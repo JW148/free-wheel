@@ -179,6 +179,13 @@ const engineApi = {
     // reopen on the bike, reroute). The engine must not depend on a component having mounted.
     await installedTiles()
 
+    // And the basemaps, for the map's sake rather than BRouter's. `mountBasemap` opens each one
+    // from the main thread, but only once per archive per session, and a cancelled route
+    // terminates this Worker and takes every handle with it. The Worker that replaces it
+    // starts here, so without this every tile read after a Cancel failed with "is not open"
+    // and the map stopped loading until the app was relaunched.
+    await installedBasemaps()
+
     return { files: provisionedFiles() }
   },
 

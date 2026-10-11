@@ -100,7 +100,11 @@ type Status = 'loading' | 'no-basemap' | 'ready' | 'error'
  */
 export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
   const map = useRef<MapLibreMap | null>(null)
-  const [archives, setArchives] = useState<{ name: string; bytes: number }[]>([])
+  /**
+   * What storage holds, or `null` until it has been read. Never seeded with `[]`: the place
+   * index reads an empty list as every region having been deleted, and drops their indexes.
+   */
+  const [archives, setArchives] = useState<{ name: string; bytes: number }[] | null>(null)
   /** Every archive currently drawn, which after a successful sync is every installed one. */
   const [mounted, setMounted] = useState<string[]>([])
   const mountedRef = useRef<string[]>([])
@@ -420,7 +424,7 @@ export function useMapLibre(container: React.RefObject<HTMLDivElement | null>) {
     sync,
     flyToArchive,
     /** The archive the camera would open on, for a caller that wants to name it. */
-    preferred: () => archiveToOpen(archives, [remembered()]),
+    preferred: () => archiveToOpen(archives ?? [], [remembered()]),
     setError,
   }
 }
