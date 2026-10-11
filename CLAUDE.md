@@ -361,6 +361,10 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   because one handle per file is the rule; it blocks that Worker for seconds, so
   `searchStore.hold(true)` stops it for the length of a ride. Edinburgh: 2,760 tiles, 21.6 MB,
   285 ms, 34,927 entries, ~0.9 MB packed. Freshness is by archive **byte count**, never a hash.
+- **"Not read yet" is `null`, never `[]`.** `useMapLibre.archives` started as `[]`, `places.sync`
+  read that as every region deleted, and dropped every stored index on every launch — so each
+  cold start rescanned every archive in the Worker that serves the map's tiles, a cost that grew
+  with each region downloaded. An empty list is a claim about storage; only make it after looking.
 - **A reroute adds to the ride; it does not replace it.** The engine is asked only about the road
   ahead, and `stitch.ts` joins the answer onto the part already ridden — so the trip length, the
   progress bar, the climbing done and the original start all survive a wrong turn. The plan keeps

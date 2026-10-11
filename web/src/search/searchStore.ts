@@ -85,8 +85,14 @@ const snapshot = () => state
  * Idempotent and cheap when nothing has changed, because it is called on startup, whenever a
  * region lands and whenever one is removed — the same three moments `useMapLibre.sync` is called
  * at, and for the same reason: one entry point rather than three places deciding the same thing.
+ *
+ * `null` means storage has not been read yet, and it is not the same as an empty list. An empty
+ * list says every region was deleted, so every stored index goes with it; handed over on launch
+ * before the map had looked, it threw every index away and rebuilt them all — one archive after
+ * another, in the Worker that also serves the map its tiles.
  */
-async function sync(archives: { name: string; bytes: number }[]): Promise<void> {
+async function sync(archives: { name: string; bytes: number }[] | null): Promise<void> {
+  if (archives === null) return
   installed = archives
   const names = new Set(archives.map((archive) => archive.name))
 

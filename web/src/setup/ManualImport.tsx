@@ -175,7 +175,7 @@ export default function ManualImport({
           screen and named nowhere — the region library above only knows about downloads, so
           there was no way to see what had been imported, or to take it back off. */}
       <h3 className="subhead">Maps in storage</h3>
-      {basemap.archives.length === 0 ? (
+      {!basemap.archives?.length ? (
         <p className="setup-empty">No maps yet — imported or downloaded.</p>
       ) : (
         <ul className="maps-list">

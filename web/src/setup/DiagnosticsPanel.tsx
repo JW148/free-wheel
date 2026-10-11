@@ -68,7 +68,7 @@ export default function DiagnosticsPanel({ basemap }: { basemap: ReturnType<type
                 ? 'none mounted'
                 : basemap.mounted
                     .map((name) => {
-                      const archive = basemap.archives.find((a) => a.name === name)
+                      const archive = basemap.archives?.find((a) => a.name === name)
                       return archive ? `${name} (${formatBytes(archive.bytes)})` : name
                     })
                     .join(', ')}
