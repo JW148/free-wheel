@@ -152,3 +152,37 @@ from the compass at all.
   is now what says "live". That is a design call, and it can be reverted on its own.
 - With course-up on and the rider standing still, the map only turns on the next fix. If iOS sends
   fixes slowly to a stationary phone, turning the bike at the lights will take a moment to show.
+
+## 6 · The glance view
+
+A second riding view, after the Beeline Velo: the route ahead as one line on a true-black screen,
+the next turn and its distance in large type, and nothing else but speed, distance to go and
+arrival in grey along the bottom. Between turns everything is dimmed; it lights 30 s before a turn
+(twice the speech's 15 s lead, floored at 120 m), and off route is the only state with a colour.
+The direction is the route's own over the last 10 m, never the compass — 25 m was tried first and
+lagged visibly on a twisting street.
+
+The map is kept mounted behind it and hidden, so returning is instant, rather than unmounted.
+That was the open question, and it was settled by measuring rather than arguing: with every
+riding map effect standing down while the glance view is up, the hidden map draws nothing.
+
+Same driver, same simulated ride, 30 s per scenario:
+
+| scenario | frames | orientation | heading | fixes | renders | camera | main thread s/min |
+|---|---|---|---|---|---|---|---|
+| north-up, standing still, no compass | 60 | 0 | 0 | 60 | 120 | 0 | 0.69 |
+| north-up, GPS only | 282 | 0 | 0 | 60 | 120 | 4 | 1.02 |
+| course-up, GPS + jittery compass | 422 | 3750 | 12 | 60 | 132 | 10 | 1.27 |
+| glance view, GPS + jittery compass | 0 | 0 | 0 | 60 | 120 | 0 | 0.44 |
+| glance view, stopped, jittery compass | 0 | 0 | 0 | 60 | 120 | 0 | 0.38 |
+
+The compass reads 0 in the glance view because it is switched off there: the view takes its
+direction from the route, so 3,750 events a minute had no reader. What the table cannot show is
+the screen, which is the larger half of the remaining drain and the half the glance view was
+designed for — almost every pixel black, and the rest dimmed for most of a ride. Only a phone can
+measure that.
+
+Still open for it: ending a ride needs the map view, where the hold-to-end button lives, and the
+voice toggle is there too. Both are one tap away and were left there to keep the glance view to
+one control.
+

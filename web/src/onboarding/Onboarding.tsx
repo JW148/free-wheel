@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 import { BIKES, SLIDES, bikeById, markOnboarded, type BikeChoice } from './slides'
+import { RIDE_VIEWS, type RideView } from '../ride/rider'
 import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
 
 /**
- * The first run: six cards, a pager, and one question that changes anything.
+ * The first run: seven cards, a pager, and two questions that change anything.
  *
  * ## Why it exists at all
  *
@@ -53,6 +54,7 @@ import { swipeOffsetPx, swipeRelease, swipeVerdict } from './swipe'
  */
 export default function Onboarding({
   bike: startOn,
+  rideView: viewStartsOn,
   again,
   onDone,
 }: {
@@ -64,16 +66,25 @@ export default function Onboarding({
    * rider's setup is not one of the four.
    */
   bike: string | null
+  /**
+   * Which riding view starts selected: the rider's own on a revisit, the map on the first run.
+   * Unlike the bike there is always an answer to report — the setting is one of two.
+   */
+  rideView: RideView
   /** Opened from Setup rather than shown on the first launch. */
   again?: boolean
   /**
    * Called once the walkthrough is finished or skipped, with the bike the rider settled on —
    * or `null` if they never touched the chips on a revisit, which means "change nothing".
+   * The riding view is the same: `null` unless a chip was tapped, so reading the cards again
+   * cannot quietly put a rider back on the map they had chosen to leave.
    */
-  onDone: (bike: BikeChoice | null) => void
+  onDone: (bike: BikeChoice | null, rideView: RideView | null) => void
 }) {
   const [index, setIndex] = useState(0)
   const [bike, setBike] = useState(startOn)
+  const [view, setView] = useState(viewStartsOn)
+  const [viewTapped, setViewTapped] = useState(false)
   const last = SLIDES.length - 1
   const slide = SLIDES[index]
   const swipe = useSwipe({ index, last, onIndex: setIndex })
@@ -92,9 +103,9 @@ export default function Onboarding({
           { enableHighAccuracy: false, timeout: 10_000 },
         )
       }
-      onDone(chosen)
+      onDone(chosen, viewTapped ? view : null)
     },
-    [again, bike, onDone],
+    [again, bike, view, viewTapped, onDone],
   )
 
   const next = () => (index === last ? finish(true) : setIndex(index + 1))
@@ -176,6 +187,31 @@ export default function Onboarding({
                       className="chip"
                       data-selected={bike === option.id ? 'yes' : 'no'}
                       onClick={() => setBike(option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {card.views && (
+                <div
+                  className="onboarding-chips"
+                  role="radiogroup"
+                  aria-label="Which view a ride opens on"
+                >
+                  {RIDE_VIEWS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={view === option.id}
+                      className="chip"
+                      data-selected={view === option.id ? 'yes' : 'no'}
+                      onClick={() => {
+                        setView(option.id)
+                        setViewTapped(true)
+                      }}
                     >
                       {option.label}
                     </button>

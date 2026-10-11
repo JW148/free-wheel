@@ -47,7 +47,7 @@ web/             Vite + React + TS PWA. Artifacts land in web/public/engine/ (ge
                  what the road is made of, and where to turn.
                  Stops along the way are `insertionIndex` and `plan.shaping`, both in the same
                  kernel. There is no via mode: a tap already knows where in the order it goes.
-  src/onboarding/ The six-card first run. Each card shows the screen it is about, clipped out
+  src/onboarding/ The seven-card first run. Each card shows the screen it is about, clipped out
                  of the running app by `tools/onboarding-shots.mjs`. Its bike question writes
                  to the rider, not to the plan. It swipes as well as pressing Next; `swipe.ts`
                  holds the decisions.
@@ -290,7 +290,7 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   Skipping counts as having seen it.
 - **The walkthrough is shown once by itself and reachable for ever from Setup**, as the third
   row — *How this app works*. It used to retire the moment it was finished, which is a strange
-  fate for the only six screens that explain the app, and the premise a rider forgets between
+  fate for the only seven screens that explain the app, and the premise a rider forgets between
   seasons (download the map before you leave) is on card two. Shown again it *reports* rather
   than *asks*, and all three differences guard the same thing: the bike chips start on
   `bikeFor(rider)` and on **nothing at all** when no chip describes the rider's setup;
@@ -303,7 +303,7 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   has to still be there to come back to.
 - **The onboarding pictures are clipped out of the running app, and are never drawn.**
   `web/tools/onboarding-shots.mjs` drives the built app in headless Chrome against a real
-  basemap and a real BRouter segment, plans a real route, rides it, and clips six rectangles at
+  basemap and a real BRouter segment, plans a real route, rides it, and clips seven rectangles at
   roughly life size into `web/public/onboarding/*.webp` — committed, for the same reason
   `public/engine/` is. They replaced pixel glyphs on the icon's own 20x14 grid, which cost
   nothing and said nothing: twenty cells cannot draw "three routes you compare", and two bikes
@@ -323,7 +323,7 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   a fraction of `--app-height` between two bounds rather than a fixed aspect ratio: a fixed one
   pushes the text off a short phone, and `flex: 1` would absorb the slack and float the text
   away from the top. `Slide.focus` says which part of a picture survives the crop.
-- **Two of the six shots are framed by measuring, not by a constant.** The app fits a route to
+- **Two of the seven shots are framed by measuring, not by a constant.** The app fits a route to
   a 390x844 screen and the card is nowhere near that shape, so at the app's own zoom the two
   pins — the literal subject of "tap your start, tap your finish" — fall outside the crop. The
   script reads the markers' rects, pulls the map back until they fit the band the card will
@@ -415,8 +415,8 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   and MapLibre fetches them separately; skipping this yields an offline map with no labels,
   which looks like a styling bug. They live in `web/public/{fonts,sprites}`, are **committed**
   rather than generated, and are refreshed with `npm run fetch-map-assets`. `globPatterns`
-  must keep `pbf` and `png` — and `webp`, which is the walkthrough's six pictures: it runs
-  before anything is downloaded, so a second launch in a tunnel must not be six broken images.
+  must keep `pbf` and `png` — and `webp`, which is the walkthrough's seven pictures: it runs
+  before anything is downloaded, so a second launch in a tunnel must not be seven broken images.
   Glyph URLs must be **absolute** — they are fetched from
   MapLibre's worker, where a relative URL resolves against `/assets/`.
 - **`zoom` must be the input to a top-level `interpolate` or `step`.** Nesting it inside a
@@ -942,6 +942,23 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   `workload.ts` counts frames, compass events and camera moves, and `tools/drive-ride-load.mjs`
   measures them — check it before and after anything that touches the riding map. Figures in
   `docs/phase-17-progress.md`.
+- **The glance view is the riding map taken away, and a hidden map costs nothing only if
+  nothing writes to it.** `GlanceView` draws the route ahead as one SVG polyline on true black
+  (`--glance-ground`, never `--slate-900`: an OLED pixel at black is off), heading-up from the
+  route's own last 10 m, redrawn per fix and never animated. The map stays mounted underneath
+  with `visibility: hidden` so the way back is instant, and every riding effect that writes to it
+  — marker, ridden line, camera — returns early on `glancing`; the compass stands down too.
+  `drive-ride-load.mjs` measures **0 map frames a minute** in it, and that zero is the claim:
+  a new riding effect that forgets the guard shows up there first. Which view a ride opens on is
+  `RiderSetup.rideView` (map by default), asked on onboarding card six and in *You and the
+  bike*; the button that flips views mid-ride is deliberately not saved. The glance tokens do
+  not invert between themes, like `--mode`. The first camera move after leaving it is a jump,
+  not an ease, because the rider may be kilometres from where the map was left.
+- **A driver's reset script runs in every frame, including the one a ride creates.**
+  `clearUndoStack` inserts and removes a same-origin iframe as a ride starts, and a
+  `Page.addScriptToEvaluateOnNewDocument` reset that removes the plan ran inside it — so the
+  ride deleted its own route the moment it began and `onboarding-shots.mjs` photographed a rider
+  with no fix. Guard resets with `window === window.top`.
 - **`DeviceOrientationEvent.requestPermission()` only resolves from a user gesture on iOS**, so
   the compass cannot be asked for on mount. `useHeading.request()` is called from the course-up
   button and from Start, both of which are taps. The GPS course is preferred while moving and is `null`
