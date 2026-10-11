@@ -37,6 +37,7 @@ import { clearUndoStack } from './undoStack'
 import { places } from '../search/searchStore'
 import { waypointRows, type PlanSlot } from './plan'
 import { workload } from './workload'
+import { cameraStep } from './camera'
 
 /** How close the map sits to the rider once a ride starts. Street-level, not overview. */
 const RIDING_ZOOM = 16.5
@@ -247,7 +248,7 @@ export default function RideView({
   const following = riding || follow
   const { fix, status: fixStatus, error: fixError, locateOnce } = useGeolocation(following)
   const wakeLock = useWakeLock(riding)
-  const heading = useHeading(following, fix?.heading ?? null)
+  const heading = useHeading(following, fix?.heading ?? null, fix?.speed ?? null)
   const telemetry = useRideTelemetry({ riding, route: plan.route, fix, rider: rider.setup })
 
   /**
@@ -599,55 +600,78 @@ export default function RideView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, styleReady, suspended, riding, telemetry.geometry, travelledM, climbSpan])
 
+  // ── The rider's marker ────────────────────────────────────────────────────────────────
+  // Its own effect, so the arrow can turn without the camera moving. `heading.heading` only
+  // changes on a real turn now — the GPS course while moving, and a dead-banded, rate-limited
+  // compass when not — so this runs about once a fix rather than sixty times a second.
+  //
+  // The arrow is drawn only while following. On the planning screen a heading arrow implies a
+  // live orientation the rider is not being given, and the plain dot says "you are here"
+  // without claiming to know which way you face.
+  useEffect(() => {
+    const instance = map.current
+    if (!instance || !styleReady || suspended || !fix) return
+    setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
+  }, [map, styleReady, suspended, fix, following, heading.heading])
+
   // ── The camera ────────────────────────────────────────────────────────────────────────
   /**
-   * One effect, and it has to be one.
+   * One effect, one `easeTo`, and at most one per fix — and usually none.
    *
-   * Recentring and rotating were two effects, both listing `heading.heading` in their
-   * dependencies, so both ran in the same commit. `easeTo` calls `stop()` on whatever
-   * animation is in flight and defaults its target centre to the map's *current* centre — so
-   * the rotation cancelled the recentre before its first frame, and with course-up on the map
-   * turned to face the right way and then never followed the rider. `centreOnMe` lost its ease
-   * to the same collision.
+   * Recentring and rotating were once two effects, both listing the heading in their
+   * dependencies, so both ran in the same commit. `easeTo` calls `stop()` on whatever animation
+   * is in flight and defaults its target centre to the map's *current* centre — so the rotation
+   * cancelled the recentre before its first frame. `cameraStep` returns both halves of a move
+   * together for that reason.
    *
-   * The bearing goes back to north when course-up is off or the ride has ended — but
-   * deliberately **not** while following is merely paused. Panning to look at what is up ahead
-   * should not spin the map to north-up under your thumb and then spin it back twelve seconds
-   * later.
+   * After that it listed the heading itself, and that was the battery. A compass on a handlebar
+   * mount changes several times a second, so the map was restarting a 700 ms animation
+   * continuously — with course-up off, too, where the heading had nothing to rotate — and even
+   * on GPS alone it was easing for 700 ms of every second. The heading is now read through a ref,
+   * so the compass cannot schedule a camera move at all; the fix decides when, and `cameraStep`
+   * decides whether. See `camera.ts`.
+   *
+   * `force` is the moments the rider asked for the camera — a ride starting, follow resuming,
+   * course-up being switched — where the box and the deadband would make a button look broken.
    */
+  const headingNow = useRef(heading.heading)
+  headingNow.current = heading.heading
+  const cameraMode = useRef<{ locked: boolean; courseUp: boolean } | null>(null)
   useEffect(() => {
     const instance = map.current
     if (!instance || !styleReady || suspended) return
 
-    // The arrow is drawn only while following. On the planning screen a heading arrow implies
-    // a live orientation the rider is not being given, and the plain dot says "you are here"
-    // without claiming to know which way you face.
-    if (fix) setPosition(instance, fix.lon, fix.lat, following ? heading.heading : null)
-
     const locked = following && !followPaused
-    const turning = locked && courseUp && heading.heading !== null
-    const northUp = !courseUp || !following
+    const was = cameraMode.current
+    cameraMode.current = { locked, courseUp }
+    const force = locked && (was === null || !was.locked || was.courseUp !== courseUp)
+
+    const canvas = instance.getCanvas()
+    const move = cameraStep({
+      following,
+      paused: followPaused,
+      courseUp,
+      heading: headingNow.current,
+      bearingNow: instance.getBearing(),
+      dot: fix ? instance.project([fix.lon, fix.lat]) : null,
+      viewport: { width: canvas.clientWidth, height: canvas.clientHeight },
+      force,
+    })
+    if (!move) return
 
     // MapLibre 6 normalises a target bearing against the current one (`_normalizeBearing`), so
     // it already turns the short way round; nothing here has to do that arithmetic.
-    const bearing = turning
-      ? heading.heading!
-      : northUp && instance.getBearing() !== 0
-        ? 0
-        : null
-
-    if (locked && fix) {
-      workload.count('camera')
+    workload.count('camera')
+    if (move.centre && fix) {
       instance.easeTo({
         center: [fix.lon, fix.lat],
-        ...(bearing === null ? {} : { bearing }),
+        ...(move.bearing === null ? {} : { bearing: move.bearing }),
         duration: 700,
       })
-    } else if (bearing !== null) {
-      workload.count('camera')
-      instance.easeTo({ bearing, duration: 400 })
+    } else if (move.bearing !== null) {
+      instance.easeTo({ bearing: move.bearing, duration: 400 })
     }
-  }, [map, styleReady, suspended, fix, following, followPaused, courseUp, heading.heading])
+  }, [map, styleReady, suspended, fix, following, followPaused, courseUp])
 
   /**
    * Grows the rider's marker for the road and shrinks it again for the planning screen.

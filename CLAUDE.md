@@ -930,9 +930,20 @@ interface so the UI and Wasm engine port to a WKWebView unchanged if OPFS durabi
   same commit as a recentre cancels it before its first frame — the map turns to face the right
   way and then never follows the rider. Both effects had `heading` in their dependencies, which
   is what put them in the same commit.
+- **The compass never moves the camera, and the camera moves at most once per fix.** The camera
+  effect used to list the heading in its dependencies and `easeTo` 700 ms on every change — a
+  compass on a handlebar mount changes several times a second, so the map animated for the whole
+  ride, with course-up *off* too, and the phone drained at ~1% a minute. Now the fix triggers the
+  effect, the heading is read through a ref, and `camera.ts` decides: a lazy follow that only
+  recentres once the dot leaves a box in the middle, course-up turning only past a 12° deadband,
+  the GPS course preferred over the compass above 2.5 m/s, and the arrow redrawn only on an 8°
+  change at most twice a second.
+  `workload.ts` counts frames, compass events and camera moves, and `tools/drive-ride-load.mjs`
+  measures them — check it before and after anything that touches the riding map. Figures in
+  `docs/phase-17-progress.md`.
 - **`DeviceOrientationEvent.requestPermission()` only resolves from a user gesture on iOS**, so
   the compass cannot be asked for on mount. `useHeading.request()` is called from the course-up
-  button and from Start, both of which are taps. The GPS course is the fallback and is `null`
+  button and from Start, both of which are taps. The GPS course is preferred while moving and is `null`
   below a few km/h — which is every junction and every set of lights, hence wanting the compass
   at all.
 - **Speech is sparse on purpose, and `speechSynthesis` fails silently in three ways.** The

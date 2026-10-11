@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { angleGap } from './geo'
+import { chooseHeading, shouldPublishCompass, type HeadingSource } from './camera'
 import { workload } from './workload'
+
+export type { HeadingSource }
 
 /**
  * Which way the rider is pointing, for turning the map to match.
@@ -13,9 +15,12 @@ import { workload } from './workload'
  * - **The GPS course** (`coords.heading`) is clean and needs no permission, but iOS reports it
  *   as `null` below a few km/h — so it is `null` at every junction and every set of lights.
  *
- * The compass wins when it is available, because the case it covers is the case that matters.
- * The course is the fallback, and the fallback is good enough on its own: a moving map that
- * only orients while moving is still much better than one that never does.
+ * **The course wins while moving, and the compass covers the rest.** It used to be the other
+ * way round, and on a bike that was wrong twice over: a phone on a handlebar mount reads the
+ * bars rather than the bike, and its reading moves several times a second off the road surface
+ * — each movement a re-render of the riding screen and, before `camera.ts`, a restarted camera
+ * animation. So above `MOVING_MPS` the course is used, and the compass is for the standstill
+ * cases the course cannot cover. `chooseHeading` is that rule, and it is tested.
  *
  * ## The two traps
  *
@@ -27,14 +32,10 @@ import { workload } from './workload'
  * once per revolution. Everything here averages the unit vector instead.
  */
 
-export type HeadingSource = 'compass' | 'course'
 export type CompassPermission = 'unsupported' | 'unknown' | 'granted' | 'denied'
 
 /** Smoothing time constant. Long enough to kill compass jitter, short enough to feel live. */
 const TAU_S = 0.6
-
-/** Below this the map does not move. A map creeping by half a degree reads as broken. */
-const DEADBAND_DEG = 2
 
 interface WebkitDeviceOrientationEvent extends DeviceOrientationEvent {
   /** iOS only: degrees clockwise from true north. Absent everywhere else. */
@@ -44,7 +45,7 @@ interface WebkitDeviceOrientationEvent extends DeviceOrientationEvent {
 
 type PermissionRequester = { requestPermission?: () => Promise<PermissionState | string> }
 
-export function useHeading(active: boolean, courseDeg: number | null) {
+export function useHeading(active: boolean, courseDeg: number | null, speedMps: number | null) {
   const [compass, setCompass] = useState<number | null>(null)
   const [permission, setPermission] = useState<CompassPermission>(() =>
     typeof window === 'undefined' || !('DeviceOrientationEvent' in window)
@@ -57,9 +58,11 @@ export function useHeading(active: boolean, courseDeg: number | null) {
 
   // The smoothed heading is kept as a vector, and in a ref rather than state: it updates at
   // 60 Hz on iOS and re-rendering the whole ride screen that often would be absurd. State
-  // carries the rounded, dead-banded value, which changes far less often.
+  // carries the dead-banded, rate-limited value — see `shouldPublishCompass` — which changes a
+  // couple of times a second at most, and only when the rider has actually turned.
   const vector = useRef<{ x: number; y: number } | null>(null)
   const lastAt = useRef<number | null>(null)
+  const shown = useRef<{ heading: number; atMs: number } | null>(null)
 
   const request = useCallback(async () => {
     const constructor = DeviceOrientationEvent as unknown as PermissionRequester
@@ -78,9 +81,10 @@ export function useHeading(active: boolean, courseDeg: number | null) {
     if (!active || permission !== 'granted') {
       vector.current = null
       lastAt.current = null
-      // And the reading itself, not just the accumulator. `heading` is `compass ?? courseDeg`,
-      // so a value left behind here is both a stale bearing on the next Follow and a permanent
-      // veto on the GPS-course fallback — once `compass` is non-null it never yields again.
+      shown.current = null
+      // And the reading itself, not just the accumulator. A value left behind here is a stale
+      // bearing on the next Follow, and below walking pace it would still beat the GPS course
+      // in `chooseHeading` — so a stopped rider would face wherever they faced last time.
       setCompass(null)
       return
     }
@@ -107,23 +111,30 @@ export function useHeading(active: boolean, courseDeg: number | null) {
 
       const smoothed =
         ((Math.atan2(vector.current.x, vector.current.y) * 180) / Math.PI + 360) % 360
-      setCompass((current) => {
-        if (current !== null && angleGap(current, smoothed) < DEADBAND_DEG) return current
-        workload.count('heading')
-        return smoothed
+      // Decided here, against a ref, rather than inside a state updater: an updater that
+      // returns its input still costs a render scheduled and bailed out of, sixty times a
+      // second, and this is the hottest path in the app.
+      const publish = shouldPublishCompass({
+        shown: shown.current?.heading ?? null,
+        shownAtMs: shown.current?.atMs ?? null,
+        next: smoothed,
+        nowMs: now,
       })
+      if (!publish) return
+      shown.current = { heading: smoothed, atMs: now }
+      workload.count('heading')
+      setCompass(smoothed)
     }
 
     window.addEventListener('deviceorientation', onOrientation)
     return () => window.removeEventListener('deviceorientation', onOrientation)
   }, [active, permission])
 
-  const source: HeadingSource | null =
-    compass !== null ? 'compass' : courseDeg !== null ? 'course' : null
+  const { heading, source } = chooseHeading({ compass, course: courseDeg, speedMps })
 
   return {
     /** Degrees clockwise from true north, or null when neither source can say. */
-    heading: compass ?? courseDeg,
+    heading,
     source,
     permission,
     /** Asks iOS for the compass. Must be called from a tap. */
